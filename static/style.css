@@ -1595,3 +1595,126 @@ body {
     opacity: 1;
 }
 
+/* ==============================================================================
+   📱 Responsive Mobile Styles (自适应手机与移动端布局)
+   ============================================================================== */
+@media (max-width: 1024px) {
+    /* 1. 将三栏 Workspace 布局转为移动端垂直堆叠布局 */
+    .workspace {
+        display: flex;
+        flex-direction: column;
+        height: auto;
+        overflow-y: visible;
+    }
+
+    /* 2. 调整导航栏，使其在小屏幕下保持紧凑 */
+    .navbar {
+        padding: 0 1rem;
+        height: auto;
+        min-height: 64px;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+    }
+    
+    .nav-actions {
+        width: 100%;
+        justify-content: space-between;
+        gap: 0.5rem;
+    }
+
+    /* 3. 改变日期选择栏为横向水平滑动样式，极大优化移动端操作空间 */
+    .sidebar-dates {
+        width: 100%;
+        height: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        padding: 0.85rem 1rem;
+    }
+    
+    .date-tabs {
+        flex-direction: row;
+        overflow-x: auto;
+        scrollbar-width: none; /* 隐藏火狐滚动条 */
+        white-space: nowrap;
+        gap: 0.4rem;
+        padding-bottom: 0.25rem;
+    }
+    
+    .date-tabs::-webkit-scrollbar {
+        display: none; /* 隐藏谷歌滚动条 */
+    }
+    
+    .date-tab {
+        padding: 0.45rem 0.85rem;
+        font-size: 0.82rem;
+        flex-shrink: 0;
+    }
+    
+    .date-tab.active::after {
+        left: 25%;
+        top: auto;
+        bottom: 0;
+        width: 50%;
+        height: 3px;
+        border-radius: 4px 4px 0 0;
+    }
+
+    /* 4. 赛事列表区域设为移动端独立垂直滚动 */
+    .panel-matches {
+        width: 100%;
+        height: auto;
+        max-height: 380px;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        padding: 1rem;
+    }
+
+    /* 5. 详情研判面板去除硬性高度，跟随内容自适应流动 */
+    .panel-details {
+        width: 100%;
+        height: auto;
+        overflow: visible;
+    }
+    
+    .details-body {
+        padding: 1rem;
+        overflow-y: visible;
+    }
+
+    /* 6. SWOT 战力情报卡片由双列改为单列垂直堆叠 */
+    .swot-split {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+
+    /* 7. 全局配置弹窗自适应手机宽度，防止撑出屏幕 */
+    .modal-content {
+        width: 92% !important;
+        margin: 15% auto;
+        padding: 1.25rem !important;
+    }
+    
+    .modal-content input, .modal-content textarea {
+        font-size: 0.85rem !important;
+    }
+
+    /* 8. 对阵 VS 头部与同类相似指数网格微调 */
+    .vs-row {
+        gap: 0.75rem;
+    }
+    
+    .vs-logo-team h2 {
+        font-size: 1.2rem;
+    }
+    
+    .prob-labels {
+        font-size: 0.95rem;
+    }
+    
+    .similar-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+}
+
