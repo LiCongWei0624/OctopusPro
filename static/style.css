@@ -1599,12 +1599,25 @@ body {
    📱 Responsive Mobile Styles (自适应手机与移动端布局)
    ============================================================================== */
 @media (max-width: 1024px) {
+    /* 0. 解除 body 与 layout 的溢出与高度限制，允许手机端网页自由上下滑动 */
+    body {
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        height: auto !important;
+    }
+    
+    .app-layout {
+        height: auto !important;
+        width: 100vw !important;
+        overflow: visible !important;
+    }
+
     /* 1. 将三栏 Workspace 布局转为移动端垂直堆叠布局 */
     .workspace {
         display: flex;
         flex-direction: column;
         height: auto;
-        overflow-y: visible;
+        overflow: visible !important;
     }
 
     /* 2. 调整导航栏，使其在小屏幕下保持紧凑 */
@@ -1671,11 +1684,31 @@ body {
         padding: 1rem;
     }
 
-    /* 5. 详情研判面板去除硬性高度，跟随内容自适应流动 */
+    /* 5. 详情研判面板与页签栏响应式排版 */
     .panel-details {
         width: 100%;
         height: auto;
         overflow: visible;
+    }
+    
+    /* 优化五个子页签在手机端的横向滑动切换，防止挤扁折行 */
+    .details-tab-bar {
+        overflow-x: auto !important;
+        white-space: nowrap !important;
+        scrollbar-width: none !important;
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        padding: 0 1rem !important;
+        gap: 1rem !important;
+    }
+    
+    .details-tab-bar::-webkit-scrollbar {
+        display: none !important;
+    }
+    
+    .detail-tab {
+        flex-shrink: 0 !important;
+        padding: 0 0.15rem !important;
     }
     
     .details-body {
@@ -1689,11 +1722,13 @@ body {
         gap: 1rem;
     }
 
-    /* 7. 全局配置弹窗自适应手机宽度，防止撑出屏幕 */
+    /* 7. 全局配置弹窗自适应高度与宽度，支持手机端内部滚动 */
     .modal-content {
         width: 92% !important;
-        margin: 15% auto;
+        margin: 10% auto !important;
         padding: 1.25rem !important;
+        max-height: 80vh !important;
+        overflow-y: auto !important;
     }
     
     .modal-content input, .modal-content textarea {
@@ -1716,5 +1751,10 @@ body {
     .similar-grid {
         grid-template-columns: repeat(2, 1fr);
     }
+    
+    /* 9. 保证 Canvas 图表在手机端不超过容器宽度 */
+    canvas, .highcharts-container {
+        max-width: 100% !important;
+        height: auto !important;
+    }
 }
-
