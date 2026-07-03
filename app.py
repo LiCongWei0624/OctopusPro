@@ -134,8 +134,15 @@ def get_ai_config():
                 config = json.load(f)
             return jsonify({'success': True, 'data': config})
         except Exception as e:
-            return jsonify({'success': False, 'error': f"Read config error: {str(e)}"})
-    return jsonify({'success': False, 'error': "Config file not found"})
+            pass
+    # 默认值兜底，避免全新部署时文件不存在导致前端加载卡死
+    default_config = {
+        'api_key': '',
+        'api_base': 'https://opencode.ai/zen/v1',
+        'model_name': 'deepseek-v4-flash-free',
+        'system_prompt': ''
+    }
+    return jsonify({'success': True, 'data': default_config})
 
 @app.route('/api/ai_config', methods=['POST'])
 def save_ai_config():
