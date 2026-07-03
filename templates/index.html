@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>雷速体育 - 足球数据分析中心</title>
+    <meta name="description" content="基于高精度 WAF 绕过技术的实时足球赛事分析与预测系统">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="light-theme">
+    <!-- Main Wrapper -->
+    <div class="app-layout">
+        <!-- Navigation Header -->
+        <header class="navbar">
+            <div class="nav-brand">
+                <span class="pulse-beacon"></span>
+                <span class="brand-title">LEISU</span>
+                <span class="brand-subtitle">数据决策中心</span>
+            </div>
+            <div class="nav-actions">
+                <div class="sync-status">
+                    <span id="sync-time">数据未同步</span>
+                </div>
+                <button id="ai-config-btn" class="btn-secondary" onclick="openAiConfigModal()" style="margin-right: 0.5rem;">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                    <span>AI 配置</span>
+                </button>
+                <button id="refresh-btn" class="btn-refresh" onclick="refreshData()">
+                    <svg class="icon-spin" viewBox="0 0 24 24" width="16" height="16">
+                        <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                    </svg>
+                    <span>同步最新赛事</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Workspace -->
+        <div class="workspace">
+            <!-- Col 1: Date Sidebar -->
+            <aside class="sidebar-dates">
+                <div class="sidebar-header">
+                    <h3>选择日期</h3>
+                </div>
+                <ul id="date-list" class="date-tabs">
+                    <!-- Dynamic Date Tabs -->
+                    <div class="tab-skeleton"></div>
+                    <div class="tab-skeleton"></div>
+                </ul>
+            </aside>
+
+            <!-- Col 2: Match List -->
+            <section class="panel-matches">
+                <div class="panel-title-bar">
+                    <h3>赛事日程</h3>
+                    <span id="match-count-badge" class="count-badge">0 场</span>
+                </div>
+                <div id="league-filter-bar" class="league-filter-bar"></div>
+                <div id="matches-container" class="matches-grid">
+                    <!-- Dynamic Match Cards -->
+                    <div class="loading-shimmer">
+                        <div class="card-shimmer"></div>
+                        <div class="card-shimmer"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Col 3: Details Panel -->
+            <main class="panel-details">
+                <!-- Tabs for Details -->
+                <div class="details-tab-bar">
+                    <button class="detail-tab active" onclick="switchDetailTab('intel')">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                        预测 & SWOT 情报
+                    </button>
+                    <button class="detail-tab" onclick="switchDetailTab('history')">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 8 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                        对决 & 近期战绩
+                    </button>
+                    <button class="detail-tab" onclick="switchDetailTab('squad')">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
+                        伤停 & 阵容
+                    </button>
+                    <button class="detail-tab" onclick="switchDetailTab('odds')">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
+                        盘口 & 走势指数
+                    </button>
+                    <button class="detail-tab" onclick="switchDetailTab('ai')">
+                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/></svg>
+                        AI 预测分析
+                    </button>
+                    <button id="btn-refresh-match" class="btn-refresh-detail" onclick="forceRefreshCurrentMatch()" title="强制重新同步当前比赛的所有实时数据" style="display: none;">
+                        <svg id="refresh-icon-svg" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.07 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                        <span>刷新本场</span>
+                    </button>
+                </div>
+
+                <!-- Details Content -->
+                <div id="details-content" class="details-body">
+                    <div class="welcome-view">
+                        <div class="animated-icon">⚽</div>
+                        <h3>欢迎使用雷速体育数据决策中心</h3>
+                        <p>请在左侧选择一场赛事，系统将为您动态拉取深度对决分析、阵容伤停以及指数模型走势。</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    <!-- Global AI Config Modal -->
+    <div id="ai-config-modal" class="modal-backdrop" style="display: none;" onclick="closeAiConfigModalOnBackdrop(event)">
+        <div class="modal-container">
+            <div class="modal-header">
+                <h3>⚙️ 全局 AI 决策配置中心 (本地数据库存储)</h3>
+                <button class="modal-close-btn" onclick="closeAiConfigModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="ai-form-group">
+                    <label>API Base 接口地址</label>
+                    <input type="text" id="global-ai-base" class="ai-input" placeholder="例如: https://opencode.ai/zen/v1">
+                </div>
+                <div class="ai-form-group">
+                    <label>API Key 密钥</label>
+                    <input type="password" id="global-ai-key" class="ai-input" placeholder="填入您的 OpenCode Zen 密钥">
+                </div>
+                <div class="ai-form-group">
+                    <label>选择大模型</label>
+                    <select id="global-ai-model" class="ai-select">
+                        <option value="deepseek-v4-flash-free">deepseek-v4-flash-free (OpenCode Zen 免费模型)</option>
+                        <option value="mimo-v2.5-free">mimo-v2.5-free (OpenCode Zen 免费模型)</option>
+                        <option value="nemotron-3-ultra-free">nemotron-3-ultra-free (OpenCode Zen 免费模型)</option>
+                        <option value="north-mini-code-free">north-mini-code-free (OpenCode Zen 免费模型)</option>
+                    </select>
+                </div>
+                <div class="ai-form-group">
+                    <label>全局系统分析提示词 (System Prompt)</label>
+                    <textarea id="global-ai-prompt" class="ai-textarea" rows="8" placeholder="在这里编辑定制您的 AI 系统分析指令..."></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <span id="global-ai-save-status" style="margin-right: auto; align-self: center; font-size: 0.82rem; font-weight: 700; color: var(--color-success); display: none;">✓ 配置已成功存入本地数据库</span>
+                <button class="btn-ai-cancel" onclick="closeAiConfigModal()">取消</button>
+                <button class="btn-ai-save" onclick="saveGlobalAiConfigToServer()" style="margin-left: 0.5rem;">保存配置</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 临时测试与调试脚本 (保持仓库整洁)
+test_*.py
+inspect_*.py
+search_*.py
+check_*.py
+debug_*.py
+print_*.py
+robust_*.py
+find_*.py
+extract_*.py
+decrypt_*.py
+compare_*.py
+compare_*.py
+download_*.py
+*extractor*.js
+*extractor*.py
+run_*.js
+run_*.py
+eval_*.py
+grep_*.py
+temp_*.js
+encrypt_payload.js
+
+# 雷速下载的静态 JS 混淆大文件 (保持仓库精简)
+*.js
+!waf_solver.js
+!check_interceptor_runtime.js
+!find_interceptor_by_code.js
+!find_module_2_globally.js
+!find_predictor_module_id.js
+!run_actual_webpack.js
+
+# 本地数据与缓存
+cache/
+parsed_matches.json
+session_cookies.json
+*.bin
+*.html
+!templates/
+!templates/*.html
+
+# 敏感配置文件 (避免 API Key 泄露)
+ai_config.json

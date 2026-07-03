@@ -1,0 +1,1610 @@
+{
+  "h2h": [
+    {
+      "id": 3666073,
+      "comp": {
+        "id": 34,
+        "name": "国际友谊",
+        "name_zh": "国际友谊",
+        "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+        "type": 3,
+        "cur_season_id": 13814,
+        "select": true
+      },
+      "match_time": 1639876500,
+      "first_team": {
+        "id": 13611,
+        "name": "美国",
+        "name_zh": "美国",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+        "value": 385650000,
+        "team_class": "win",
+        "score": 1,
+        "score_class": "win"
+      },
+      "second_team": {
+        "id": 10478,
+        "name": "波黑",
+        "name_zh": "波黑",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+        "value": 146400000,
+        "team_class": null,
+        "score": 0,
+        "score_class": null
+      },
+      "half_score": "0:0",
+      "corner": "5-2",
+      "eu": [
+        "1.65",
+        "3.6",
+        "5.0",
+        "0"
+      ],
+      "asia": [
+        "0.88",
+        "0.75",
+        "0.98",
+        "0"
+      ],
+      "win_loss": {
+        "result": "胜",
+        "class": "win"
+      },
+      "trend": {
+        "result": "赢",
+        "class": "win"
+      },
+      "big_small": {
+        "result": "小",
+        "class": "loss"
+      }
+    },
+    {
+      "id": 2319180,
+      "comp": {
+        "id": 34,
+        "name": "国际友谊",
+        "name_zh": "国际友谊",
+        "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+        "type": 3,
+        "cur_season_id": 13814,
+        "select": true
+      },
+      "match_time": 1517193600,
+      "first_team": {
+        "id": 13611,
+        "name": "美国",
+        "name_zh": "美国",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+        "value": 385650000,
+        "team_class": null,
+        "score": 0,
+        "score_class": "draw"
+      },
+      "second_team": {
+        "id": 10478,
+        "name": "波黑",
+        "name_zh": "波黑",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+        "value": 146400000,
+        "team_class": null,
+        "score": 0,
+        "score_class": "draw"
+      },
+      "half_score": "0:0",
+      "corner": "7-2",
+      "eu": [
+        "1.57",
+        "3.5",
+        "5.75",
+        "0"
+      ],
+      "asia": [
+        "0.8",
+        "0.75",
+        "1.05",
+        "0"
+      ],
+      "win_loss": {
+        "result": "平",
+        "class": "draw"
+      },
+      "trend": {
+        "result": "输",
+        "class": "loss"
+      },
+      "big_small": {
+        "result": "小",
+        "class": "loss"
+      }
+    },
+    {
+      "id": 842023,
+      "comp": {
+        "id": 24,
+        "name": "球会友谊",
+        "name_zh": "球会友谊",
+        "logo": "https://cdn.leisu.com/football/eventlogo/2440249cd19586c39de8e05d55cc6b0d.png",
+        "type": 3,
+        "cur_season_id": 13874,
+        "select": true
+      },
+      "match_time": 1376505600,
+      "first_team": {
+        "id": 10478,
+        "name": "波黑",
+        "name_zh": "波黑",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+        "value": 146400000,
+        "team_class": null,
+        "score": 3,
+        "score_class": null
+      },
+      "second_team": {
+        "id": 13611,
+        "name": "美国",
+        "name_zh": "美国",
+        "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+        "value": 385650000,
+        "team_class": "win",
+        "score": 4,
+        "score_class": "win"
+      },
+      "half_score": "2:0",
+      "corner": "11-5",
+      "eu": [
+        "1.83",
+        "3.75",
+        "4.0",
+        "0"
+      ],
+      "asia": [],
+      "win_loss": {
+        "result": "胜",
+        "class": "win"
+      },
+      "trend": {
+        "result": "",
+        "class": ""
+      },
+      "big_small": {
+        "result": "",
+        "class": ""
+      }
+    }
+  ],
+  "recent": {
+    "home": {
+      "count": 10,
+      "home_away": 1,
+      "rank_comps": [
+        {
+          "id": 1,
+          "name": "世界杯",
+          "name_zh": "世界杯",
+          "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+          "type": 2,
+          "cur_season_id": 13776,
+          "select": true
+        },
+        {
+          "id": 34,
+          "name": "国际友谊",
+          "name_zh": "国际友谊",
+          "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+          "type": 3,
+          "cur_season_id": 13814,
+          "select": true
+        },
+        {
+          "id": 397,
+          "name": "美金杯",
+          "name_zh": "美金杯",
+          "logo": "https://cdn.leisu.com/football/eventlogo/2023/08/08/Fsb5MkeISdpKPgrtW2IVsCMhfcEc.png",
+          "type": 2,
+          "cur_season_id": 13104,
+          "select": true
+        },
+        {
+          "id": 2922,
+          "name": "中北美国联",
+          "name_zh": "中北美国联",
+          "logo": "https://cdn.leisu.com/football/eventlogo/2022/08/25/FlegampQw5yC1ceKq1LGSA4TOo_f.png",
+          "type": 2,
+          "cur_season_id": 12665,
+          "select": true
+        },
+        {
+          "id": 395,
+          "name": "美洲杯",
+          "name_zh": "美洲杯",
+          "logo": "https://cdn.leisu.com/football/eventlogo/2024/06/24/Fvm0n3SMDrjBSKBqRmdv1La28KTv.png",
+          "type": 2,
+          "cur_season_id": 11998,
+          "select": true
+        }
+      ],
+      "list": [
+        {
+          "id": 4459829,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1782439200,
+          "first_team": {
+            "id": 13337,
+            "name": "土耳其",
+            "name_zh": "土耳其",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FkS46t9vvN5ZjzNLs-bpvSqyCav0.png",
+            "value": 473700000,
+            "team_class": null,
+            "score": 3,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": null,
+            "score": 2,
+            "score_class": null
+          },
+          "half_score": "2:1",
+          "corner": "2-9",
+          "eu": [
+            "2.62",
+            "3.4",
+            "2.5",
+            "0"
+          ],
+          "asia": [
+            "0.97",
+            "0.0",
+            "0.87",
+            "0"
+          ],
+          "win_loss": {
+            "result": "负",
+            "class": "loss"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4459828,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1781895600,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 2,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13832,
+            "name": "澳大利亚",
+            "name_zh": "澳大利亚",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FuTJ3w0q5-uCmoE79q00En_5hUnW.png",
+            "value": 77450000,
+            "team_class": null,
+            "score": 0,
+            "score_class": null
+          },
+          "half_score": "2:0",
+          "corner": "7-4",
+          "eu": [
+            "1.7",
+            "3.5",
+            "4.75",
+            "0"
+          ],
+          "asia": [
+            "0.97",
+            "0.75",
+            "0.88",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4459827,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1781312400,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 4,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13449,
+            "name": "巴拉圭",
+            "name_zh": "巴拉圭",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FsIiJuu9Ztwhgq-Mc5XQQs8Tivnx.png",
+            "value": 153650000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "3:0",
+          "corner": "3-1",
+          "eu": [
+            "1.95",
+            "3.4",
+            "3.5",
+            "0"
+          ],
+          "asia": [
+            "1.03",
+            "0.5",
+            "0.83",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4460235,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1780770600,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 11746,
+            "name": "德国",
+            "name_zh": "德国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FvVBn2hllmuE1sMQSwPRUP51-iNh.png",
+            "value": 947000000,
+            "team_class": null,
+            "score": 2,
+            "score_class": null
+          },
+          "half_score": "1:1",
+          "corner": "10-2",
+          "eu": [
+            "4.1",
+            "3.6",
+            "1.75",
+            "0"
+          ],
+          "asia": [
+            "0.8",
+            "-0.75",
+            "1.0",
+            "0"
+          ],
+          "win_loss": {
+            "result": "负",
+            "class": "loss"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4512473,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1780255800,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 3,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13365,
+            "name": "塞内加尔",
+            "name_zh": "塞内加尔",
+            "logo": "https://cdn.leisu.com/football/nationflag/2024/09/12/FtsBjOvlrS8YXriyiUPuh0Fr9Ej1.png",
+            "value": 478100000,
+            "team_class": null,
+            "score": 2,
+            "score_class": null
+          },
+          "half_score": "2:1",
+          "corner": "4-7",
+          "eu": [
+            "2.5",
+            "3.4",
+            "2.63",
+            "0"
+          ],
+          "asia": [
+            "0.85",
+            "0.0",
+            "0.95",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4460234,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1774998000,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": null,
+            "score": 0,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 13152,
+            "name": "葡萄牙",
+            "name_zh": "葡萄牙",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fu-awGlczZvXQVlsbDIDCg29xVYb.png",
+            "value": 1005500000,
+            "team_class": null,
+            "score": 2,
+            "score_class": null
+          },
+          "half_score": "0:1",
+          "corner": "2-8",
+          "eu": [
+            "3.8",
+            "3.5",
+            "1.83",
+            "0"
+          ],
+          "asia": [
+            "0.95",
+            "-0.5",
+            "0.85",
+            "0"
+          ],
+          "win_loss": {
+            "result": "负",
+            "class": "loss"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4460233,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1774726200,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": null,
+            "score": 2,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 10316,
+            "name": "比利时",
+            "name_zh": "比利时",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FtvuBnPcMLIqm5DuHEH_lgOYo0sv.png",
+            "value": 547500000,
+            "team_class": null,
+            "score": 5,
+            "score_class": null
+          },
+          "half_score": "1:1",
+          "corner": "6-6",
+          "eu": [
+            "3.2",
+            "3.4",
+            "2.2",
+            "0"
+          ],
+          "asia": [
+            "0.9",
+            "-0.25",
+            "0.9",
+            "0"
+          ],
+          "win_loss": {
+            "result": "负",
+            "class": "loss"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4448110,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1763510400,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 5,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13447,
+            "name": "乌拉圭",
+            "name_zh": "乌拉圭",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fvj-K0h7C0aneZU8-G4d3Zmn0c1f.png",
+            "value": 359300000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "4:1",
+          "corner": "7-5",
+          "eu": [
+            "2.63",
+            "3.25",
+            "2.6",
+            "0"
+          ],
+          "asia": [
+            "0.93",
+            "0.0",
+            "0.88",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4448112,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1763244000,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 2,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13449,
+            "name": "巴拉圭",
+            "name_zh": "巴拉圭",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FsIiJuu9Ztwhgq-Mc5XQQs8Tivnx.png",
+            "value": 153650000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "1:1",
+          "corner": "5-8",
+          "eu": [
+            "2.1",
+            "3.4",
+            "3.4",
+            "0"
+          ],
+          "asia": [
+            "0.85",
+            "0.25",
+            "0.95",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4408888,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1760490000,
+          "first_team": {
+            "id": 13611,
+            "name": "美国",
+            "name_zh": "美国",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fi-iGZ7I7Jk-OlP2bRMAZtuqerHb.png",
+            "value": 385650000,
+            "team_class": "win",
+            "score": 2,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 13832,
+            "name": "澳大利亚",
+            "name_zh": "澳大利亚",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FuTJ3w0q5-uCmoE79q00En_5hUnW.png",
+            "value": 77450000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "1:1",
+          "corner": "3-2",
+          "eu": [
+            "1.62",
+            "3.8",
+            "5.0",
+            "0"
+          ],
+          "asia": [
+            "0.8",
+            "0.75",
+            "1.0",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        }
+      ],
+      "chart_list": [
+        [
+          "土耳其 vs 美国",
+          "3:2",
+          1,
+          0
+        ],
+        [
+          "美国 vs 澳大利亚",
+          "2:0",
+          3,
+          1
+        ],
+        [
+          "美国 vs 巴拉圭",
+          "4:1",
+          3,
+          2
+        ],
+        [
+          "美国 vs 德国",
+          "1:2",
+          1,
+          3
+        ],
+        [
+          "美国 vs 塞内加尔",
+          "3:2",
+          3,
+          4
+        ],
+        [
+          "美国 vs 葡萄牙",
+          "0:2",
+          1,
+          5
+        ],
+        [
+          "美国 vs 比利时",
+          "2:5",
+          1,
+          6
+        ],
+        [
+          "美国 vs 乌拉圭",
+          "5:1",
+          3,
+          7
+        ],
+        [
+          "美国 vs 巴拉圭",
+          "2:1",
+          3,
+          8
+        ],
+        [
+          "美国 vs 澳大利亚",
+          "2:1",
+          3,
+          9
+        ]
+      ],
+      "statistics": {
+        "name_zh": "美国",
+        "match": {
+          "total": 10,
+          "win": 6,
+          "draw": 0,
+          "loss": 4,
+          "lossGoal": 18,
+          "getGoal": 23,
+          "win_ratio": "60%"
+        },
+        "asia": {
+          "win": 6,
+          "win_ratio": "60%"
+        },
+        "bs": {
+          "big": 8,
+          "small": 2,
+          "big_ratio": "80%"
+        }
+      }
+    },
+    "away": {
+      "count": 10,
+      "home_away": 1,
+      "rank_comps": [
+        {
+          "id": 1,
+          "name": "世界杯",
+          "name_zh": "世界杯",
+          "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+          "type": 2,
+          "cur_season_id": 13776,
+          "select": true
+        },
+        {
+          "id": 34,
+          "name": "国际友谊",
+          "name_zh": "国际友谊",
+          "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+          "type": 3,
+          "cur_season_id": 13814,
+          "select": true
+        },
+        {
+          "id": 2,
+          "name": "世欧预",
+          "name_zh": "世欧预",
+          "logo": "https://cdn.leisu.com/football/eventlogo/c74920992c3b47b82b192e7a1993f2cb.png",
+          "type": 2,
+          "cur_season_id": 12891,
+          "select": true
+        },
+        {
+          "id": 2906,
+          "name": "欧国联",
+          "name_zh": "欧国联",
+          "logo": "https://cdn.leisu.com/football/eventlogo/2023/08/03/FnLop3S1p3ihuwO-x6KseEXfXenQ.png",
+          "type": 2,
+          "cur_season_id": 14095,
+          "select": true
+        },
+        {
+          "id": 7551,
+          "name": "欧杯预",
+          "name_zh": "欧杯预",
+          "logo": "https://cdn.leisu.com/football/eventlogo/453793cc9c8534d455ddbfdb02c4fd23.png",
+          "type": 2,
+          "cur_season_id": 14187,
+          "select": true
+        }
+      ],
+      "list": [
+        {
+          "id": 4460943,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1782327600,
+          "first_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": "win",
+            "score": 3,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 11289,
+            "name": "卡塔尔",
+            "name_zh": "卡塔尔",
+            "logo": "https://cdn.leisu.com/football/nationflag/ebe68e5a6575b603b9eb0e414168a049.png",
+            "value": 19925000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "2:1",
+          "corner": "5-5",
+          "eu": [
+            "1.53",
+            "3.75",
+            "5.75",
+            "0"
+          ],
+          "asia": [
+            "0.98",
+            "1.0",
+            "0.88",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4460942,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1781809200,
+          "first_team": {
+            "id": 10871,
+            "name": "瑞士",
+            "name_zh": "瑞士",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FrQ61lnZhTi3Rh2iEmnSKl-AWOjO.png",
+            "value": 332500000,
+            "team_class": null,
+            "score": 4,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "0:0",
+          "corner": "7-3",
+          "eu": [
+            "1.57",
+            "3.9",
+            "5.25",
+            "0"
+          ],
+          "asia": [
+            "1.05",
+            "1.0",
+            "0.8",
+            "0"
+          ],
+          "win_loss": {
+            "result": "负",
+            "class": "loss"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4459824,
+          "comp": {
+            "id": 1,
+            "name": "世界杯",
+            "name_zh": "世界杯",
+            "logo": "https://cdn.leisu.com/football/eventlogo/da617cd58cd9cffaae0daec865457fb5.png",
+            "type": 2,
+            "cur_season_id": 13776
+          },
+          "match_time": 1781290800,
+          "first_team": {
+            "id": 11138,
+            "name": "加拿大",
+            "name_zh": "加拿大",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fg6s8T_Il8IdrslkHyBTYS09pBhj.png",
+            "value": 198650000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "half_score": "0:1",
+          "corner": "9-4",
+          "eu": [
+            "2.2",
+            "3.5",
+            "2.8",
+            "0"
+          ],
+          "asia": [
+            "1.03",
+            "0.25",
+            "0.83",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4542672,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1780772400,
+          "first_team": {
+            "id": 12064,
+            "name": "巴拿马",
+            "name_zh": "巴拿马",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fm-jpMkVMeGi_WHfiPV7JpP9K3DT.png",
+            "value": 34550000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "half_score": "1:1",
+          "corner": "9-10",
+          "eu": [
+            "3.25",
+            "3.2",
+            "2.2",
+            "0"
+          ],
+          "asia": [
+            "0.9",
+            "-0.25",
+            "0.9",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4542667,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1780079400,
+          "first_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 0,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 10307,
+            "name": "北马其顿",
+            "name_zh": "北马其顿",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FsLSCSzoV5Cmvj0oNwGDlC740csO.png",
+            "value": 34450000,
+            "team_class": null,
+            "score": 0,
+            "score_class": "draw"
+          },
+          "half_score": "0:0",
+          "corner": "2-1",
+          "eu": [
+            "1.91",
+            "3.2",
+            "3.6",
+            "0"
+          ],
+          "asia": [
+            "0.98",
+            "0.5",
+            "0.83",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "输",
+            "class": "loss"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4523068,
+          "comp": {
+            "id": 2,
+            "name": "世欧预",
+            "name_zh": "世欧预",
+            "logo": "https://cdn.leisu.com/football/eventlogo/c74920992c3b47b82b192e7a1993f2cb.png",
+            "type": 2,
+            "cur_season_id": 12891
+          },
+          "match_time": 1774982700,
+          "first_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 13153,
+            "name": "意大利",
+            "name_zh": "意大利",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FirMhEUC190el3SylVQozmo8qBDQ.png",
+            "value": 319000000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "half_score": "0:1",
+          "corner": "10-4",
+          "eu": [
+            "4.75",
+            "3.4",
+            "1.8",
+            "0"
+          ],
+          "asia": [
+            "0.95",
+            "-0.5",
+            "0.85",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4455348,
+          "comp": {
+            "id": 2,
+            "name": "世欧预",
+            "name_zh": "世欧预",
+            "logo": "https://cdn.leisu.com/football/eventlogo/c74920992c3b47b82b192e7a1993f2cb.png",
+            "type": 2,
+            "cur_season_id": 12891
+          },
+          "match_time": 1774554300,
+          "first_team": {
+            "id": 19907,
+            "name": "威尔士",
+            "name_zh": "威尔士",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fk_8Famlp725VaYFf9pki5PP2v2g.png",
+            "value": 180650000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "half_score": "0:0",
+          "corner": "9-3",
+          "eu": [
+            "1.83",
+            "3.25",
+            "4.2",
+            "0"
+          ],
+          "asia": [
+            "0.85",
+            "0.5",
+            "0.95",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4251571,
+          "comp": {
+            "id": 2,
+            "name": "世欧预",
+            "name_zh": "世欧预",
+            "logo": "https://cdn.leisu.com/football/eventlogo/c74920992c3b47b82b192e7a1993f2cb.png",
+            "type": 2,
+            "cur_season_id": 12891
+          },
+          "match_time": 1763495100,
+          "first_team": {
+            "id": 13226,
+            "name": "奥地利",
+            "name_zh": "奥地利",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fmd5k5hF5sOIq6jIpkt7Ngzu64Is.png",
+            "value": 245200000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": null,
+            "score": 1,
+            "score_class": "draw"
+          },
+          "half_score": "0:1",
+          "corner": "4-2",
+          "eu": [
+            "1.3",
+            "5.0",
+            "10.0",
+            "0"
+          ],
+          "asia": [
+            "0.95",
+            "1.5",
+            "0.85",
+            "0"
+          ],
+          "win_loss": {
+            "result": "平",
+            "class": "draw"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "小",
+            "class": "loss"
+          }
+        },
+        {
+          "id": 4251637,
+          "comp": {
+            "id": 2,
+            "name": "世欧预",
+            "name_zh": "世欧预",
+            "logo": "https://cdn.leisu.com/football/eventlogo/c74920992c3b47b82b192e7a1993f2cb.png",
+            "type": 2,
+            "cur_season_id": 12891
+          },
+          "match_time": 1763235900,
+          "first_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": "win",
+            "score": 3,
+            "score_class": "win"
+          },
+          "second_team": {
+            "id": 11686,
+            "name": "罗马尼亚",
+            "name_zh": "罗马尼亚",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/Fn2yyk3ev9dRFqsT3Xv8GhtSBad3.png",
+            "value": 56950000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "half_score": "0:1",
+          "corner": "4-1",
+          "eu": [
+            "2.55",
+            "3.4",
+            "2.5",
+            "0"
+          ],
+          "asia": [
+            "0.9",
+            "0.0",
+            "0.9",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        },
+        {
+          "id": 4441879,
+          "comp": {
+            "id": 34,
+            "name": "国际友谊",
+            "name_zh": "国际友谊",
+            "logo": "https://cdn.leisu.com/football/eventlogo/4e7c9460ee862d47c2ce6debfef6aace.png",
+            "type": 3,
+            "cur_season_id": 13814
+          },
+          "match_time": 1760288400,
+          "first_team": {
+            "id": 11969,
+            "name": "马耳他",
+            "name_zh": "马耳他",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FsQNI1j7QqZRzVMt7FK_Dx7ZVkKI.png",
+            "value": 14975000,
+            "team_class": null,
+            "score": 1,
+            "score_class": null
+          },
+          "second_team": {
+            "id": 10478,
+            "name": "波黑",
+            "name_zh": "波黑",
+            "logo": "https://cdn.leisu.com/football/nationflag/2023/03/24/FonPbqauQi0PZ-_J4wfAynANc7wu.png",
+            "value": 146400000,
+            "team_class": "win",
+            "score": 4,
+            "score_class": "win"
+          },
+          "half_score": "0:1",
+          "corner": "4-4",
+          "eu": [
+            "6.25",
+            "3.6",
+            "1.53",
+            "0"
+          ],
+          "asia": [
+            "0.8",
+            "-1.0",
+            "1.0",
+            "0"
+          ],
+          "win_loss": {
+            "result": "胜",
+            "class": "win"
+          },
+          "trend": {
+            "result": "赢",
+            "class": "win"
+          },
+          "big_small": {
+            "result": "大",
+            "class": "win"
+          }
+        }
+      ],
+      "chart_list": [
+        [
+          "波黑 vs 卡塔尔",
+          "3:1",
+          3,
+          0
+        ],
+        [
+          "瑞士 vs 波黑",
+          "4:1",
+          1,
+          1
+        ],
+        [
+          "加拿大 vs 波黑",
+          "1:1",
+          2,
+          2
+        ],
+        [
+          "巴拿马 vs 波黑",
+          "1:1",
+          2,
+          3
+        ],
+        [
+          "波黑 vs 北马其顿",
+          "0:0",
+          2,
+          4
+        ],
+        [
+          "波黑 vs 意大利",
+          "1:1",
+          2,
+          5
+        ],
+        [
+          "威尔士 vs 波黑",
+          "1:1",
+          2,
+          6
+        ],
+        [
+          "奥地利 vs 波黑",
+          "1:1",
+          2,
+          7
+        ],
+        [
+          "波黑 vs 罗马尼亚",
+          "3:1",
+          3,
+          8
+        ],
+        [
+          "马耳他 vs 波黑",
+          "1:4",
+          3,
+          9
+        ]
+      ],
+      "statistics": {
+        "name_zh": "波黑",
+        "match": {
+          "total": 10,
+          "win": 3,
+          "draw": 6,
+          "loss": 1,
+          "lossGoal": 12,
+          "getGoal": 16,
+          "win_ratio": "30%"
+        },
+        "asia": {
+          "win": 7,
+          "win_ratio": "70%"
+        },
+        "bs": {
+          "big": 4,
+          "small": 6,
+          "big_ratio": "40%"
+        }
+      }
+    }
+  }
+}
