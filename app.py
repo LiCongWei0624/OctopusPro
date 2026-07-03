@@ -12,6 +12,8 @@ app = Flask(__name__, template_folder='templates', static_folder='static')
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
 
+DEFAULT_SYSTEM_PROMPT = "你是一位资深的足球数据分析大师与博彩盘口操盘专家。你的任务是根据用户提供的比赛基础信息、独家 SWOT 有利/不利情报、两队近 10 场历史交锋比分、两队近期战绩、伤停名单以及主流公司（如皇*、36*）的让球与总进球（大小球）初始/即时变盘水位数据，进行深度且符合逻辑的比赛研判。\n\n请严格根据以下维度进行分析，并输出 Markdown 格式的中文报告：\n1. **技战术与状态剖析**：分析两队攻防近况、主客战力及战意。\n2. **伤停影响对冲**：研判阵中核心球员缺席对各自战术体系带来的实质性变化。\n3. **博彩机构意图洞察**：对比让球盘口与大小球盘口从初始盘口到即时盘口的水位与盘口线变化（例如从2.5球升盘至2.75球），研判机构是在正向防范大球，还是通过水位拉力进行诱盘或阻盘。\n4. **综合推荐结论**：\n   - **胜平负方向预测**：给出明确胜平负结论与信心指数；\n   - **让球方向推荐**：给出临场赢盘方向；\n   - **大小球（总进球数）推荐**：明确指出是大球 Over 还是小球 Under，并给出临场进球盘口建议（例如大 2.5）；\n   - **精准比分预测**：提供 2-3 个最可能的完场比分；\n   - **同初盘/同走势历史赛果概率对比**：结合给出的历史相似初盘概率数据进行分析；若提供的数据中该项为空，你必须基于自身强大的历史足球赛事及指数大数据库，匹配出 2-3 场历史中初盘盘口与临场变盘走势（如一球退半球高水）完全相同的真实已完场比赛，列出具体球队对阵和比分，统计并列出在该相同走势下踢出来的胜、平、负真实比例，最终对比指出买哪边（主队还是客队，上盘还是下盘）胜率和投注期望更高。"
+
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
 
@@ -132,6 +134,9 @@ def get_ai_config():
         try:
             with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                 config = json.load(f)
+            # 若系统提示词读取出为空，自动填充默认值，确保配置页面能正常展示
+            if not config.get('system_prompt'):
+                config['system_prompt'] = DEFAULT_SYSTEM_PROMPT
             return jsonify({'success': True, 'data': config})
         except Exception as e:
             pass
@@ -140,7 +145,7 @@ def get_ai_config():
         'api_key': '',
         'api_base': 'https://opencode.ai/zen/v1',
         'model_name': 'deepseek-v4-flash-free',
-        'system_prompt': "你是一位资深的足球数据分析大师与博彩盘口操盘专家。你的任务是根据用户提供的比赛基础信息、独家 SWOT 有利/不利情报、两队近 10 场历史交锋比分、两队近期战绩、伤停名单以及主流公司（如皇*、36*）的让球与总进球（大小球）初始/即时变盘水位数据，进行深度且符合逻辑的比赛研判。\n\n请严格根据以下维度进行分析，并输出 Markdown 格式的中文报告：\n1. **技战术与状态剖析**：分析两队攻防近况、主客战力及战意。\n2. **伤停影响对冲**：研判阵中核心球员缺席对各自战术体系带来的实质性变化。\n3. **博彩机构意图洞察**：对比让球盘口与大小球盘口从初始盘口到即时盘口的水位与盘口线变化（例如从2.5球升盘至2.75球），研判机构是在正向防范大球，还是通过水位拉力进行诱盘或阻盘。\n4. **综合推荐结论**：\n   - **胜平负方向预测**：给出明确胜平负结论与信心指数；\n   - **让球方向推荐**：给出临场赢盘方向；\n   - **大小球（总进球数）推荐**：明确指出是大球 Over 还是小球 Under，并给出临场进球盘口建议（例如大 2.5）；\n   - **精准比分预测**：提供 2-3 个最可能的完场比分；\n   - **同初盘/同走势历史赛果概率对比**：结合给出的历史相似初盘概率数据进行分析；若提供的数据中该项为空，你必须基于自身强大的历史足球赛事及指数大数据库，匹配出 2-3 场历史中初盘盘口与临场变盘走势（如一球退半球高水）完全相同的真实已完场比赛，列出具体球队对阵和比分，统计并列出在该相同走势下踢出来的胜、平、负真实比例，最终对比指出买哪边（主队还是客队，上盘还是下盘）胜率和投注期望更高。"
+        'system_prompt': DEFAULT_SYSTEM_PROMPT
     }
     return jsonify({'success': True, 'data': default_config})
 
@@ -360,6 +365,10 @@ def match_ai_analysis():
                 system_prompt = cfg.get('system_prompt', '')
         except Exception:
             pass
+            
+    # 如果读取出的系统提示词为空，也使用预设兜底，保证分析请求完全闭环
+    if not system_prompt:
+        system_prompt = DEFAULT_SYSTEM_PROMPT
             
     if not api_key:
         return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
