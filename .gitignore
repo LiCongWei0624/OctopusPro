@@ -44,6 +44,7 @@ encrypt_payload.js
 !find_module_2_globally.js
 !find_predictor_module_id.js
 !run_actual_webpack.js
+!static/app.js
 
 # 本地数据与缓存
 cache/
