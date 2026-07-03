@@ -118,6 +118,9 @@
 11. **归档 Linux 服务器部署配置指南**：
     - **部署保姆级文档**：针对在 Linux 无头服务器环境下运行 Playwright Chromium 和 Node.js WAF 挑战器的特点，编写了详尽的 [linux_deployment_guide.md](file:///c:/Code/LeiSu-Bypass/Docs/linux_deployment_guide.md) 部署指南。
     - **内容覆盖**：涵盖 Node.js 运行时安装、Python 虚拟环境配置、`playwright install-deps` 系统底层动态链接库补全命令，以及生产环境 Systemd 系统服务守护进程配置（实现开机自动拉起与宕机秒级自动恢复），保障生产级部署流畅平稳。
-    - **提供一键自动化运维脚本**：
       - [setup.sh](file:///d:/Code/Tools/LeiSu-Bypass/setup.sh)：用于服务器首次环境初始化安装（自动配置 Node.js、虚拟环境、Playwright 系统依赖并全自动生成并拉起 Systemd 守护服务）。
       - [deploy.sh](file:///d:/Code/Tools/LeiSu-Bypass/deploy.sh)：日常一键更新部署脚本，支持从 GitHub 仓库自动拉取最新分支代码、增量升级 pip 依赖并平滑重启 Flask 守护进程，真正实现秒级 CI/CD 一键更新部署。
+
+12. **独家情报 (SWOT) 与指数变盘明细 WAF 绕过优化及 Robust Fallback 读取机制修复（本次修复）**：
+    - **修复 SWOT 页面 WAF 绕过失败 Bug**：此前 `detail_scraper.py` 中的 `fetch_html_with_bypass` 将解密出的 WAF Cookie 强制写入了泛域名 `.leisu.com`。由于 Python `urllib` 请求子域（如 `www.leisu.com` 或 `odds.leisu.com`）时，对前导点的 Cookie 匹配规则受限，导致 WAF 绕过 Cookie 未能在第二次请求中正确携带，引发了拦截，使得 SWOT 情报和指数 API 均返回 WAF 挑战页而无法呈现数据。我们将其更新为**同时写入 `real_domain` （请求的具体子域名）和泛域名 `.leisu.com` 的双重保险写入模式**，完美实现了 WAF 挑战的无感绕过，使得独家情报（SWOT）能够对核心热门比赛进行精准抓取。
+    - **优化 Playwright 兜底进程缓存读取时序 (Robust Fallback)**：对子进程 `auth_generator.py` 写入的物理缓存进行了高容错的时序优化。由于磁盘 I/O 延迟，子进程生成的缓存可能无法立即被父进程检测到。我们在 [detail_scraper.py](file:///d:/Code/Tools/LeiSu-Bypass/detail_scraper.py) 中加入了 **200 毫秒微延迟重试机制** 以及 **从子进程标准输出（stdout）的 JSON 返回中直接解析备用缓存路径 (`alt_cache`) 的二次读取逻辑**，彻底杜绝了因文件读写不同步或路径偏移导致的兜底加载失败，保证指数走势百分之百完美呈现。

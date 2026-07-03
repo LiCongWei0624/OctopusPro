@@ -83,15 +83,27 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
             if not cookie_val:
                 raise Exception(f"WAF solution failed for {real_url}")
             
-            # Set the WAF bypass cookie for the domain
-            waf_cookie = http.cookiejar.Cookie(
+            # Set the WAF bypass cookie for both the specific host and parent domain for maximum compatibility
+            waf_cookie_host = http.cookiejar.Cookie(
                 version=0, name='acw_sc__v2', value=cookie_val,
                 port=None, port_specified=False,
-                domain='.leisu.com', domain_specified=True, domain_initial_dot=True,
+                domain=real_domain, domain_specified=True, domain_initial_dot=real_domain.startswith('.'),
                 path='/', path_specified=True,
                 secure=False, expires=None, discard=True, comment=None, comment_url=None, rest={}, rfc2109=False
             )
-            cj.set_cookie(waf_cookie)
+            cj.set_cookie(waf_cookie_host)
+            
+            try:
+                waf_cookie_parent = http.cookiejar.Cookie(
+                    version=0, name='acw_sc__v2', value=cookie_val,
+                    port=None, port_specified=False,
+                    domain='.leisu.com', domain_specified=True, domain_initial_dot=True,
+                    path='/', path_specified=True,
+                    secure=False, expires=None, discard=True, comment=None, comment_url=None, rest={}, rfc2109=False
+                )
+                cj.set_cookie(waf_cookie_parent)
+            except:
+                pass
             
             # Request again
             req2 = urllib.request.Request(real_url, headers=use_headers)
@@ -1019,6 +1031,10 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
         stdout, stderr = process.communicate(timeout=12)
         print("Crawler subprocess output:", stdout)
         
+        # Double check: if cache path not immediately found, sleep 0.2s and try again
+        if not os.path.exists(cache_path):
+            time.sleep(0.2)
+            
         if os.path.exists(cache_path):
             try:
                 with open(cache_path, 'r', encoding='utf-8') as f:
@@ -1038,6 +1054,19 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
                         res_json = json.loads(line.strip())
                         if not res_json.get('success'):
                             return {"error": res_json.get('error', 'Unknown crawler error')}
+                        else:
+                            alt_cache = res_json.get('cache_path')
+                            if alt_cache and os.path.exists(alt_cache):
+                                try:
+                                    with open(alt_cache, 'r', encoding='utf-8') as f:
+                                        data = json.load(f)
+                                    try:
+                                        os.remove(alt_cache)
+                                    except:
+                                        pass
+                                    return data
+                                except:
+                                    pass
             except:
                 pass
             return {"error": f"Crawler failed to generate cache. Stderr: {stderr.strip()}"}
