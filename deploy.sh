@@ -11,7 +11,7 @@
 set -e
 
 # 定义部署的绝对路径
-DEPLOY_DIR="/opt/leisu-bypass"
+DEPLOY_DIR=$(cd "$(dirname "$0")"; pwd)
 SERVICE_NAME="leisu"
 
 echo "=========================================="
@@ -19,12 +19,7 @@ echo "🚀 开始执行一键更新部署..."
 echo "=========================================="
 
 # 1. 确保在正确的部署目录下
-if [ -d "$DEPLOY_DIR" ]; then
-    cd "$DEPLOY_DIR"
-else
-    echo "❌ 错误: 部署目录 $DEPLOY_DIR 不存在，请先运行 setup.sh 进行首次初始化！"
-    exit 1
-fi
+cd "$DEPLOY_DIR"
 
 # 2. 从 GitHub 拉取最新代码
 echo "📦 正在从 GitHub 仓库拉取最新代码..."

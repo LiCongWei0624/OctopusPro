@@ -12,7 +12,7 @@
 set -e
 
 REPO_URL=$1
-DEPLOY_DIR="/opt/leisu-bypass"
+DEPLOY_DIR=$(cd "$(dirname "$0")"; pwd)
 SERVICE_NAME="leisu"
 
 echo "=========================================="
@@ -53,19 +53,8 @@ fi
 
 # 2. 准备代码目录
 echo "📂 2. 配置部署代码目录..."
-if [ -d "$DEPLOY_DIR" ]; then
-    echo "✨ 部署目录 $DEPLOY_DIR 已存在，跳过克隆。"
-    cd "$DEPLOY_DIR"
-else
-    if [ -z "$REPO_URL" ]; then
-        echo "💡 提示: 未提供 GitHub 仓库地址。如果您已手动上传代码，请将项目移动到 $DEPLOY_DIR，然后重新运行本脚本。"
-        echo "    用法示例: sudo bash setup.sh https://github.com/username/repo.git"
-        exit 1
-    fi
-    echo "📥 正在从 GitHub 克隆仓库到 $DEPLOY_DIR..."
-    git clone "$REPO_URL" "$DEPLOY_DIR"
-    cd "$DEPLOY_DIR"
-fi
+echo "📍 部署目录将设为当前脚本所在绝对路径: $DEPLOY_DIR"
+cd "$DEPLOY_DIR"
 
 # 3. 初始化虚拟环境并安装依赖
 echo "🐍 3. 初始化 Python 虚拟环境与依赖包..."
