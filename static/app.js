@@ -416,6 +416,11 @@ function switchDetailTab(tabName) {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     const activeContent = document.getElementById(`tab-content-${tabName}`);
     if (activeContent) activeContent.classList.add('active');
+    
+    // 切换到 AI 研判 tab 时，自动检查并秒级载入已缓存的 AI 预测报告
+    if (tabName === 'ai' && selectedMatch) {
+        checkAndLoadCachedReport(selectedMatch.id);
+    }
 }
 
 // Render Complete Match Details
@@ -478,9 +483,9 @@ function renderMatchDetails(match, details) {
     
     container.innerHTML = html;
     
-    // If user clicked AI tab, trigger a temporary visual loading state to demonstrate UI capability
+    // 如果当前选中的是 AI 选项卡，在切换场次后自动尝试秒级拉取并渲染已有的 AI 分析缓存
     if (activeDetailTab === 'ai') {
-        simulateAiLoadingEffect();
+        checkAndLoadCachedReport(match.id);
     }
 }
 
