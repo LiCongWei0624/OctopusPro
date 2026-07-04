@@ -541,17 +541,8 @@ def match_ai_analysis():
                 print(f"AI Analysis: Successfully loaded cached odds details for {company_name} (cid {cid}).")
                 all_tables = cached_trend
             else:
-                print(f"AI Analysis: No cache found. Pre-fetching historical odds details for {company_name} (cid {cid}) via Playwright...")
-                trend_data = get_odds_detail_via_playwright(match_id, cid, "all")
-                
-                if isinstance(trend_data, dict) and 'success' in trend_data and trend_data.get('success') == True:
-                    all_tables = trend_data.get('data', [])
-                elif isinstance(trend_data, dict) and 'data' in trend_data:
-                    all_tables = trend_data.get('data', [])
-                elif isinstance(trend_data, list):
-                    all_tables = trend_data
-                else:
-                    all_tables = []
+                print(f"AI Analysis: No local cache found for {company_name} (cid {cid}). Skipping historical trend logs to save time and bypass WAF.")
+                all_tables = []
                     
             if all_tables and len(all_tables) >= 3:
                 # 0 -> 让球, 1 -> 胜平负, 2 -> 大小球

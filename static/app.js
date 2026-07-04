@@ -503,14 +503,6 @@ function closeMobileDetails() {
     }
 }
 
-// 后台静默预热 AI 预测所需的 36* 和 皇* 核心走势缓存
-function prefetchOddsDetailsForAi(matchId) {
-    if (!matchId) return;
-    console.log(`[AI Prefetch] Starting background fetch for match ${matchId}...`);
-    fetch(`/api/match_odds_detail?match_id=${matchId}&cid=2&type=all`).catch(e => {});
-    fetch(`/api/match_odds_detail?match_id=${matchId}&cid=3&type=all`).catch(e => {});
-}
-
 // Fetch and load Match Details
 function loadMatchDetails(match) {
     if (!match.id) {
@@ -521,7 +513,6 @@ function loadMatchDetails(match) {
     // Check local memory cache first
     if (matchDetailsCache[match.id]) {
         renderMatchDetails(match, matchDetailsCache[match.id]);
-        prefetchOddsDetailsForAi(match.id);
         return;
     }
     
@@ -533,7 +524,6 @@ function loadMatchDetails(match) {
             if (res.success) {
                 matchDetailsCache[match.id] = res.data;
                 renderMatchDetails(match, res.data);
-                prefetchOddsDetailsForAi(match.id);
             } else {
                 renderDetailsError(res.error || "获取比赛详情失败。");
             }
