@@ -73,10 +73,22 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
                 'status': m.get('status', 1)
             })
             
-    # Then add desktop matches as fallback (to avoid missing matches)
+    # Then add desktop matches as fallback and update scores/status for existing ones
     for dm in desktop_matches:
         match_id = str(dm['id'])
-        if match_id not in seen_ids:
+        # 寻找已由移动端创建的对应比赛
+        existing_item = next((item for item in formatted_new_matches if str(item['id']) == match_id), None)
+        
+        if existing_item:
+            # 优先采用 PC 网页端更实时的比分和比赛状态（如进行中、已结束）进行覆盖更新
+            dm_status = dm.get('status', 1)
+            dm_score = dm.get('score', '')
+            if dm_status in [2, 3, 4, 5, 7, 8] or dm_score:
+                existing_item['status'] = dm_status
+                existing_item['score'] = dm_score
+                existing_item['half_score'] = dm.get('half_score', '')
+                existing_item['penalty_score'] = dm.get('penalty_score', '')
+        else:
             seen_ids.add(match_id)
             if match_id in existing_date_matches:
                 item = existing_date_matches[match_id].copy()

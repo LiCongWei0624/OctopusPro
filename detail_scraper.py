@@ -513,19 +513,21 @@ def parse_odds_json_to_list(decrypted_json):
                     
                 # 初始盘口
                 init_raw_line_val = float(asia_item['f'][1])
-                init_line_val = abs(init_raw_line_val)
-                if init_line_val == 0.0:
+                if init_raw_line_val == 0.0:
                     init_line_str = "0"
+                elif init_raw_line_val < 0.0:
+                    init_line_str = f"-{abs(init_raw_line_val)}"
                 else:
-                    init_line_str = f"-{init_line_val}" if is_home_strong else f"+{init_line_val}"
+                    init_line_str = f"+{abs(init_raw_line_val)}"
                     
                 # 即时盘口
                 inst_raw_line_val = float(asia_item['n'][0][1])
-                inst_line_val = abs(inst_raw_line_val)
-                if inst_line_val == 0.0:
+                if inst_raw_line_val == 0.0:
                     inst_line_str = "0"
+                elif inst_raw_line_val < 0.0:
+                    inst_line_str = f"-{abs(inst_raw_line_val)}"
                 else:
-                    inst_line_str = f"-{inst_line_val}" if is_home_strong else f"+{inst_line_val}"
+                    inst_line_str = f"+{abs(inst_raw_line_val)}"
                     
                 handicap_data = {
                     "initial_line": init_line_str,
