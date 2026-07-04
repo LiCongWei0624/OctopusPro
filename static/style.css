@@ -2308,14 +2308,14 @@ body {
 
 /* 5. 变盘指数走势图加载时的“微光扫光骨架屏” */
 .shimmer-loading {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 12px !important;
-    padding: 18px !important;
-    width: 100% !important;
-    align-items: flex-start !important;
-    background-color: var(--bg-panel) !important;
-    border-radius: var(--border-radius-md) !important;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 18px;
+    width: 100%;
+    align-items: flex-start;
+    background-color: var(--bg-panel);
+    border-radius: var(--border-radius-md);
 }
 
 .shimmer-line {
