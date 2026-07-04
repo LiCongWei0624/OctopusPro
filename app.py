@@ -8,6 +8,7 @@ from detail_scraper import get_complete_match_details, get_odds_detail_via_playw
 from scraper import scrape_desktop_matches
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
@@ -335,6 +336,23 @@ def get_odds_detail():
             return jsonify({'success': False, 'error': '暂无该公司的指数走势明细数据'})
     except Exception as e:
         return jsonify({'success': False, 'error': f"系统请求异常: {str(e)}"})
+def get_cached_odds_detail(match_id, cid):
+    all_tables = []
+    has_cache = False
+    for type_val in ["1", "2", "3"]:
+        cache_file = os.path.join(CACHE_DIR, f'odds_detail_{match_id}_{cid}_{type_val}.json')
+        if os.path.exists(cache_file):
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list) and data:
+                        all_tables.append(data)
+                        has_cache = True
+                        continue
+            except Exception:
+                pass
+        all_tables.append([])
+    return all_tables if has_cache else None
 
 @app.route('/api/match_ai_analysis', methods=['POST'])
 def match_ai_analysis():
@@ -518,18 +536,23 @@ def match_ai_analysis():
     context_lines.append(f"\n【核心指数庄家 (36*、皇*) 变盘历史走势明细】")
     for company_name, cid in [("36*", "2"), ("皇*", "3")]:
         try:
-            print(f"AI Analysis: Pre-fetching historical odds details for {company_name} (cid {cid}) ...")
-            trend_data = get_odds_detail_via_playwright(match_id, cid, "all")
-            
-            if isinstance(trend_data, dict) and 'success' in trend_data and trend_data.get('success') == True:
-                all_tables = trend_data.get('data', [])
-            elif isinstance(trend_data, dict) and 'data' in trend_data:
-                all_tables = trend_data.get('data', [])
-            elif isinstance(trend_data, list):
-                all_tables = trend_data
+            cached_trend = get_cached_odds_detail(match_id, cid)
+            if cached_trend:
+                print(f"AI Analysis: Successfully loaded cached odds details for {company_name} (cid {cid}).")
+                all_tables = cached_trend
             else:
-                all_tables = []
+                print(f"AI Analysis: No cache found. Pre-fetching historical odds details for {company_name} (cid {cid}) via Playwright...")
+                trend_data = get_odds_detail_via_playwright(match_id, cid, "all")
                 
+                if isinstance(trend_data, dict) and 'success' in trend_data and trend_data.get('success') == True:
+                    all_tables = trend_data.get('data', [])
+                elif isinstance(trend_data, dict) and 'data' in trend_data:
+                    all_tables = trend_data.get('data', [])
+                elif isinstance(trend_data, list):
+                    all_tables = trend_data
+                else:
+                    all_tables = []
+                    
             if all_tables and len(all_tables) >= 3:
                 # 0 -> 让球, 1 -> 胜平负, 2 -> 大小球
                 table_names = ["让球 (Handicap)", "胜平负 (1X2)", "大小球 (Over/Under)"]

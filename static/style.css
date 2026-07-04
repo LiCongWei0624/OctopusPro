@@ -39,6 +39,13 @@
     --border-radius-sm: 8px;
 }
 
+.tab-text-short {
+    display: none;
+}
+.tab-text-full {
+    display: inline;
+}
+
 /* --- Resets --- */
 * {
     margin: 0;
@@ -235,35 +242,75 @@ body {
 .top-date-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 1.5rem;
+    justify-content: flex-start;
+    gap: 0.5rem;
     height: 54px;
-    background: var(--bg-secondary);
+    background: var(--bg-panel);
     border-bottom: 1.5px solid var(--border-color);
-    padding: 0 1.5rem;
-    box-shadow: var(--shadow-sm);
+    padding: 0 1.25rem;
     z-index: 100;
     flex-shrink: 0;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-}
-.top-date-bar .date-quick-nav {
-    width: 220px;
-    flex-shrink: 0;
-    display: flex;
-    gap: 0.35rem;
-}
-.top-date-bar .date-tabs {
-    flex: 1;
-    margin-bottom: 0 !important;
-    border-bottom: none !important;
-    padding-bottom: 0 !important;
-    height: 48px;
-    align-items: center;
-    overflow-y: hidden;
+    box-shadow: var(--shadow-soft);
 }
 
-/* --- 日历选择器与快捷导航快捷键 --- */
+/* --- 横向滑动长轴极简日期列表滑块 --- */
+.date-slider-container {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    position: relative;
+    gap: 0.5rem;
+    max-width: 100%;
+}
+
+.date-tabs-wrapper {
+    overflow-x: auto;
+    scroll-behavior: smooth;
+    scrollbar-width: none; /* Firefox */
+}
+
+.date-tabs-wrapper::-webkit-scrollbar {
+    display: none; /* Chrome, Safari, Opera */
+}
+
+.date-tabs {
+    list-style: none;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 0.35rem !important;
+    padding: 0.15rem 0 !important;
+    margin: 0 !important;
+    border-bottom: none !important;
+    align-items: center;
+    white-space: nowrap !important;
+}
+
+.date-tab {
+    flex-shrink: 0 !important;
+    padding: 0.35rem 0.75rem !important;
+    font-size: 0.76rem !important;
+    border-radius: 6px !important;
+    background-color: var(--bg-body-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-weight: 600;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+}
+
+.date-tab:hover {
+    background-color: var(--border-light);
+    color: var(--text-primary);
+}
+
+.date-tab.active {
+    background-color: var(--color-primary-light) !important;
+    color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+    font-weight: 700;
+}
+
+/* --- 日历选择器外部容器 --- */
 .datepicker-container {
     position: relative;
     display: inline-flex;
@@ -273,113 +320,165 @@ body {
     height: 32px;
     flex-shrink: 0;
 }
-.calendar-picker-input {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-    z-index: 2;
-}
+
 .calendar-picker-btn {
-    position: absolute;
-    top: 0;
-    left: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
-    height: 100%;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
     background-color: var(--bg-body-secondary);
     border: 1px solid var(--border-color);
     color: var(--text-secondary);
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
+    transition: var(--transition-smooth);
     z-index: 1;
 }
-.calendar-picker-input:hover ~ .calendar-picker-btn {
+
+.calendar-picker-btn:hover {
     background-color: var(--border-light);
     color: var(--color-primary);
     border-color: var(--color-primary);
     transform: scale(1.08);
 }
-.date-selection-top {
+
+/* --- 自定义日历下拉面板 (Rich Aesthetics, Glassmorphism) --- */
+.custom-datepicker-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    width: 290px;
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(226, 232, 240, 0.8);
+    border-radius: 12px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+    padding: 0.85rem;
+    z-index: 1000;
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    margin-bottom: 0.65rem;
-}
-.date-quick-nav {
-    display: flex;
-    gap: 0.35rem;
-    flex: 1;
-    width: auto;
-}
-.btn-quick-date {
-    flex: 1;
-    height: 32px;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
-    background-color: var(--bg-body-secondary);
-    color: var(--text-secondary);
-    font-size: 0.76rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-.btn-quick-date:hover {
-    background-color: var(--border-light);
-    color: var(--text-primary);
-}
-.btn-quick-date.active-today {
-    background-color: var(--color-primary) !important;
-    color: #ffffff !important;
-    border-color: var(--color-primary) !important;
-    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2);
+    flex-direction: column;
+    gap: 0.65rem;
+    transform-origin: top right;
+    animation: popover-appear 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-/* --- 横向滑动长轴极简日期列表 --- */
-.date-tabs {
-    list-style: none;
-    display: flex !important;
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    scrollbar-width: none !important;
-    white-space: nowrap !important;
-    gap: 0.4rem !important;
-    padding-bottom: 0.4rem !important;
-    margin-bottom: 0.85rem !important;
-    border-bottom: 1.5px solid var(--border-color);
+@keyframes popover-appear {
+    from {
+        opacity: 0;
+        transform: scale(0.95) translateY(-5px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
 }
-.date-tabs::-webkit-scrollbar {
-    display: none !important;
+
+.popover-quick-dates {
+    display: flex;
+    gap: 0.35rem;
+    width: 100%;
 }
-.date-tab {
-    flex-shrink: 0 !important;
-    padding: 0.35rem 0.75rem !important;
-    font-size: 0.78rem !important;
-    border-radius: 6px !important;
+
+.btn-popover-quick {
+    flex: 1;
+    height: 28px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    border-radius: 6px;
     background-color: var(--bg-body-secondary);
     border: 1px solid var(--border-color);
     color: var(--text-secondary);
-    font-weight: 500;
-    transition: all 0.2s ease;
+    cursor: pointer;
+    transition: var(--transition-smooth);
 }
-.date-tab:hover {
-    background-color: var(--border-light);
+
+.btn-popover-quick:hover {
+    background-color: var(--color-primary-light);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.popover-calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-weight: 700;
+    font-size: 0.8rem;
     color: var(--text-primary);
+    border-top: 1px dashed var(--border-color);
+    padding-top: 0.55rem;
+    margin-top: 0.15rem;
 }
-.date-tab.active {
-    background-color: var(--color-primary-light) !important;
-    color: var(--color-primary) !important;
-    border-color: var(--color-primary) !important;
+
+.btn-cal-nav {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-secondary);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    transition: var(--transition-smooth);
+}
+
+.btn-cal-nav:hover {
+    background-color: var(--bg-body-secondary);
+    color: var(--color-primary);
+}
+
+.popover-calendar-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+    font-size: 0.65rem;
+    color: var(--text-muted);
     font-weight: 700;
 }
-.date-tab.active::after {
-    display: none !important;
+
+.popover-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+}
+
+.popover-cal-day {
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.74rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: var(--transition-smooth);
+}
+
+.popover-cal-day:hover {
+    background-color: var(--bg-body-secondary);
+    transform: scale(1.05);
+}
+
+.popover-cal-day.other-month {
+    color: var(--text-muted);
+    opacity: 0.4;
+}
+
+.popover-cal-day.today {
+    color: var(--color-primary);
+    border: 1px dashed var(--color-primary);
+}
+
+.popover-cal-day.active {
+    background-color: var(--color-primary) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.25);
+    transform: scale(1.05);
 }
 
 /* --- Matches List / panel-matches --- */
@@ -453,66 +552,72 @@ body {
     max-width: 65px;
 }
 
-.match-teams-col {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-grow: 1;
-    gap: 0.5rem;
-}
-
-.m-team {
-    flex: 1;
+.match-teams-col-vertical {
     display: flex;
     flex-direction: column;
-    gap: 0.1rem;
+    gap: 0.35rem;
+    flex-grow: 1;
+    min-width: 0;
 }
 
-.m-team.home {
-    align-items: flex-end;
-    text-align: right;
+.m-team-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-width: 0;
 }
 
-.m-team.away {
-    align-items: flex-start;
-    text-align: left;
+.team-name-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-width: 0;
+    flex-grow: 1;
 }
 
 .team-name {
-    font-size: 0.92rem;
+    font-size: 0.88rem;
     font-weight: 750;
     color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 145px;
 }
 
 .team-rank {
     font-size: 0.65rem;
     color: var(--text-muted);
+    background-color: var(--bg-body-secondary);
+    padding: 0.05rem 0.2rem;
+    border-radius: 4px;
+    flex-shrink: 0;
 }
 
-.m-score-wrap {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-width: 70px;
-}
-
-.m-score {
+.team-score {
     font-size: 1.05rem;
     font-weight: 850;
     color: var(--text-primary);
-    background-color: var(--bg-body-secondary);
-    padding: 0.2rem 0.55rem;
-    border-radius: 6px;
-    border: 1px solid var(--border-color);
     font-family: monospace;
-    letter-spacing: -0.5px;
+    min-width: 20px;
+    text-align: right;
+    flex-shrink: 0;
 }
 
-.match-status-col {
-    min-width: 60px;
+.team-score.home-score {
+    color: var(--color-primary);
+}
+
+.match-status-col-vertical {
+    min-width: 65px;
+    flex-shrink: 0;
     display: flex;
-    justify-content: flex-end;
+    flex-direction: column;
+    align-items: flex-end;
+    justify-content: center;
+    gap: 0.2rem;
+}
     flex-shrink: 0;
 }
 
@@ -1088,7 +1193,7 @@ body {
 }
 .search-input-field:focus {
     border-color: var(--color-primary);
-    background-color: var(--bg-primary);
+    background-color: var(--bg-panel);
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 .dropdown-wrapper {
@@ -1118,7 +1223,7 @@ body {
 }
 .league-select-dropdown:focus {
     border-color: var(--color-primary);
-    background-color: var(--bg-primary);
+    background-color: var(--bg-panel);
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
 }
 
@@ -1776,42 +1881,29 @@ body {
         gap: 0.5rem;
     }
 
-    /* 3. 顶级全宽日期控制栏在移动端自适应为网格排布 */
+    /* 3. 顶级全宽日期控制栏在移动端自适应为一行横向流布局 */
     .top-date-bar {
-        display: grid !important;
-        grid-template-columns: 1fr auto !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
         gap: 0.5rem !important;
-        height: auto !important;
-        padding: 0.5rem 0.75rem !important;
-        background: var(--bg-secondary) !important;
+        height: 52px !important;
+        padding: 0 0.75rem !important;
+        background: var(--bg-panel) !important;
         border-bottom: 1.5px solid var(--border-color) !important;
         flex-shrink: 0 !important;
     }
-    .top-date-bar .date-quick-nav {
+    .top-date-bar .date-slider-container {
+        flex: 1 !important;
+        min-width: 0 !important;
+        overflow: hidden !important;
+    }
+    .top-date-bar .date-tabs-wrapper {
         width: 100% !important;
-        grid-column: 1 / 2;
     }
     .top-date-bar .datepicker-container {
-        grid-column: 2 / 3;
         width: 32px !important;
         height: 32px !important;
-    }
-    .top-date-bar .date-tabs {
-        grid-column: 1 / 3;
-        width: 100% !important;
-        height: 36px !important;
-        padding-top: 0 !important;
-        margin-bottom: 0 !important;
-        border-bottom: none !important;
-        overflow-x: auto !important;
-        white-space: nowrap !important;
-        display: flex !important;
-        flex-direction: row !important;
-        gap: 0.4rem !important;
-    }
-    .date-tab {
-        padding: 0.35rem 0.75rem !important;
-        font-size: 0.78rem !important;
         flex-shrink: 0 !important;
     }
 
@@ -1844,7 +1936,7 @@ body {
         left: 0 !important;
         width: 100vw !important;
         height: 100vh !important;
-        background: var(--bg-primary) !important;
+        background: var(--bg-panel) !important;
         z-index: 9999 !important;
         transform: translate3d(100%, 0, 0) !important;
         transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
@@ -1867,7 +1959,7 @@ body {
         align-items: center !important;
         justify-content: space-between !important;
         padding: 0.85rem 1rem !important;
-        background: var(--bg-secondary) !important;
+        background: var(--bg-panel) !important;
         border-bottom: 1px solid var(--border-color) !important;
         position: sticky !important;
         top: 0 !important;
@@ -1880,20 +1972,33 @@ body {
     .btn-mobile-back {
         display: flex !important;
         align-items: center !important;
-        gap: 0.4rem !important;
-        background: transparent !important;
-        border: none !important;
+        gap: 0.35rem !important;
+        background: var(--color-primary-light) !important;
+        border: 1px solid rgba(79, 70, 229, 0.12) !important;
         color: var(--color-primary) !important;
-        font-size: 0.9rem !important;
-        font-weight: 600 !important;
-        padding: 0.4rem 0.6rem !important;
-        border-radius: 6px !important;
+        font-size: 0.82rem !important;
+        font-weight: 700 !important;
+        padding: 0.35rem 0.75rem !important;
+        border-radius: 20px !important;
         cursor: pointer !important;
-        transition: background-color 0.2s !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 2px 6px rgba(79, 70, 229, 0.06) !important;
     }
     
     .btn-mobile-back:active {
-        background-color: var(--border-color) !important;
+        background-color: var(--color-primary) !important;
+        color: #ffffff !important;
+        border-color: var(--color-primary) !important;
+        transform: scale(0.95) !important;
+        box-shadow: 0 1px 3px rgba(79, 70, 229, 0.15) !important;
+    }
+    
+    .btn-mobile-back svg {
+        transition: transform 0.2s ease !important;
+    }
+    
+    .btn-mobile-back:active svg {
+        transform: translateX(-2px) !important;
     }
     
     .mobile-match-title {
@@ -1908,20 +2013,26 @@ body {
         white-space: nowrap !important;
     }
     
-    /* 详情页签栏，固定在 header 下方并支持横向水平微调 */
+    .tab-text-short {
+        display: inline !important;
+    }
+    .tab-text-full {
+        display: none !important;
+    }
+
+    /* 详情页签栏，固定在 header 下方，平摊在移动端屏幕内无溢出 */
     .details-tab-bar {
         position: sticky !important;
         top: 52px !important; /* 紧跟在移动端头部下方 */
-        background: var(--bg-primary) !important;
+        background: var(--bg-panel) !important;
         z-index: 1000 !important;
-        padding: 0.5rem 1rem !important;
+        padding: 0.5rem 0.5rem !important;
         border-bottom: 1px solid var(--border-color) !important;
-        overflow-x: auto !important;
-        white-space: nowrap !important;
-        scrollbar-width: none !important;
+        overflow-x: hidden !important; /* 去除滑动条 */
         display: flex !important;
+        justify-content: space-between !important; /* 两端对齐，完全平摊在宽度内 */
+        gap: 0.2rem !important;
         flex-wrap: nowrap !important;
-        gap: 1rem !important;
         flex-shrink: 0 !important;
     }
     
@@ -1931,8 +2042,9 @@ body {
     
     .detail-tab {
         flex-shrink: 0 !important;
-        padding: 0.25rem 0.15rem !important;
-        font-size: 0.85rem !important;
+        padding: 0.25rem 0.1rem !important;
+        font-size: 0.8rem !important; /* 稍微缩小字体以完美适配所有小屏手机 */
+        gap: 0.2rem !important;
     }
     
     /* 详情主体，在弹性盒子下自适应高度独立滚动 */
@@ -2007,3 +2119,224 @@ body {
         height: auto !important;
     }
 }
+
+/* ==========================================================================
+   Leisu Premium UX & Aesthetics Enhancements (SaaS Grade)
+   ========================================================================== */
+
+/* 1. 进行中 (Live) 赛事卡片的呼吸灯动效与左侧高亮指示条 */
+.match-card.live-match {
+    border-left: 3.5px solid #10b981 !important;
+}
+
+.status-chip.live {
+    position: relative !important;
+    padding-left: 18px !important;
+    background-color: rgba(16, 185, 129, 0.1) !important;
+    color: #10b981 !important;
+    border: 1px solid rgba(16, 185, 129, 0.25) !important;
+    font-weight: 700 !important;
+}
+
+.status-chip.live::before {
+    content: '';
+    position: absolute;
+    left: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 6px;
+    height: 6px;
+    background-color: #10b981;
+    border-radius: 50%;
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.85);
+    animation: pulse-live-indicator 1.8s infinite cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes pulse-live-indicator {
+    0% {
+        transform: translateY(-50%) scale(0.9);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.85);
+    }
+    70% {
+        transform: translateY(-50%) scale(1.1);
+        box-shadow: 0 0 0 5px rgba(16, 185, 129, 0);
+    }
+    100% {
+        transform: translateY(-50%) scale(0.9);
+        box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+    }
+}
+
+/* 2. H2H 对决与近期战绩的“胜/平/负”战绩弹珠 (Outcome Badge) 优化 */
+.outcome-badge {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 22px !important;
+    height: 22px !important;
+    border-radius: 50% !important;
+    font-size: 0.72rem !important;
+    font-weight: 800 !important;
+    color: #ffffff !important;
+    line-height: 1 !important;
+    margin: 0 2px !important;
+    box-shadow: inset 0 -1.5px 3px rgba(0, 0, 0, 0.2), 0 2px 4px rgba(0, 0, 0, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.2) !important;
+    transition: transform 0.2s ease !important;
+}
+
+.outcome-badge:hover {
+    transform: scale(1.15);
+}
+
+.outcome-badge.win {
+    background: linear-gradient(135deg, #10b981, #059669) !important;
+}
+
+.outcome-badge.draw {
+    background: linear-gradient(135deg, #94a3b8, #64748b) !important;
+}
+
+.outcome-badge.loss {
+    background: linear-gradient(135deg, #f43f5e, #e11d48) !important;
+}
+
+/* 3. AI 深度研判生成按钮的“炫彩渐变”与“科技光晕” */
+.btn-ai-run {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px;
+    padding: 0.85rem 1.75rem !important;
+    border-radius: 30px !important;
+    cursor: pointer !important;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    box-shadow: 0 4px 14px rgba(99, 102, 241, 0.3), 0 1px 2px rgba(99, 102, 241, 0.1) !important;
+}
+
+.btn-ai-run:hover:not(:disabled) {
+    transform: translateY(-2.5px);
+    background: linear-gradient(135deg, #4f46e5, #7c3aed) !important;
+    box-shadow: 0 8px 24px rgba(139, 92, 246, 0.5), 0 2px 4px rgba(139, 92, 246, 0.2) !important;
+}
+
+.btn-ai-run:active:not(:disabled) {
+    transform: translateY(-0.5px);
+    box-shadow: 0 4px 10px rgba(139, 92, 246, 0.3) !important;
+}
+
+.btn-ai-run:disabled {
+    opacity: 0.8 !important;
+    background: linear-gradient(135deg, #94a3b8, #cbd5e1) !important;
+    cursor: not-allowed !important;
+    box-shadow: none !important;
+    transform: none !important;
+}
+
+/* 4. AI 报告 Markdown 排版的美学升级 */
+#ai-report-content {
+    padding: 1.5rem !important;
+    line-height: 1.8 !important;
+    font-size: 0.95rem !important;
+    color: var(--text-secondary) !important;
+}
+
+#ai-report-content h3, #ai-report-content h4, #ai-report-content h5 {
+    color: var(--text-primary) !important;
+    font-weight: 800 !important;
+    margin-top: 1.8rem !important;
+    margin-bottom: 0.9rem !important;
+}
+
+#ai-report-content h3 {
+    font-size: 1.25rem !important;
+    border-left: 4.5px solid #8b5cf6 !important;
+    padding-left: 10px !important;
+    margin-top: 2rem !important;
+}
+
+#ai-report-content h4 {
+    font-size: 1.12rem !important;
+    padding-left: 4px !important;
+}
+
+#ai-report-content h5 {
+    font-size: 1.02rem !important;
+}
+
+#ai-report-content p {
+    margin-bottom: 1rem !important;
+}
+
+#ai-report-content li {
+    margin-bottom: 0.75rem !important;
+    margin-left: 1.3rem !important;
+    line-height: 1.7 !important;
+}
+
+/* 将粗体字（大模型核心研判预测数据）标注为高亮的渐变紫色 */
+#ai-report-content b, #ai-report-content strong {
+    color: #7c3aed !important;
+    font-weight: 700 !important;
+    background-color: rgba(139, 92, 246, 0.08) !important;
+    padding: 2px 6px !important;
+    margin: 0 2px !important;
+    border-radius: 4px !important;
+    border: 1px solid rgba(139, 92, 246, 0.15) !important;
+    font-family: inherit !important;
+}
+
+/* 引用块（大模型总结的投注策略）左侧淡紫色高亮粗边框与浅底色 */
+#ai-report-content blockquote {
+    border-left: 5px solid #8b5cf6 !important;
+    background: linear-gradient(90deg, rgba(139, 92, 246, 0.05) 0%, rgba(99, 102, 241, 0.01) 100%) !important;
+    padding: 14px 18px !important;
+    margin: 1.4rem 0 !important;
+    border-radius: 0 10px 10px 0 !important;
+    color: var(--text-primary) !important;
+    font-size: 0.93rem !important;
+    border-top: 1px solid rgba(139, 92, 246, 0.05) !important;
+    border-bottom: 1px solid rgba(139, 92, 246, 0.05) !important;
+    border-right: 1px solid rgba(139, 92, 246, 0.03) !important;
+}
+
+/* 5. 变盘指数走势图加载时的“微光扫光骨架屏” */
+.shimmer-loading {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important;
+    padding: 18px !important;
+    width: 100% !important;
+    align-items: flex-start !important;
+    background-color: var(--bg-panel) !important;
+    border-radius: var(--border-radius-md) !important;
+}
+
+.shimmer-line {
+    height: 10px !important;
+    width: 100% !important;
+    background: linear-gradient(90deg, var(--border-color) 25%, var(--bg-app) 37%, var(--border-color) 63%) !important;
+    background-size: 400% 100% !important;
+    animation: shimmer-swipe 1.5s ease-in-out infinite !important;
+    border-radius: 4px !important;
+}
+
+.shimmer-line.medium {
+    width: 80% !important;
+}
+
+.shimmer-line.short {
+    width: 50% !important;
+}
+
+@keyframes shimmer-swipe {
+    0% {
+        background-position: 100% 50%;
+    }
+    100% {
+        background-position: 0 50%;
+    }
+}
+

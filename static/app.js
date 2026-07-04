@@ -7,12 +7,35 @@ let matchDetailsCache = {}; // Cache for match details in memory
 let selectedLeague = '全部';
 let searchQuery = '';
 
+// Sliding date range options & Custom Datepicker states
+let startOffsetDays = -2;
+let endOffsetDays = 2;
+let calendarYear = new Date().getFullYear();
+let calendarMonth = new Date().getMonth();
+let isDateLoading = false;
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
     autoFixHtmlCacheBug();
     loadMatches();
     
+    // Bind slider container scroll event
+    const wrapper = document.getElementById('date-tabs-wrapper');
+    if (wrapper) {
+        wrapper.addEventListener('scroll', () => handleTabsScroll(wrapper));
+    }
+    
+    // Global click listener to close custom calendar popover
+    document.addEventListener('click', (e) => {
+        const popover = document.getElementById('custom-datepicker-popover');
+        const trigger = document.getElementById('calendar-trigger-btn');
+        if (popover && popover.style.display !== 'none') {
+            if (!popover.contains(e.target) && !trigger.contains(e.target)) {
+                popover.style.display = 'none';
+            }
+        }
+    });
+
     // Auto-refresh today's matches every 5 minutes
     setInterval(() => {
         const todayStr = getTodayDateString();
@@ -159,6 +182,9 @@ function renderDateSidebar() {
         li.onclick = () => selectDate(date);
         container.appendChild(li);
     });
+
+    // Update arrows status after render
+    updateSliderArrowsState();
 }
 
 // Select Date Tab
@@ -166,43 +192,27 @@ function selectDate(date) {
     selectedDate = date;
     selectedLeague = '全部';
     
+    // 检查对应日期的页签是否存在于 DOM 中
+    const tabExists = !!document.getElementById(`date-tab-${date}`);
+    if (!tabExists) {
+        // 如果不存在，强制重新渲染滑动条以生成并高亮该页签
+        renderDateSidebar();
+    }
+    
     // Toggle active state in UI
     document.querySelectorAll('.date-tab').forEach(t => t.classList.remove('active'));
     const activeTab = document.getElementById(`date-tab-${date}`);
     if (activeTab) activeTab.classList.add('active');
     
-    // Sync active classes on quick nav buttons
     const todayStr = getTodayDateString();
-    const dateObj = new Date();
-    dateObj.setDate(dateObj.getDate() - 1);
-    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const dd = String(dateObj.getDate()).padStart(2, '0');
-    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-    const yesterdayStr = `${mm}-${dd} ${weekdays[dateObj.getDay()]}`;
-    
-    const tObj = new Date();
-    tObj.setDate(tObj.getDate() + 1);
-    const tMm = String(tObj.getMonth() + 1).padStart(2, '0');
-    const tDd = String(tObj.getDate()).padStart(2, '0');
-    const tomorrowStr = `${tMm}-${tDd} ${weekdays[tObj.getDay()]}`;
-    
-    document.querySelectorAll('.btn-quick-date').forEach(btn => btn.classList.remove('active-today'));
-    if (date === todayStr) {
-        const btn = document.getElementById('btn-quick-today');
-        if (btn) btn.classList.add('active-today');
-    } else if (date === yesterdayStr) {
-        const btn = Array.from(document.querySelectorAll('.btn-quick-date')).find(b => b.textContent === '昨天');
-        if (btn) btn.classList.add('active-today');
-    } else if (date === tomorrowStr) {
-        const btn = Array.from(document.querySelectorAll('.btn-quick-date')).find(b => b.textContent === '明天');
-        if (btn) btn.classList.add('active-today');
-    }
-    
     if (date !== todayStr) {
         refreshDateData(date);
     } else {
         renderDateMatches(date);
     }
+
+    // 仅进行滑动居中定位，不再向两侧无限拉取加载日期
+    scrollToSelectedTab(date);
 }
 
 // Fetch matches for a specific date from backend on-demand
@@ -365,8 +375,10 @@ function renderMatchCards(matches) {
     }
     
     matches.forEach(m => {
+        const status = Number(m.status || 1);
+        const isLive = (status >= 2 && status <= 7);
         const card = document.createElement('div');
-        card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''}`;
+        card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''}`;
         card.id = `match-card-${m.id}`;
         card.onclick = () => selectMatch(m);
         
@@ -375,8 +387,6 @@ function renderMatchCards(matches) {
         let halfDisplay = '';
         let statusText = '已排期';
         let statusClass = 'scheduled';
-        
-        const status = Number(m.status || 1);
         if (status === 1) {
             statusText = '已排期';
             statusClass = 'scheduled';
@@ -400,15 +410,28 @@ function renderMatchCards(matches) {
             statusClass = 'finished';
         }
         
+        let homeScore = '';
+        let awayScore = '';
+        
         if (status >= 2 && status <= 8) {
-            if (m.score && m.score.trim() !== '') {
-                scoreDisplay = m.score.replace('-', ' : ').replace(':', ' : ');
+            if (m.score && m.score.includes('-')) {
+                const parts = m.score.split('-');
+                homeScore = parts[0].trim();
+                awayScore = parts[1].trim();
+            } else if (m.score && m.score.includes(':')) {
+                const parts = m.score.split(':');
+                homeScore = parts[0].trim();
+                awayScore = parts[1].trim();
+            } else {
+                homeScore = m.score || '';
+                awayScore = '';
             }
+            
             if (m.half_score && m.half_score.trim() !== '') {
-                halfDisplay = `<span class="half-score-label" style="font-size: 0.75rem; color: #8a99ad; display: block; margin-top: 2px;">半: ${m.half_score}</span>`;
+                halfDisplay = `<span class="half-score-label" style="font-size: 0.72rem; color: #8a99ad;">半:${m.half_score}</span>`;
             }
             if (m.penalty_score && m.penalty_score.trim() !== '') {
-                penaltyDisplay = `<span class="penalty-label" style="font-size: 0.75rem; color: #e74c5b; display: block; font-weight: bold; margin-top: 2px;">点: ${m.penalty_score}</span>`;
+                penaltyDisplay = `<span class="penalty-label" style="font-size: 0.72rem; color: #e74c5b; font-weight: bold;">点:${m.penalty_score}</span>`;
             }
         }
         
@@ -417,23 +440,30 @@ function renderMatchCards(matches) {
                 <span class="m-time">${m.time}</span>
                 <span class="m-league" title="${m.competition}">${m.competition}</span>
             </div>
-            <div class="match-teams-col">
-                <div class="m-team home">
-                    <span class="team-name">${m.home_team}</span>
-                    ${m.home_rank ? `<span class="team-rank">${m.home_rank}</span>` : ''}
+            <div class="match-teams-col-vertical">
+                <div class="m-team-row home">
+                    <span class="team-name-wrap">
+                        <span class="team-name" title="${m.home_team}">${m.home_team}</span>
+                        ${m.home_rank ? `<span class="team-rank">${m.home_rank}</span>` : ''}
+                    </span>
+                    <span class="team-score home-score">${homeScore}</span>
                 </div>
-                <div class="m-score-wrap" style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 60px;">
-                    <span class="m-score" style="font-size: 1.1rem; font-weight: 700;">${scoreDisplay}</span>
-                    ${halfDisplay}
-                    ${penaltyDisplay}
-                </div>
-                <div class="m-team away">
-                    <span class="team-name">${m.away_team}</span>
-                    ${m.away_rank ? `<span class="team-rank">${m.away_rank}</span>` : ''}
+                <div class="m-team-row away">
+                    <span class="team-name-wrap">
+                        <span class="team-name" title="${m.away_team}">${m.away_team}</span>
+                        ${m.away_rank ? `<span class="team-rank">${m.away_rank}</span>` : ''}
+                    </span>
+                    <span class="team-score away-score">${awayScore}</span>
                 </div>
             </div>
-            <div class="match-status-col">
+            <div class="match-status-col-vertical">
                 <span class="status-chip ${statusClass}">${statusText}</span>
+                ${halfDisplay || penaltyDisplay ? `
+                    <div class="extra-scores" style="display: flex; gap: 0.35rem; justify-content: flex-end; align-items: center; margin-top: 3px;">
+                        ${halfDisplay}
+                        ${penaltyDisplay}
+                    </div>
+                ` : ''}
             </div>
         `;
         container.appendChild(card);
@@ -473,6 +503,14 @@ function closeMobileDetails() {
     }
 }
 
+// 后台静默预热 AI 预测所需的 36* 和 皇* 核心走势缓存
+function prefetchOddsDetailsForAi(matchId) {
+    if (!matchId) return;
+    console.log(`[AI Prefetch] Starting background fetch for match ${matchId}...`);
+    fetch(`/api/match_odds_detail?match_id=${matchId}&cid=2&type=all`).catch(e => {});
+    fetch(`/api/match_odds_detail?match_id=${matchId}&cid=3&type=all`).catch(e => {});
+}
+
 // Fetch and load Match Details
 function loadMatchDetails(match) {
     if (!match.id) {
@@ -483,6 +521,7 @@ function loadMatchDetails(match) {
     // Check local memory cache first
     if (matchDetailsCache[match.id]) {
         renderMatchDetails(match, matchDetailsCache[match.id]);
+        prefetchOddsDetailsForAi(match.id);
         return;
     }
     
@@ -494,6 +533,7 @@ function loadMatchDetails(match) {
             if (res.success) {
                 matchDetailsCache[match.id] = res.data;
                 renderMatchDetails(match, res.data);
+                prefetchOddsDetailsForAi(match.id);
             } else {
                 renderDetailsError(res.error || "获取比赛详情失败。");
             }
@@ -898,6 +938,9 @@ function renderFullMarkdownReport(text) {
 function parseSimpleMarkdown(md) {
     let html = md;
     
+    // 替换 > 引用块
+    html = html.replace(/^\s*>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
+    
     // Replace # header with h3
     html = html.replace(/^#\s+(.+)$/gm, '<h3>$1</h3>');
     // Replace ## header with h4
@@ -911,12 +954,15 @@ function parseSimpleMarkdown(md) {
     // Replace list * or - with <li>
     html = html.replace(/^\s*[\*\-]\s+(.+)$/gm, '<li>$1</li>');
     
+    // 替换数字有序列表
+    html = html.replace(/^\s*(\d+)\.\s+(.+)$/gm, '<li>$1. $2</li>');
+    
     // Process paragraphs
     let lines = html.split('\n\n');
     html = lines.map(line => {
         let trimmed = line.trim();
         if (!trimmed) return '';
-        if (trimmed.startsWith('<h') || trimmed.startsWith('<li')) {
+        if (trimmed.startsWith('<h') || trimmed.startsWith('<li') || trimmed.startsWith('<blockquote')) {
             return trimmed;
         }
         return `<p>${trimmed}</p>`;
@@ -1383,7 +1429,12 @@ function renderOddsTab(match, details) {
             <tr id="trend-row-${row.cid}-1" class="trend-chart-row" style="display:none;">
                 <td colspan="3" class="trend-chart-td">
                     <div class="trend-chart-box">
-                        <div class="trend-loading-spinner">正在拉取实时变盘走势...</div>
+                        <div class="trend-loading-spinner shimmer-loading">
+                            <div class="shimmer-line"></div>
+                            <div class="shimmer-line medium"></div>
+                            <div class="shimmer-line short"></div>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
+                        </div>
                         <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
                             <canvas id="trend-canvas-${row.cid}-1" style="height: 160px; width: 100%;"></canvas>
                         </div>
@@ -1438,7 +1489,12 @@ function renderOddsTab(match, details) {
             <tr id="trend-row-${row.cid}-2" class="trend-chart-row" style="display:none;">
                 <td colspan="3" class="trend-chart-td">
                     <div class="trend-chart-box">
-                        <div class="trend-loading-spinner">正在拉取实时变盘走势...</div>
+                        <div class="trend-loading-spinner shimmer-loading">
+                            <div class="shimmer-line"></div>
+                            <div class="shimmer-line medium"></div>
+                            <div class="shimmer-line short"></div>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
+                        </div>
                         <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
                             <canvas id="trend-canvas-${row.cid}-2" style="height: 160px; width: 100%;"></canvas>
                         </div>
@@ -1486,7 +1542,12 @@ function renderOddsTab(match, details) {
             <tr id="trend-row-${row.cid}-3" class="trend-chart-row" style="display:none;">
                 <td colspan="3" class="trend-chart-td">
                     <div class="trend-chart-box">
-                        <div class="trend-loading-spinner">正在拉取实时变盘走势...</div>
+                        <div class="trend-loading-spinner shimmer-loading">
+                            <div class="shimmer-line"></div>
+                            <div class="shimmer-line medium"></div>
+                            <div class="shimmer-line short"></div>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
+                        </div>
                         <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
                             <canvas id="trend-canvas-${row.cid}-3" style="height: 160px; width: 100%;"></canvas>
                         </div>
@@ -1656,7 +1717,7 @@ function getDatesRange() {
     const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const today = new Date();
     
-    for (let i = -10; i <= 10; i++) {
+    for (let i = startOffsetDays; i <= endOffsetDays; i++) {
         const d = new Date(today);
         d.setDate(today.getDate() + i);
         
@@ -1666,22 +1727,271 @@ function getDatesRange() {
         dates.push(`${mm}-${dd} ${w}`);
     }
     
-    // 如果用户通过日历选择了一个超出默认-10到+10天范围的日期，则动态插入并排序
+    // 如果用户选择了一个超出当前默认范围的日期，则动态扩充边界以包容它
     if (selectedDate && !dates.includes(selectedDate)) {
-        dates.push(selectedDate);
-        dates.sort((a, b) => {
-            const parseDate = (s) => {
-                const parts = s.split(' ')[0].split('-');
-                return parseInt(parts[0]) * 31 + parseInt(parts[1]);
-            };
-            return parseDate(a) - parseDate(b);
-        });
+        try {
+            const parts = selectedDate.split(' ')[0].split('-');
+            const mm = parseInt(parts[0]);
+            const dd = parseInt(parts[1]);
+            
+            const today = new Date();
+            const currentYear = today.getFullYear();
+            let selYear = currentYear;
+            const currentMonth = today.getMonth();
+            if (currentMonth === 11 && mm === 1) {
+                selYear += 1;
+            } else if (currentMonth === 0 && mm === 12) {
+                selYear -= 1;
+            }
+            
+            const selD = new Date(selYear, mm - 1, dd);
+            const diffTime = selD - today;
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            
+            if (diffDays < startOffsetDays) {
+                startOffsetDays = diffDays - 5;
+            } else if (diffDays > endOffsetDays) {
+                endOffsetDays = diffDays + 5;
+            }
+            return getDatesRange();
+        } catch (e) {
+            console.error("解析选择日期出错:", e);
+        }
     }
     return dates;
 }
 
-// 昨天、今天、明天极速快捷键点击处理
-function selectQuickDate(type) {
+// 边缘滑动自动扩充
+function loadMoreDates(direction, callback) {
+    if (isDateLoading) return;
+    isDateLoading = true;
+    
+    const wrapper = document.getElementById('date-tabs-wrapper');
+    const oldScrollWidth = wrapper ? wrapper.scrollWidth : 0;
+    
+    if (direction === 'left') {
+        startOffsetDays -= 10;
+    } else if (direction === 'right') {
+        endOffsetDays += 10;
+    }
+    
+    renderDateSidebar();
+    
+    if (direction === 'left' && wrapper) {
+        setTimeout(() => {
+            const newScrollWidth = wrapper.scrollWidth;
+            const diff = newScrollWidth - oldScrollWidth;
+            wrapper.scrollLeft = wrapper.scrollLeft + diff;
+            isDateLoading = false;
+            if (callback) callback();
+        }, 0);
+    } else {
+        setTimeout(() => {
+            isDateLoading = false;
+            if (callback) callback();
+        }, 0);
+    }
+}
+
+// 物理箭头滚动
+function scrollDateTabs(direction) {
+    const wrapper = document.getElementById('date-tabs-wrapper');
+    if (!wrapper) return;
+    
+    const scrollAmount = wrapper.clientWidth * 0.7;
+    if (direction === 'prev') {
+        wrapper.scrollLeft -= scrollAmount;
+    } else {
+        wrapper.scrollLeft += scrollAmount;
+    }
+}
+window.scrollDateTabs = scrollDateTabs;
+
+// 滑动监听
+function handleTabsScroll(el) {
+    updateSliderArrowsState();
+}
+window.handleTabsScroll = handleTabsScroll;
+
+// 更新箭头状态
+function updateSliderArrowsState() {
+    const wrapper = document.getElementById('date-tabs-wrapper');
+    const prevBtn = document.querySelector('.slider-arrow.prev-arrow');
+    const nextBtn = document.querySelector('.slider-arrow.next-arrow');
+    if (!wrapper || !prevBtn || !nextBtn) return;
+    
+    prevBtn.disabled = wrapper.scrollLeft <= 2;
+    nextBtn.disabled = (wrapper.scrollLeft + wrapper.clientWidth >= wrapper.scrollWidth - 2);
+}
+window.updateSliderArrowsState = updateSliderArrowsState;
+
+// 定位并居中选中日期
+function scrollToSelectedTab(date) {
+    setTimeout(() => {
+        const tab = document.getElementById(`date-tab-${date}`);
+        const wrapper = document.getElementById('date-tabs-wrapper');
+        if (tab && wrapper) {
+            const wrapperWidth = wrapper.clientWidth;
+            const tabLeft = tab.offsetLeft;
+            const tabWidth = tab.clientWidth;
+            
+            const targetScroll = tabLeft - (wrapperWidth / 2) + (tabWidth / 2);
+            wrapper.scrollTo({
+                left: targetScroll,
+                behavior: 'smooth'
+            });
+        }
+    }, 50);
+}
+window.scrollToSelectedTab = scrollToSelectedTab;
+
+// 格式化日期为 Tab 键标识 MM-DD 星期X
+function formatToTabStr(y, m, d) {
+    const dObj = new Date(y, m, d);
+    const mm = String(dObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dObj.getDate()).padStart(2, '0');
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    return `${mm}-${dd} ${weekdays[dObj.getDay()]}`;
+}
+
+// 切换日历面板显示/隐藏
+function toggleCustomDatePicker(event) {
+    if (event) event.stopPropagation();
+    const popover = document.getElementById('custom-datepicker-popover');
+    if (!popover) return;
+    
+    const isHidden = popover.style.display === 'none';
+    if (isHidden) {
+        const aiModal = document.getElementById('ai-config-modal');
+        if (aiModal) aiModal.style.display = 'none';
+        
+        if (selectedDate) {
+            try {
+                const parts = selectedDate.split(' ')[0].split('-');
+                const mm = parseInt(parts[0]);
+                const dd = parseInt(parts[1]);
+                const today = new Date();
+                let year = today.getFullYear();
+                const currentMonth = today.getMonth();
+                if (currentMonth === 11 && mm === 1) {
+                    year += 1;
+                } else if (currentMonth === 0 && mm === 12) {
+                    year -= 1;
+                }
+                calendarYear = year;
+                calendarMonth = mm - 1;
+            } catch (e) {
+                const today = new Date();
+                calendarYear = today.getFullYear();
+                calendarMonth = today.getMonth();
+            }
+        } else {
+            const today = new Date();
+            calendarYear = today.getFullYear();
+            calendarMonth = today.getMonth();
+        }
+        renderPopoverCalendar();
+        popover.style.display = 'flex';
+    } else {
+        popover.style.display = 'none';
+    }
+}
+window.toggleCustomDatePicker = toggleCustomDatePicker;
+
+// 切换月份
+function changePopoverMonth(delta) {
+    calendarMonth += delta;
+    if (calendarMonth < 0) {
+        calendarMonth = 11;
+        calendarYear -= 1;
+    } else if (calendarMonth > 11) {
+        calendarMonth = 0;
+        calendarYear += 1;
+    }
+    renderPopoverCalendar();
+}
+window.changePopoverMonth = changePopoverMonth;
+
+// 渲染月份网格
+function renderPopoverCalendar() {
+    const grid = document.getElementById('popover-calendar-grid');
+    const lbl = document.getElementById('cal-current-month-lbl');
+    if (!grid || !lbl) return;
+    
+    lbl.innerText = `${calendarYear}年${String(calendarMonth + 1).padStart(2, '0')}月`;
+    grid.innerHTML = '';
+    
+    const firstDayIndex = new Date(calendarYear, calendarMonth, 1).getDay();
+    const totalDays = new Date(calendarYear, calendarMonth + 1, 0).getDate();
+    const prevTotalDays = new Date(calendarYear, calendarMonth, 0).getDate();
+    
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const today = new Date();
+    const todayStr = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')} ${weekdays[today.getDay()]}`;
+    
+    // 1. 上月填充
+    for (let i = firstDayIndex - 1; i >= 0; i--) {
+        const dayNum = prevTotalDays - i;
+        const div = document.createElement('div');
+        div.className = 'popover-cal-day other-month';
+        div.innerText = dayNum;
+        
+        let pm = calendarMonth - 1;
+        let py = calendarYear;
+        if (pm < 0) { pm = 11; py -= 1; }
+        const dateStr = formatToTabStr(py, pm, dayNum);
+        div.onclick = () => selectCalendarTabDate(dateStr);
+        grid.appendChild(div);
+    }
+    
+    // 2. 本月天数
+    for (let d = 1; d <= totalDays; d++) {
+        const div = document.createElement('div');
+        div.innerText = d;
+        
+        const dateStr = formatToTabStr(calendarYear, calendarMonth, d);
+        
+        let classes = 'popover-cal-day';
+        if (dateStr === todayStr) {
+            classes += ' today';
+        }
+        if (dateStr === selectedDate) {
+            classes += ' active';
+        }
+        div.className = classes;
+        div.onclick = () => selectCalendarTabDate(dateStr);
+        grid.appendChild(div);
+    }
+    
+    // 3. 下月填充
+    const renderedCount = firstDayIndex + totalDays;
+    const remaining = 42 - renderedCount;
+    for (let d = 1; d <= remaining; d++) {
+        const div = document.createElement('div');
+        div.className = 'popover-cal-day other-month';
+        div.innerText = d;
+        
+        let nm = calendarMonth + 1;
+        let ny = calendarYear;
+        if (nm > 11) { nm = 0; ny += 1; }
+        const dateStr = formatToTabStr(ny, nm, d);
+        div.onclick = () => selectCalendarTabDate(dateStr);
+        grid.appendChild(div);
+    }
+}
+
+// 选中日历中某天
+function selectCalendarTabDate(dateStr) {
+    selectedDate = dateStr;
+    const popover = document.getElementById('custom-datepicker-popover');
+    if (popover) popover.style.display = 'none';
+    
+    selectDate(dateStr);
+}
+window.selectCalendarTabDate = selectCalendarTabDate;
+
+// 快捷选项点击
+function selectPopoverQuickDate(type) {
     const today = new Date();
     if (type === 'yesterday') {
         today.setDate(today.getDate() - 1);
@@ -1689,32 +1999,14 @@ function selectQuickDate(type) {
         today.setDate(today.getDate() + 1);
     }
     
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
-    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-    const w = weekdays[today.getDay()];
-    const targetDateStr = `${mm}-${dd} ${w}`;
+    const dateStr = `${mm}-${dd} ${weekdays[today.getDay()]}`;
     
-    selectDate(targetDateStr);
+    selectCalendarTabDate(dateStr);
 }
-
-// 日历 Datepicker 选择任意日期处理
-function selectCalendarDate(dateVal) {
-    if (!dateVal) return;
-    
-    const dateObj = new Date(dateVal);
-    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
-    const dd = String(dateObj.getDate()).padStart(2, '0');
-    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
-    const w = weekdays[dateObj.getDay()];
-    const targetDateStr = `${mm}-${dd} ${w}`;
-    
-    selectedDate = targetDateStr;
-    selectDate(targetDateStr);
-    
-    // 强制刷新边栏，使外部点选的日期在 dates 列表中生成并高亮
-    renderDateSidebar();
-}
+window.selectPopoverQuickDate = selectPopoverQuickDate;
 
 // 全局图表缓存实例
 const chartInstances = {};
@@ -1995,45 +2287,63 @@ window.toggleOddsTrend = toggleOddsTrend;
 // Auto-fix HTML layout cache bug dynamically
 function autoFixHtmlCacheBug() {
     const oldSidebar = document.querySelector('.sidebar-dates');
-    const matchesPanel = document.querySelector('.panel-matches');
+    const navbar = document.querySelector('.navbar');
     
     if (oldSidebar) {
         console.warn("[HTML Cache Fix] Detected legacy sidebar-dates aside element due to browser cache. Removing it to prevent grid displacement.");
         oldSidebar.remove();
         
-        if (matchesPanel && !matchesPanel.querySelector('.matches-header-filters')) {
-            const headerFilters = document.createElement('div');
-            headerFilters.className = 'matches-header-filters';
-            headerFilters.innerHTML = `
-                <div class="date-selection-top">
-                    <div class="date-quick-nav">
-                        <button class="btn-quick-date" onclick="selectQuickDate('yesterday')">昨天</button>
-                        <button id="btn-quick-today" class="btn-quick-date active-today" onclick="selectQuickDate('today')">今天</button>
-                        <button class="btn-quick-date" onclick="selectQuickDate('tomorrow')">明天</button>
-                    </div>
-                    <div class="datepicker-container">
-                        <input type="date" id="calendar-date-picker" class="calendar-picker-input" onchange="selectCalendarDate(this.value)">
-                        <label for="calendar-date-picker" class="calendar-picker-btn" title="点击日历选择任意日期">
-                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                                <line x1="16" y1="2" x2="16" y2="6"></line>
-                                <line x1="8" y1="2" x2="8" y2="6"></line>
-                                <line x1="3" y1="10" x2="21" y2="10"></line>
-                            </svg>
-                        </label>
+        // 既然 index.html 是旧的，那么 body 里下必然缺少了顶级全宽贯穿日期选择控制栏 .top-date-bar。我们必须动态把它注入并组装起来！
+        if (navbar && !document.querySelector('.top-date-bar')) {
+            const topDateBar = document.createElement('div');
+            topDateBar.className = 'top-date-bar';
+            topDateBar.innerHTML = `
+                <div class="date-slider-container">
+                    <div class="date-tabs-wrapper" id="date-tabs-wrapper">
+                        <ul id="date-list" class="date-tabs">
+                            <div class="tab-skeleton"></div>
+                            <div class="tab-skeleton"></div>
+                        </ul>
                     </div>
                 </div>
-                <ul id="date-list" class="date-tabs">
-                    <div class="tab-skeleton"></div>
-                    <div class="tab-skeleton"></div>
-                </ul>
+                
+                <div class="datepicker-container" id="datepicker-container">
+                    <button class="calendar-picker-btn" id="calendar-trigger-btn" onclick="toggleCustomDatePicker(event)" title="点击日历选择任意日期">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                        </svg>
+                    </button>
+                    
+                    <div class="custom-datepicker-popover" id="custom-datepicker-popover" style="display: none;" onclick="event.stopPropagation()">
+                        <div class="popover-quick-dates">
+                            <button class="btn-popover-quick" onclick="selectPopoverQuickDate('yesterday')">昨天</button>
+                            <button class="btn-popover-quick" onclick="selectPopoverQuickDate('today')">今天</button>
+                            <button class="btn-popover-quick" onclick="selectPopoverQuickDate('tomorrow')">明天</button>
+                        </div>
+                        
+                        <div class="popover-calendar-header" style="justify-content: center;">
+                            <span class="cal-current-month" id="cal-current-month-lbl">2026年07月</span>
+                        </div>
+                        
+                        <div class="popover-calendar-weekdays">
+                            <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+                        </div>
+                        
+                        <div class="popover-calendar-grid" id="popover-calendar-grid"></div>
+                    </div>
+                </div>
             `;
-            const titleBar = matchesPanel.querySelector('.panel-title-bar');
-            if (titleBar) {
-                titleBar.insertAdjacentElement('afterend', headerFilters);
-            } else {
-                matchesPanel.insertBefore(headerFilters, matchesPanel.firstChild);
+            navbar.insertAdjacentElement('afterend', topDateBar);
+            
+            // 绑定事件
+            const wrapper = topDateBar.querySelector('#date-tabs-wrapper');
+            if (wrapper) {
+                wrapper.addEventListener('scroll', () => handleTabsScroll(wrapper));
             }
+            
             renderDateSidebar();
         }
     }
