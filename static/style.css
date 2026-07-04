@@ -1924,9 +1924,13 @@ body {
     .dropdown-wrapper {
         width: 105px !important;
     }
-    .search-input-field, .league-select-dropdown {
+    .league-select-dropdown {
         height: 36px !important;
         font-size: 0.78rem !important;
+    }
+    .search-input-field {
+        height: 36px !important;
+        font-size: 16px !important; /* 强制大于等于 16px 避免移动端（尤其是 iOS Safari）聚焦输入框时视口异常放大 */
     }
 
     /* 5. 详情研判面板重构为固定定位的“右侧滑入”滑块 */

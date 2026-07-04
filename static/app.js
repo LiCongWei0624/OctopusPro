@@ -327,7 +327,11 @@ function filterAndRenderMatches() {
     if (filtered.length > 0) {
         const currentMatchInFiltered = filtered.find(m => m.id === selectedMatch?.id);
         if (!currentMatchInFiltered) {
-            selectMatch(filtered[0]);
+            const isMobile = window.innerWidth <= 768;
+            const isSearching = searchQuery.trim() !== '';
+            if (!isMobile && !isSearching) {
+                selectMatch(filtered[0]);
+            }
         }
     } else {
         renderNoMatchSelected();
