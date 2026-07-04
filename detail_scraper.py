@@ -520,8 +520,12 @@ def parse_odds_json_to_list(decrypted_json):
                 else:
                     init_line_str = f"+{abs(init_raw_line_val)}"
                     
-                # 即时盘口
-                inst_raw_line_val = float(asia_item['n'][0][1])
+                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
+                use_r = 'r' in asia_item and isinstance(asia_item['r'], list) and len(asia_item['r']) >= 2 and len(asia_item['r'][0]) >= 3
+                target_array = asia_item['r'] if use_r else asia_item['n']
+                
+                # 即时/走地盘口
+                inst_raw_line_val = float(target_array[0][1])
                 if inst_raw_line_val == 0.0:
                     inst_line_str = "0"
                 elif inst_raw_line_val < 0.0:
@@ -533,8 +537,8 @@ def parse_odds_json_to_list(decrypted_json):
                     "initial_line": init_line_str,
                     "instant_line": inst_line_str,
                     "initial": [float(asia_item['f'][0]), float(asia_item['f'][2])],
-                    "instant": [float(asia_item['n'][0][0]), float(asia_item['n'][0][2])],
-                    "trends": [int(asia_item['n'][1][0]), int(asia_item['n'][1][2])]
+                    "instant": [float(target_array[0][0]), float(target_array[0][2])],
+                    "trends": [int(target_array[1][0]), int(target_array[1][2])]
                 }
             except Exception as ex:
                 print(f"Error parsing handicap for cid {cid}: {ex}")
@@ -546,10 +550,14 @@ def parse_odds_json_to_list(decrypted_json):
         }
         if eu_item:
             try:
+                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
+                use_r = 'r' in eu_item and isinstance(eu_item['r'], list) and len(eu_item['r']) >= 2 and len(eu_item['r'][0]) >= 3
+                target_array = eu_item['r'] if use_r else eu_item['n']
+                
                 europe_data = {
                     "initial": [float(eu_item['f'][0]), float(eu_item['f'][1]), float(eu_item['f'][2])],
-                    "instant": [float(eu_item['n'][0][0]), float(eu_item['n'][0][1]), float(eu_item['n'][0][2])],
-                    "trends": [int(eu_item['n'][1][0]), int(eu_item['n'][1][1]), int(eu_item['n'][1][2])]
+                    "instant": [float(target_array[0][0]), float(target_array[0][1]), float(target_array[0][2])],
+                    "trends": [int(target_array[1][0]), int(target_array[1][1]), int(target_array[1][2])]
                 }
             except Exception as ex:
                 print(f"Error parsing europe for cid {cid}: {ex}")
@@ -569,8 +577,12 @@ def parse_odds_json_to_list(decrypted_json):
                 if init_line_str.endswith(".0"):
                     init_line_str = init_line_str[:-2]
                     
-                # 即时盘口
-                raw_inst_line = float(bs_item['n'][0][1])
+                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
+                use_r = 'r' in bs_item and isinstance(bs_item['r'], list) and len(bs_item['r']) >= 2 and len(bs_item['r'][0]) >= 3
+                target_array = bs_item['r'] if use_r else bs_item['n']
+                
+                # 即时/走地盘口
+                raw_inst_line = float(target_array[0][1])
                 inst_line_str = str(raw_inst_line)
                 if inst_line_str.endswith(".0"):
                     inst_line_str = inst_line_str[:-2]
@@ -579,8 +591,8 @@ def parse_odds_json_to_list(decrypted_json):
                     "initial_line": init_line_str,
                     "instant_line": inst_line_str,
                     "initial": [float(bs_item['f'][0]), float(bs_item['f'][2])],
-                    "instant": [float(bs_item['n'][0][0]), float(bs_item['n'][0][2])],
-                    "trends": [int(bs_item['n'][1][0]), int(bs_item['n'][1][2])]
+                    "instant": [float(target_array[0][0]), float(target_array[0][2])],
+                    "trends": [int(target_array[1][0]), int(target_array[1][2])]
                 }
             except Exception as ex:
                 print(f"Error parsing over_under for cid {cid}: {ex}")
