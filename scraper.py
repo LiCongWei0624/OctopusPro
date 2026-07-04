@@ -404,6 +404,12 @@ def scrape_matches():
     return merged_matches
 
 def scrape_desktop_matches(date_str):
+    """
+    使用 Playwright 无头浏览器抓取雷速 PC 端全量赛事数据。
+    
+    技术要点：雷速使用虚拟滚动（Virtual Scroll），每次 DOM 中只保留当前视口附近约 100 条。
+    必须在 Python 层循环滚动，每次滚动后同步调用 JS 提取当前视口数据，累积去重直到全量收集。
+    """
     import datetime
     d = datetime.datetime.strptime(date_str, "%Y%m%d").date()
     today = datetime.date.today()
@@ -415,10 +421,10 @@ def scrape_desktop_matches(date_str):
     else:
         url = "https://live.leisu.com/"
         
-    print(f"Playwright Scraper: Fetching matches for {date_str} from {url}...")
+    print(f"Playwright Scraper: 抓取 {date_str} 赛事，URL: {url}")
     
     date_formatted = f"{d.strftime('%m-%d')} {get_weekday_cn(d)}"
-    matches_list = []
+    matches_map = {}  # match_id -> 赛事数据，用于去重
     
     try:
         from playwright.sync_api import sync_playwright
@@ -428,142 +434,139 @@ def scrape_desktop_matches(date_str):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             )
             page = context.new_page()
-            page.goto(url, timeout=20000)
+            page.goto(url, timeout=30000)
             
-            # 等待列表容器渲染
+            # 等待首批赛事渲染并稳定
             try:
-                page.wait_for_selector('.dd-item', timeout=5000)
+                page.wait_for_selector('.dd-item', timeout=10000)
             except Exception:
                 pass
+            page.wait_for_timeout(2000)
+            
+            # 获取页面总高度，用于计算滚动步数
+            total_height = page.evaluate("document.body.scrollHeight")
+            print(f"Playwright Scraper: 页面高度={total_height}px，开始边滚动边增量收集...")
+            
+            # JS 提取当前视口内所有 .dd-item 的数据
+            extract_js = """
+                () => {
+                    const results = [];
+                    document.querySelectorAll('.dd-item').forEach(item => {
+                        let matchId = '';
+                        item.querySelectorAll('a[href*="detail-"]').forEach(l => {
+                            const m = l.href.match(/detail-(\d+)/);
+                            if (m) matchId = m[1];
+                        });
+                        if (!matchId) return;
+                        
+                        const compEl = item.querySelector('.lier-event-name');
+                        const timeEl = item.querySelector('.lier-time');
+                        const homeEl = item.querySelector('.lier-team-home');
+                        const awayEl = item.querySelector('.lier-team-away');
+                        const scoreEl = item.querySelector('.lier-score');
+                        const statusEl = item.querySelector('.lier-status');
+                        
+                        let home = homeEl ? homeEl.textContent.replace(/\s+/g,'').replace(/^\d+\'?/,'').replace(/\d+\'?$/,'') : '';
+                        let away = awayEl ? awayEl.textContent.replace(/\s+/g,'').replace(/^\d+\'?/,'').replace(/\d+\'?$/,'') : '';
+                        let score = scoreEl ? scoreEl.textContent.trim() : '';
+                        if (score === '-') score = '';
+                        
+                        const stText = statusEl ? statusEl.textContent.trim() : '';
+                        let status = 1;
+                        if (stText.includes('完') || stText.includes('结') || stText.includes('已')) {
+                            status = 8;
+                        } else if (stText.includes('中场') || stText.includes('半')) {
+                            status = 3;
+                        } else if (/\d+[\'\+]/.test(stText)) {
+                            const min = parseInt(stText);
+                            status = min <= 45 ? 2 : 4;
+                        } else if (score) {
+                            status = 4;
+                        }
+                        
+                        let halfScore = '';
+                        const hm = item.textContent.match(/\((\d+-\d+)\)/);
+                        if (hm) halfScore = hm[1];
+                        
+                        results.push({
+                            id: matchId,
+                            competition: compEl ? compEl.textContent.trim() : '',
+                            time: timeEl ? timeEl.textContent.trim() : '',
+                            home_team: home, away_team: away,
+                            score: score, status: status, half_score: halfScore
+                        });
+                    });
+                    return results;
+                }
+            """
+            
+            # 滚动步长 600px，每步等待 200ms，最多滚动 200 步
+            scroll_y = 0
+            step = 600
+            max_steps = int(total_height / step) + 20  # 多滚几步确保到底
+            no_new_count = 0
+            
+            for i in range(max_steps):
+                # 提取当前视口数据
+                items = page.evaluate(extract_js)
+                new_items = 0
+                for item in items:
+                    mid = item.get('id', '')
+                    if mid and mid not in matches_map:
+                        matches_map[mid] = item
+                        new_items += 1
                 
-            # 关键：在网页里寻找并模拟点击“全部”页签，以加载韩国杯、挪甲等小比赛赛事
-            try:
-                page.evaluate("""() => {
-                    const allBtn = Array.from(document.querySelectorAll('.menu-list li, .filter-menu li')).find(el => el.textContent.includes('全部'));
-                    if (allBtn) {
-                        allBtn.click();
-                        console.log("Successfully clicked 'All' filter on PC page.");
-                    }
-                }""")
-                page.wait_for_timeout(1500) # 等待全部列表初始加载
-            except Exception as e:
-                print("Failed to toggle 'All' tab in browser:", e)
-
-            # 无限滚动：雷速 PC 端使用懒加载，必须反复滚动到底部才能触发全量 942 场赛事渲染
-            print("Playwright Scraper: Starting infinite scroll to load all matches...")
-            prev_count = 0
-            scroll_attempts = 0
-            max_scroll_attempts = 80  # 最多滚动 80 次避免死循环
-            while scroll_attempts < max_scroll_attempts:
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                page.wait_for_timeout(700)
-                current_count = page.evaluate("document.querySelectorAll('.dd-item').length")
-                print(f"  Scroll {scroll_attempts+1}: {current_count} items loaded")
-                if current_count == prev_count:
-                    break  # 计数不再增加，说明已到底部
-                prev_count = current_count
-                scroll_attempts += 1
-            print(f"Playwright Scraper: Done scrolling, total {prev_count} items loaded.")
-
-            html = page.content()
+                if i % 20 == 0 or new_items > 0:
+                    print(f"  步骤 {i+1}/{max_steps}: 累积 {len(matches_map)} 场 (+{new_items})")
+                
+                # 判断是否到底
+                if new_items == 0:
+                    no_new_count += 1
+                    if no_new_count >= 10:  # 连续 10 步无新数据，到底了
+                        print(f"Playwright Scraper: 连续 10 步无新数据，收集完毕")
+                        break
+                else:
+                    no_new_count = 0
+                
+                # 滚动
+                scroll_y += step
+                page.evaluate(f"window.scrollTo(0, {scroll_y})")
+                page.wait_for_timeout(200)
+            
             browser.close()
             
-            from bs4 import BeautifulSoup
-            import re
-            soup = BeautifulSoup(html, 'html.parser')
-            items = soup.find_all('div', class_=re.compile(r'dd-item'))
-            print(f"Playwright Scraper: Found {len(items)} match rows under 'All' tab.")
+            print(f"Playwright Scraper: 增量收集完成，共 {len(matches_map)} 场赛事")
             
-            for item in items:
-                match_id = ""
-                score_el = item.find('div', class_='lier-score')
-                if score_el:
-                    a_score = score_el.find('a')
-                    if a_score:
-                        href = a_score.get('href', '')
-                        match_id_match = re.search(r'\d+', href)
-                        if match_id_match:
-                            match_id = match_id_match.group()
-                if not match_id:
-                    data_el = item.find('div', class_='lier-data')
-                    if data_el:
-                        a_data = data_el.find('a')
-                        if a_data:
-                            href = a_data.get('href', '')
-                            match_id_match = re.search(r'\d+', href)
-                            if match_id_match:
-                                match_id = match_id_match.group()
-                                
-                if not match_id:
-                    continue
-                    
-                comp_el = item.find('div', class_='lier-event-name')
-                comp_str = comp_el.text.strip() if comp_el else ""
-                
-                time_el = item.find('div', class_='lier-time')
-                time_str = time_el.text.strip() if time_el else ""
-                
-                home_el = item.find('div', class_='lier-team-home')
-                home_name = home_el.text.strip() if home_el else ""
-                home_name = re.sub(r'\s+', '', home_name)
-                # 清洗进行中比赛分钟数粘连到队名的污染
-                home_name = re.sub(r"^\d+\'?", '', home_name).strip()
-                home_name = re.sub(r"\d+\'?$", '', home_name).strip()
-                
-                away_el = item.find('div', class_='lier-team-away')
-                away_name = away_el.text.strip() if away_el else ""
-                away_name = re.sub(r'\s+', '', away_name)
-                # 清洗进行中比赛分钟数粘连到队名的污染
-                away_name = re.sub(r"^\d+\'?", '', away_name).strip()
-                away_name = re.sub(r"\d+\'?$", '', away_name).strip()
-                
-                score_str = score_el.text.strip() if score_el else ""
-                if score_str == "-":
-                    score_str = ""
-                    
-                status = 1
-                status_el = item.find('div', class_='lier-status')
-                status_text = status_el.text.strip() if status_el else ""
-                
-                if "完" in status_text or "已" in status_text or "结" in status_text:
-                    status = 8
-                elif "半" in status_text or "中" in status_text or "'" in status_text or "1" in status_text or "2" in status_text:
-                    status = 4
-                    if "半" in status_text:
-                        status = 3
-                    elif "1" in status_text:
-                        status = 2
-                elif score_str and score_str != "":
-                    status = 4
-                    
-                half_score = ""
-                if status == 8 or status in [2, 3, 4, 5, 7]:
-                    text_content = item.text
-                    half_match = re.search(r'\((\d+-\d+)\)', text_content)
-                    if half_match:
-                        half_score = half_match.group(1)
-                
-                matches_list.append({
-                    'id': str(match_id),
-                    'date': date_formatted,
-                    'time': time_str,
-                    'competition': comp_str,
-                    'home_team': home_name,
-                    'home_rank': '',
-                    'away_team': away_name,
-                    'away_rank': '',
-                    'win_probability': {},
-                    'similar_trend': {},
-                    'pros_cons': {
-                        'home': {'pros': [], 'cons': []},
-                        'away': {'pros': [], 'cons': []}
-                    },
-                    'score': score_str,
-                    'half_score': half_score,
-                    'penalty_score': '',
-                    'status': status
-                })
     except Exception as e:
-        print(f"Playwright scrape_desktop_matches failed for {date_str}: {e}")
+        print(f"Playwright scrape_desktop_matches 出错: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    # 转换为列表格式
+    matches_list = []
+    for match_id, item_data in matches_map.items():
+        time_str = item_data.get('time', '')
+        match_date = date_formatted
+        if time_str and time_str.startswith("00:"):
+            next_day = d + datetime.timedelta(days=1)
+            match_date = f"{next_day.strftime('%m-%d')} {get_weekday_cn(next_day)}"
         
+        matches_list.append({
+            'id': match_id,
+            'date': match_date,
+            'time': time_str,
+            'competition': item_data.get('competition', ''),
+            'home_team': item_data.get('home_team', ''),
+            'home_rank': '',
+            'away_team': item_data.get('away_team', ''),
+            'away_rank': '',
+            'win_probability': {},
+            'similar_trend': {},
+            'pros_cons': {'home': {'pros': [], 'cons': []}, 'away': {'pros': [], 'cons': []}},
+            'score': item_data.get('score', ''),
+            'half_score': item_data.get('half_score', ''),
+            'penalty_score': '',
+            'status': item_data.get('status', 1)
+        })
+    
     return matches_list
