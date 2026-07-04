@@ -365,8 +365,28 @@ function selectMatch(match) {
     const activeCard = document.getElementById(`match-card-${match.id}`);
     if (activeCard) activeCard.classList.add('active');
     
+    // Update mobile details title
+    const mobTitle = document.getElementById('mobile-match-title');
+    if (mobTitle) {
+        mobTitle.innerText = `${match.home_team} VS ${match.away_team}`;
+    }
+    
+    // Slide in the details view on mobile
+    const detailsPanel = document.querySelector('.panel-details');
+    if (detailsPanel) {
+        detailsPanel.classList.add('slide-in');
+    }
+    
     // Load Match Details
     loadMatchDetails(match);
+}
+
+// Close mobile details view
+function closeMobileDetails() {
+    const detailsPanel = document.querySelector('.panel-details');
+    if (detailsPanel) {
+        detailsPanel.classList.remove('slide-in');
+    }
 }
 
 // Fetch and load Match Details

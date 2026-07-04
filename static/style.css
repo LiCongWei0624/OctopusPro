@@ -1576,29 +1576,37 @@ body {
     opacity: 1;
 }
 
+/* PC/Desktop default hidden styles */
+.mobile-detail-header {
+    display: none !important;
+}
+
 /* ==============================================================================
-   📱 Responsive Mobile Styles (自适应手机与移动端布局)
+   📱 Responsive Mobile Styles (自适应手机与移动端布局 - 列表与详情滑动层切换)
    ============================================================================== */
 @media (max-width: 1024px) {
-    /* 0. 解除 body 与 layout 的溢出与高度限制，允许手机端网页自由上下滑动 */
-    body {
-        overflow-y: auto !important;
-        overflow-x: hidden !important;
-        height: auto !important;
+    /* 0. 锁定手机端的整体溢出，防止全局出现滚动条导致拉动回弹不适 */
+    body, html {
+        overflow: hidden !important;
+        height: 100vh !important;
+        width: 100vw !important;
     }
     
     .app-layout {
-        height: auto !important;
+        height: 100vh !important;
         width: 100vw !important;
-        overflow: visible !important;
-    }
-
-    /* 1. 将三栏 Workspace 布局转为移动端垂直堆叠布局 */
-    .workspace {
+        overflow: hidden !important;
         display: flex;
         flex-direction: column;
-        height: auto;
-        overflow: visible !important;
+    }
+
+    /* 1. 将三栏 Workspace 布局转为高度固定的 Flex 纵向容器，隔离详情层 */
+    .workspace {
+        display: flex !important;
+        flex-direction: column !important;
+        height: calc(100vh - 64px) !important;
+        overflow: hidden !important;
+        position: relative !important;
     }
 
     /* 2. 调整导航栏，使其在小屏幕下保持紧凑 */
@@ -1607,9 +1615,10 @@ body {
         height: auto;
         min-height: 64px;
         flex-wrap: wrap;
-        gap: 0.75rem;
+        gap: 0.5rem;
         padding-top: 0.5rem;
         padding-bottom: 0.5rem;
+        flex-shrink: 0;
     }
     
     .nav-actions {
@@ -1620,30 +1629,31 @@ body {
 
     /* 3. 改变日期选择栏为横向水平滑动样式，极大优化移动端操作空间 */
     .sidebar-dates {
-        width: 100%;
-        height: auto;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-        padding: 0.85rem 1rem;
+        width: 100% !important;
+        height: auto !important;
+        border-right: none !important;
+        border-bottom: 1px solid var(--border-color) !important;
+        padding: 0.65rem 0.85rem !important;
+        flex-shrink: 0 !important;
     }
     
     .date-tabs {
-        flex-direction: row;
-        overflow-x: auto;
-        scrollbar-width: none; /* 隐藏火狐滚动条 */
-        white-space: nowrap;
-        gap: 0.4rem;
-        padding-bottom: 0.25rem;
+        flex-direction: row !important;
+        overflow-x: auto !important;
+        scrollbar-width: none !important; /* 隐藏火狐滚动条 */
+        white-space: nowrap !important;
+        gap: 0.5rem !important;
+        padding-bottom: 0.15rem !important;
     }
     
     .date-tabs::-webkit-scrollbar {
-        display: none; /* 隐藏谷歌滚动条 */
+        display: none !important; /* 隐藏谷歌滚动条 */
     }
     
     .date-tab {
-        padding: 0.45rem 0.85rem;
-        font-size: 0.82rem;
-        flex-shrink: 0;
+        padding: 0.4rem 0.75rem !important;
+        font-size: 0.8rem !important;
+        flex-shrink: 0 !important;
     }
     
     .date-tab.active::after {
@@ -1655,32 +1665,105 @@ body {
         border-radius: 4px 4px 0 0;
     }
 
-    /* 4. 赛事列表区域设为移动端独立垂直滚动 */
+    /* 4. 赛事列表区域设为自适应剩余高度的独立垂直滚动（体验如 App 般流畅） */
     .panel-matches {
-        width: 100%;
-        height: auto;
-        max-height: 380px;
-        border-right: none;
-        border-bottom: 1px solid var(--border-color);
-        padding: 1rem;
+        width: 100% !important;
+        flex: 1 !important;
+        height: auto !important;
+        max-height: none !important;
+        border-right: none !important;
+        border-bottom: none !important;
+        padding: 0.75rem !important;
+        overflow-y: auto !important;
+        -webkit-overflow-scrolling: touch;
     }
 
-    /* 5. 详情研判面板与页签栏响应式排版 */
+    /* 5. 详情研判面板重构为固定定位的“右侧滑入”滑块 */
     .panel-details {
-        width: 100%;
-        height: auto;
-        overflow: visible;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background: var(--bg-primary) !important;
+        z-index: 9999 !important;
+        transform: translate3d(100%, 0, 0) !important;
+        transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
+        overflow-y: auto !important;
+        display: flex !important;
+        flex-direction: column !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15) !important;
     }
     
-    /* 优化五个子页签在手机端的横向滑动切换，防止挤扁折行 */
+    /* 当添加 slide-in 类时，滑块瞬间回弹盖住列表 */
+    .panel-details.slide-in {
+        transform: translate3d(0, 0, 0) !important;
+    }
+    
+    /* 移动端详情头部导航栏样式 */
+    .mobile-detail-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 0.85rem 1rem !important;
+        background: var(--bg-secondary) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1001 !important;
+        flex-shrink: 0 !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+    }
+    
+    .btn-mobile-back {
+        display: flex !important;
+        align-items: center !important;
+        gap: 0.4rem !important;
+        background: transparent !important;
+        border: none !important;
+        color: var(--color-primary) !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+        padding: 0.4rem 0.6rem !important;
+        border-radius: 6px !important;
+        cursor: pointer !important;
+        transition: background-color 0.2s !important;
+    }
+    
+    .btn-mobile-back:active {
+        background-color: var(--border-color) !important;
+    }
+    
+    .mobile-match-title {
+        font-family: 'Outfit', sans-serif !important;
+        font-size: 0.95rem !important;
+        font-weight: 700 !important;
+        color: var(--text-primary) !important;
+        text-align: right !important;
+        max-width: 60% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+    
+    /* 详情页签栏，固定在 header 下方并支持横向水平微调 */
     .details-tab-bar {
+        position: sticky !important;
+        top: 52px !important; /* 紧跟在移动端头部下方 */
+        background: var(--bg-primary) !important;
+        z-index: 1000 !important;
+        padding: 0.5rem 1rem !important;
+        border-bottom: 1px solid var(--border-color) !important;
         overflow-x: auto !important;
         white-space: nowrap !important;
         scrollbar-width: none !important;
         display: flex !important;
         flex-wrap: nowrap !important;
-        padding: 0 1rem !important;
         gap: 1rem !important;
+        flex-shrink: 0 !important;
     }
     
     .details-tab-bar::-webkit-scrollbar {
@@ -1689,18 +1772,22 @@ body {
     
     .detail-tab {
         flex-shrink: 0 !important;
-        padding: 0 0.15rem !important;
+        padding: 0.25rem 0.15rem !important;
+        font-size: 0.85rem !important;
     }
     
+    /* 详情主体，在弹性盒子下自适应高度独立滚动 */
     .details-body {
-        padding: 1rem;
-        overflow-y: visible;
+        flex: 1 !important;
+        overflow-y: auto !important;
+        padding: 1rem !important;
+        -webkit-overflow-scrolling: touch;
     }
 
     /* 6. SWOT 战力情报卡片由双列改为单列垂直堆叠 */
     .swot-split {
-        grid-template-columns: 1fr;
-        gap: 1rem;
+        grid-template-columns: 1fr !important;
+        gap: 1rem !important;
     }
 
     /* 7. 全局配置弹窗自适应高度与宽度，支持手机端内部滚动 */
@@ -1708,7 +1795,7 @@ body {
         width: 92% !important;
         margin: 10% auto !important;
         padding: 1.25rem !important;
-        max-height: 80vh !important;
+        max-height: 85vh !important;
         overflow-y: auto !important;
     }
     
@@ -1718,22 +1805,44 @@ body {
 
     /* 8. 对阵 VS 头部与同类相似指数网格微调 */
     .vs-row {
-        gap: 0.75rem;
+        gap: 0.5rem !important;
+        flex-direction: column !important;
+        align-items: center !important;
+        text-align: center !important;
+        padding: 1rem 0.5rem !important;
+    }
+    
+    .vs-team {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+    
+    .vs-team.home {
+        flex-direction: row !important;
+    }
+    
+    .vs-team.away {
+        flex-direction: row-reverse !important;
     }
     
     .vs-logo-team h2 {
-        font-size: 1.2rem;
+        font-size: 1.1rem !important;
+    }
+    
+    .vs-center-info {
+        margin: 0.5rem 0 !important;
     }
     
     .prob-labels {
-        font-size: 0.95rem;
+        font-size: 0.85rem !important;
     }
     
     .similar-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: 1fr !important;
+        gap: 0.5rem !important;
     }
     
-    /* 9. 保证 Canvas 图表在手机端不超过容器宽度 */
+    /* 9. 保证 Canvas 图表在手机端不超过容器宽度，留出内边距 */
     canvas, .highcharts-container {
         max-width: 100% !important;
         height: auto !important;
