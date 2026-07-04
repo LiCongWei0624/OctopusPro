@@ -518,19 +518,9 @@ def scrape_desktop_matches(date_str):
                     home_name = re.sub(r'\s+', '', home_name)
                     away_name = re.sub(r'\s+', '', away_name)
                     
-                    # 状态转换
-                    # 原始 status 定义: 1未开, 8完场, 3中场, 2/4进行中
+                    # 状态转换：保留原汁原味的雷速标准化比赛状态码以准确反映各种赛事进程
                     raw_status = m.get('status', 1)
-                    status = 1
-                    if raw_status == 8:
-                        status = 8
-                    elif raw_status == 1:
-                        status = 1
-                    else:
-                        # 进行中
-                        status = 4
-                        if raw_status == 3: # 中场
-                            status = 3
+                    status = raw_status if raw_status in [1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 13] else 1
                             
                     # 比分提取
                     score_str = ""
@@ -538,9 +528,14 @@ def scrape_desktop_matches(date_str):
                     home_scores = home_data.get('scores', []) if isinstance(home_data, dict) else []
                     away_scores = away_data.get('scores', []) if isinstance(away_data, dict) else []
                     if status != 1:
-                        if home_scores and away_scores and len(home_scores) >= 2 and len(away_scores) >= 2:
+                        if home_scores and away_scores and len(home_scores) > 0 and len(away_scores) > 0:
                             score_str = f"{home_scores[0]}-{away_scores[0]}"
-                            half_score_str = f"{home_scores[1]}-{away_scores[1]}"
+                        
+                        # 只有在已进入中场(3)、下半场(4)、加时(5)、点球(7)、完场(8)时，才提取并展示半场比分
+                        if status in [3, 4, 5, 7, 8]:
+                            if len(home_scores) >= 2 and len(away_scores) >= 2:
+                                if home_scores[1] >= 0 and away_scores[1] >= 0:
+                                    half_score_str = f"{home_scores[1]}-{away_scores[1]}"
                         
                     matches_list.append({
                         'id': match_id,
