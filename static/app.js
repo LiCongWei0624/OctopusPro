@@ -10,7 +10,7 @@ let searchQuery = '';
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
-    setupDateNavigationFallback();
+    autoFixHtmlCacheBug();
     loadMatches();
     
     // Auto-refresh today's matches every 5 minutes
@@ -1992,46 +1992,49 @@ function renderTrendDetails(container, trendData, type) {
 
 window.toggleOddsTrend = toggleOddsTrend;
 
-// Defensive fallback: dynamically inject date shortcuts and datepicker if they don't exist in HTML DOM
-function setupDateNavigationFallback() {
-    const sidebar = document.querySelector('.sidebar-dates');
-    if (!sidebar) return;
+// Auto-fix HTML layout cache bug dynamically
+function autoFixHtmlCacheBug() {
+    const oldSidebar = document.querySelector('.sidebar-dates');
+    const matchesPanel = document.querySelector('.panel-matches');
     
-    // 1. If datepicker is missing, inject it into the header
-    const header = sidebar.querySelector('.sidebar-header');
-    if (header && !header.querySelector('.datepicker-container')) {
-        header.style.display = 'flex';
-        header.style.alignItems = 'center';
-        header.style.justifyContent = 'space-between';
+    if (oldSidebar) {
+        console.warn("[HTML Cache Fix] Detected legacy sidebar-dates aside element due to browser cache. Removing it to prevent grid displacement.");
+        oldSidebar.remove();
         
-        const pickerWrap = document.createElement('div');
-        pickerWrap.className = 'datepicker-container';
-        pickerWrap.innerHTML = `
-            <input type="date" id="calendar-date-picker" class="calendar-picker-input" onchange="selectCalendarDate(this.value)">
-            <label for="calendar-date-picker" class="calendar-picker-btn" title="点击日历选择任意日期">
-                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                    <line x1="16" y1="2" x2="16" y2="6"></line>
-                    <line x1="8" y1="2" x2="8" y2="6"></line>
-                    <line x1="3" y1="10" x2="21" y2="10"></line>
-                </svg>
-            </label>
-        `;
-        header.appendChild(pickerWrap);
-    }
-    
-    // 2. If quick navigation row is missing, inject it between header and list
-    if (!sidebar.querySelector('.date-quick-nav')) {
-        const quickNav = document.createElement('div');
-        quickNav.className = 'date-quick-nav';
-        quickNav.innerHTML = `
-            <button class="btn-quick-date" onclick="selectQuickDate('yesterday')">昨天</button>
-            <button id="btn-quick-today" class="btn-quick-date" onclick="selectQuickDate('today')">今天</button>
-            <button class="btn-quick-date" onclick="selectQuickDate('tomorrow')">明天</button>
-        `;
-        const list = document.getElementById('date-list');
-        if (list) {
-            sidebar.insertBefore(quickNav, list);
+        if (matchesPanel && !matchesPanel.querySelector('.matches-header-filters')) {
+            const headerFilters = document.createElement('div');
+            headerFilters.className = 'matches-header-filters';
+            headerFilters.innerHTML = `
+                <div class="date-selection-top">
+                    <div class="date-quick-nav">
+                        <button class="btn-quick-date" onclick="selectQuickDate('yesterday')">昨天</button>
+                        <button id="btn-quick-today" class="btn-quick-date active-today" onclick="selectQuickDate('today')">今天</button>
+                        <button class="btn-quick-date" onclick="selectQuickDate('tomorrow')">明天</button>
+                    </div>
+                    <div class="datepicker-container">
+                        <input type="date" id="calendar-date-picker" class="calendar-picker-input" onchange="selectCalendarDate(this.value)">
+                        <label for="calendar-date-picker" class="calendar-picker-btn" title="点击日历选择任意日期">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="16" y1="2" x2="16" y2="6"></line>
+                                <line x1="8" y1="2" x2="8" y2="6"></line>
+                                <line x1="3" y1="10" x2="21" y2="10"></line>
+                            </svg>
+                        </label>
+                    </div>
+                </div>
+                <ul id="date-list" class="date-tabs">
+                    <div class="tab-skeleton"></div>
+                    <div class="tab-skeleton"></div>
+                </ul>
+            `;
+            const titleBar = matchesPanel.querySelector('.panel-title-bar');
+            if (titleBar) {
+                titleBar.insertAdjacentElement('afterend', headerFilters);
+            } else {
+                matchesPanel.insertBefore(headerFilters, matchesPanel.firstChild);
+            }
+            renderDateSidebar();
         }
     }
 }
