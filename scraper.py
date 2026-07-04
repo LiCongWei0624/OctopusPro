@@ -504,15 +504,14 @@ def scrape_desktop_matches(date_str):
                             status = 3
                             
                     # 比分提取
-                    score_list = m.get('score', [])
                     score_str = ""
-                    if score_list and len(score_list) >= 2 and status != 1:
-                        score_str = f"{score_list[0]}-{score_list[1]}"
-                        
-                    half_score_list = m.get('half_score', [])
                     half_score_str = ""
-                    if half_score_list and len(half_score_list) >= 2 and status != 1:
-                        half_score_str = f"{half_score_list[0]}-{half_score_list[1]}"
+                    home_scores = home_data.get('scores', []) if isinstance(home_data, dict) else []
+                    away_scores = away_data.get('scores', []) if isinstance(away_data, dict) else []
+                    if status != 1:
+                        if home_scores and away_scores and len(home_scores) >= 2 and len(away_scores) >= 2:
+                            score_str = f"{home_scores[0]}-{away_scores[0]}"
+                            half_score_str = f"{home_scores[1]}-{away_scores[1]}"
                         
                     matches_list.append({
                         'id': match_id,
