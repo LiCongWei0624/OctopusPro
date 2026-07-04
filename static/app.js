@@ -412,6 +412,21 @@ function renderMatchCards(matches) {
         } else if (status === 8) {
             statusText = '已结束';
             statusClass = 'finished';
+        } else if (status === 9) {
+            statusText = '已推迟';
+            statusClass = 'finished';
+        } else if (status === 10) {
+            statusText = '已中断';
+            statusClass = 'live';
+        } else if (status === 11) {
+            statusText = '已腰斩';
+            statusClass = 'finished';
+        } else if (status === 12) {
+            statusText = '已取消';
+            statusClass = 'finished';
+        } else if (status === 13) {
+            statusText = '待定';
+            statusClass = 'scheduled';
         }
         
         let homeScore = '';
