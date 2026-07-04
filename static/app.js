@@ -514,13 +514,27 @@ function loadMatchDetails(match) {
         return;
     }
     
+    // 让刷新本场按钮在加载期置灰占位，规避数据渲染时才蹦出来导致页签向左被挤压的抖动
+    const refreshBtn = document.getElementById('btn-refresh-match');
+    if (refreshBtn) {
+        refreshBtn.style.display = 'inline-flex';
+        refreshBtn.classList.add('btn-disabled');
+        refreshBtn.disabled = true;
+        const btnText = refreshBtn.querySelector('span');
+        if (btnText) btnText.textContent = '刷新本场';
+    }
+
     // Check local memory cache first
     if (matchDetailsCache[match.id]) {
+        if (refreshBtn) {
+            refreshBtn.classList.remove('btn-disabled');
+            refreshBtn.disabled = false;
+        }
         renderMatchDetails(match, matchDetailsCache[match.id]);
         return;
     }
     
-    showDetailsLoading();
+    showDetailsLoading(match);
     
     fetch(`/api/match_details?id=${match.id}&home=${encodeURIComponent(match.home_team)}&away=${encodeURIComponent(match.away_team)}`)
         .then(res => res.json())
@@ -568,7 +582,14 @@ function renderMatchDetails(match, details) {
     
     // Show refresh button since details exist
     const refreshBtn = document.getElementById('btn-refresh-match');
-    if (refreshBtn) refreshBtn.style.display = 'inline-flex';
+    if (refreshBtn) {
+        refreshBtn.style.display = 'inline-flex';
+        refreshBtn.classList.remove('btn-disabled');
+        refreshBtn.classList.remove('refreshing');
+        refreshBtn.disabled = false;
+        const btnText = refreshBtn.querySelector('span');
+        if (btnText) btnText.textContent = '刷新本场';
+    }
     
     // 1. VS Header
     let html = `
@@ -1630,11 +1651,38 @@ function showMatchesLoading() {
     `;
 }
 
-function showDetailsLoading() {
-    document.getElementById('details-content').innerHTML = `
-        <div class="shimmer-box" style="height: 100px;"></div>
-        <div class="shimmer-box" style="height: 250px;"></div>
-        <div class="shimmer-box" style="height: 180px;"></div>
+function showDetailsLoading(match) {
+    const container = document.getElementById('details-content');
+    if (!container || !match) return;
+    
+    let scoreDisplay = 'vs';
+    if (match.score && (match.score.includes('-') || match.score.includes(':'))) {
+        scoreDisplay = match.score.replace('-', ':');
+    }
+    
+    container.innerHTML = `
+        <div class="details-vs-header">
+            <div class="match-league" style="font-size: 0.8rem; font-weight:700;">${match.competition}</div>
+            <div class="vs-row">
+                <div class="vs-logo-team">
+                    <h2>${match.home_team}</h2>
+                    ${match.home_rank ? `<span>${match.home_rank}</span>` : ''}
+                </div>
+                <div class="vs-circle">${scoreDisplay}</div>
+                <div class="vs-logo-team">
+                    <h2>${match.away_team}</h2>
+                    ${match.away_rank ? `<span>${match.away_rank}</span>` : ''}
+                </div>
+            </div>
+            <div style="font-size:0.8rem; color:var(--text-muted); font-weight:600;">
+                开赛时间: ${match.date} ${match.time}
+            </div>
+        </div>
+        <div class="skeleton-content-wrapper" style="padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem;">
+            <div class="shimmer-box" style="height: 100px;"></div>
+            <div class="shimmer-box" style="height: 250px;"></div>
+            <div class="shimmer-box" style="height: 180px;"></div>
+        </div>
     `;
 }
 

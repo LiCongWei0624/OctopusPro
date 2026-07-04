@@ -2344,3 +2344,13 @@ body {
     }
 }
 
+/* 刷新按钮置灰样式 */
+.btn-refresh-detail.btn-disabled {
+    opacity: 0.4 !important;
+    pointer-events: none !important;
+    cursor: not-allowed !important;
+    background-color: var(--border-light) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-muted) !important;
+}
+
