@@ -478,9 +478,7 @@ def scrape_desktop_matches(date_str):
                     if match_time_val:
                         dt = datetime.datetime.fromtimestamp(match_time_val)
                         time_str = dt.strftime('%H:%M')
-                        # 处理跨天赛事日期
-                        if time_str.startswith("00:"):
-                            match_date = f"{dt.strftime('%m-%d')} {get_weekday_cn(dt)}"
+                        match_date = f"{dt.strftime('%m-%d')} {get_weekday_cn(dt)}"
                             
                     home_data = m.get('home', {})
                     away_data = m.get('away', {})

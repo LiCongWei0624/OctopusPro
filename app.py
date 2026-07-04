@@ -96,6 +96,11 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
                 existing_item['score'] = dm_score
                 existing_item['half_score'] = dm.get('half_score', '')
                 existing_item['penalty_score'] = dm.get('penalty_score', '')
+            # 补全缺失的时间或更新日期
+            if dm.get('time') and not existing_item.get('time'):
+                existing_item['time'] = dm['time']
+            if dm.get('date') and existing_item.get('date') != dm['date']:
+                existing_item['date'] = dm['date']
         else:
             seen_ids.add(match_id)
             if match_id in existing_date_matches:
@@ -104,11 +109,18 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
                 item['half_score'] = dm.get('half_score', '')
                 item['penalty_score'] = dm.get('penalty_score', '')
                 item['status'] = dm.get('status', 1)
+                # 补全缺失的时间或更新日期
+                if dm.get('time') and not item.get('time'):
+                    item['time'] = dm['time']
+                if dm.get('date') and item.get('date') != dm['date']:
+                    item['date'] = dm['date']
                 formatted_new_matches.append(item)
             else:
+                # 优先保留 PC 网页端根据时间戳精密计算出来的真实比赛日期
+                exact_date = dm.get('date') if dm.get('date') else target_date_formatted
                 formatted_new_matches.append({
                     'id': match_id,
-                    'date': target_date_formatted,
+                    'date': exact_date,
                     'time': dm['time'],
                     'competition': dm['competition'],
                     'home_team': dm['home_team'],
