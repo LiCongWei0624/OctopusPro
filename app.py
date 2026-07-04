@@ -55,9 +55,17 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
             item['status'] = m.get('status', 1)
             formatted_new_matches.append(item)
         else:
+            # 直接根据比赛本身的 match_time 计算出精确格式化日期，防止被接口日期参数污染导致错位
+            try:
+                m_time_part = m['match_time'].split(' ')
+                m_date_obj = datetime.datetime.strptime(m_time_part[0], "%Y-%m-%d").date()
+                exact_date_formatted = f"{m_date_obj.strftime('%m-%d')} {get_weekday_cn(m_date_obj)}"
+            except Exception:
+                exact_date_formatted = target_date_formatted
+                
             formatted_new_matches.append({
                 'id': match_id,
-                'date': target_date_formatted,
+                'date': exact_date_formatted,
                 'time': m['match_time'].split(' ')[1][:5],
                 'competition': m['competition'],
                 'home_team': m['home_team'],
