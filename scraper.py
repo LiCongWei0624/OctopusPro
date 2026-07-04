@@ -436,9 +436,38 @@ def scrape_desktop_matches(date_str):
         print(f"检测到抓取今日({date_str})赛事，启动【极速解密方案】...")
         try:
             url_js = 'https://static.leisu.com/public/mod_live/alifInfo.js'
-            req = urllib.request.Request(url_js, headers=HEADERS)
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                js_content = resp.read().decode('utf-8')
+            js_content = ""
+            try:
+                req = urllib.request.Request(url_js, headers=HEADERS)
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    js_content = resp.read().decode('utf-8')
+            except Exception as e_direct:
+                print(f"【极速解密】第一志愿静态链接失败: {e_direct}，启动灾备方案：从 live 首页动态定位数据源...")
+                try:
+                    url_live = 'https://live.leisu.com/'
+                    req_live = urllib.request.Request(url_live, headers=HEADERS)
+                    with urllib.request.urlopen(req_live, timeout=10) as resp_live:
+                        live_html = resp_live.read().decode('utf-8', errors='ignore')
+                    
+                    js_src_match = re.search(r'src=["\']([^"\']*/alifInfo[^"\']*)["\']', live_html)
+                    if js_src_match:
+                        found_path = js_src_match.group(1)
+                        if found_path.startswith('//'):
+                            url_js = 'https:' + found_path
+                        elif found_path.startswith('/'):
+                            url_js = 'https://static.leisu.com' + found_path
+                        else:
+                            url_js = found_path
+                        print(f"【极速解密】灾备成功！自动找回数据源地址: {url_js}")
+                        
+                        req = urllib.request.Request(url_js, headers=HEADERS)
+                        with urllib.request.urlopen(req, timeout=10) as resp:
+                            js_content = resp.read().decode('utf-8')
+                except Exception as e_backup:
+                    print(f"【极速解密】灾备方案也失败了: {e_backup}")
+                    
+            if not js_content:
+                raise Exception("无法加载 alifInfo 数据源 JS")
                 
             # 匹配 window[_t19798[2]] = '...' 或者是 window.base64_ = '...' 或普通大加密串
             match = re.search(r"window\[_t\d+\[\d+\]\]\s*=\s*'([^']+)'", js_content)
