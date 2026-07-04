@@ -176,7 +176,7 @@ body {
 .workspace {
     display: grid;
     grid-template-columns: 380px 1fr;
-    height: calc(100vh - 64px);
+    height: calc(100vh - 64px - 54px);
     overflow: hidden;
 }
 
@@ -229,6 +229,38 @@ body {
     font-weight: 700;
     padding: 0.15rem 0.5rem;
     border-radius: 10px;
+}
+
+/* --- 顶级全宽贯穿日期选择控制栏 --- */
+.top-date-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    height: 54px;
+    background: var(--bg-secondary);
+    border-bottom: 1.5px solid var(--border-color);
+    padding: 0 1.5rem;
+    box-shadow: var(--shadow-sm);
+    z-index: 100;
+    flex-shrink: 0;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+}
+.top-date-bar .date-quick-nav {
+    width: 220px;
+    flex-shrink: 0;
+    display: flex;
+    gap: 0.35rem;
+}
+.top-date-bar .date-tabs {
+    flex: 1;
+    margin-bottom: 0 !important;
+    border-bottom: none !important;
+    padding-bottom: 0 !important;
+    height: 48px;
+    align-items: center;
+    overflow-y: hidden;
 }
 
 /* --- 日历选择器与快捷导航快捷键 --- */
@@ -1721,7 +1753,7 @@ body {
     .workspace {
         display: flex !important;
         flex-direction: column !important;
-        height: calc(100vh - 64px) !important;
+        height: calc(100vh - 64px - 82px) !important;
         overflow: hidden !important;
         position: relative !important;
     }
@@ -1744,42 +1776,43 @@ body {
         gap: 0.5rem;
     }
 
-    /* 3. 改变日期选择栏为横向水平滑动样式，极大优化移动端操作空间 */
-    .sidebar-dates {
-        width: 100% !important;
-        height: auto !important;
-        border-right: none !important;
-        border-bottom: 1px solid var(--border-color) !important;
-        padding: 0.65rem 0.85rem !important;
-        flex-shrink: 0 !important;
-    }
-    
-    .date-tabs {
-        flex-direction: row !important;
-        overflow-x: auto !important;
-        scrollbar-width: none !important; /* 隐藏火狐滚动条 */
-        white-space: nowrap !important;
+    /* 3. 顶级全宽日期控制栏在移动端自适应为网格排布 */
+    .top-date-bar {
+        display: grid !important;
+        grid-template-columns: 1fr auto !important;
         gap: 0.5rem !important;
-        padding-bottom: 0.15rem !important;
-    }
-    
-    .date-tabs::-webkit-scrollbar {
-        display: none !important; /* 隐藏谷歌滚动条 */
-    }
-    
-    .date-tab {
-        padding: 0.4rem 0.75rem !important;
-        font-size: 0.8rem !important;
+        height: auto !important;
+        padding: 0.5rem 0.75rem !important;
+        background: var(--bg-secondary) !important;
+        border-bottom: 1.5px solid var(--border-color) !important;
         flex-shrink: 0 !important;
     }
-    
-    .date-tab.active::after {
-        left: 25%;
-        top: auto;
-        bottom: 0;
-        width: 50%;
-        height: 3px;
-        border-radius: 4px 4px 0 0;
+    .top-date-bar .date-quick-nav {
+        width: 100% !important;
+        grid-column: 1 / 2;
+    }
+    .top-date-bar .datepicker-container {
+        grid-column: 2 / 3;
+        width: 32px !important;
+        height: 32px !important;
+    }
+    .top-date-bar .date-tabs {
+        grid-column: 1 / 3;
+        width: 100% !important;
+        height: 36px !important;
+        padding-top: 0 !important;
+        margin-bottom: 0 !important;
+        border-bottom: none !important;
+        overflow-x: auto !important;
+        white-space: nowrap !important;
+        display: flex !important;
+        flex-direction: row !important;
+        gap: 0.4rem !important;
+    }
+    .date-tab {
+        padding: 0.35rem 0.75rem !important;
+        font-size: 0.78rem !important;
+        flex-shrink: 0 !important;
     }
 
     /* 4. 赛事列表区域设为自适应剩余高度的独立垂直滚动（体验如 App 般流畅） */
