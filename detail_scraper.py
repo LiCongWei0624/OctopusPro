@@ -640,20 +640,20 @@ def get_real_odds(match_id):
             server_time = None
             
         if server_time is not None:
-        r = server_time + 10
-        c_val = uuid.uuid4().hex
-        
-        endpoint_path = f"/v1/web/match/common/odds_list?match_id={match_id}"
-        auth_path = "/v1/web/match/common/odds_list"
-        l = f"{auth_path}-{r}-{c_val}-0-{SALT}"
-        u = hashlib.md5(l.encode('utf-8')).hexdigest()
-        auth_data = f"{r}-{c_val}-0-{u}"
-        
-        payload = {"auth_data": auth_data, "source": source_val}
-        payload_str = json.dumps(payload, separators=(',', ':'))
-        
-        # Encrypt payload via Node.js
-        node_enc_script = f"""
+            r = server_time + 10
+            c_val = uuid.uuid4().hex
+            
+            endpoint_path = f"/v1/web/match/common/odds_list?match_id={match_id}"
+            auth_path = "/v1/web/match/common/odds_list"
+            l = f"{auth_path}-{r}-{c_val}-0-{SALT}"
+            u = hashlib.md5(l.encode('utf-8')).hexdigest()
+            auth_data = f"{r}-{c_val}-0-{u}"
+            
+            payload = {"auth_data": auth_data, "source": source_val}
+            payload_str = json.dumps(payload, separators=(',', ':'))
+            
+            # 通过 Node.js 加密 payload
+            node_enc_script = f"""
 const crypto = require('crypto');
 function encrypt(text) {{
     const key = Buffer.from('kw@h*8gCIn$8X#df', 'utf8');
@@ -664,54 +664,54 @@ function encrypt(text) {{
 }}
 console.log(encrypt('{payload_str}'));
 """
-        enc_script_path = os.path.join(os.path.dirname(__file__), 'temp_enc_payload.js')
-        with open(enc_script_path, 'w', encoding='utf-8') as f:
-            f.write(node_enc_script)
+            enc_script_path = os.path.join(os.path.dirname(__file__), 'temp_enc_payload.js')
+            with open(enc_script_path, 'w', encoding='utf-8') as f:
+                f.write(node_enc_script)
+                
+            process = subprocess.Popen([NODE_PATH, enc_script_path], stdout=subprocess.PIPE, text=True)
+            stdout, _ = process.communicate()
+            encrypted_payload = stdout.strip()
             
-        process = subprocess.Popen([NODE_PATH, enc_script_path], stdout=subprocess.PIPE, text=True)
-        stdout, _ = process.communicate()
-        encrypted_payload = stdout.strip()
-        
-        try:
-            os.remove(enc_script_path)
-        except:
-            pass
+            try:
+                os.remove(enc_script_path)
+            except:
+                pass
+                
+            url_api = f"https://{host_name}{endpoint_path}"
+            headers = HEADERS.copy()
+            headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
+            headers['Origin'] = 'https://m.leisu.com'
+            headers['source'] = source_val
             
-        url_api = f"https://{host_name}{endpoint_path}"
-        headers = HEADERS.copy()
-        headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
-        headers['Origin'] = 'https://m.leisu.com'
-        headers['source'] = source_val
-        
-        cj = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-        
-        try:
-            html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
-            res_json = json.loads(html)
+            cj = http.cookiejar.CookieJar()
+            opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
             
-            if 'data' in res_json and res_json['data']:
-                data_val = res_json['data']
-                if isinstance(data_val, str):
-                    offset = res_json['code'] - 100
-                    
-                    res_caesar = ""
-                    for c in data_val:
-                        code = ord(c)
-                        if 65 <= code <= 90:
-                            res_caesar += chr((code - 65 - offset + 26) % 26 + 65)
-                        elif 97 <= code <= 122:
-                            res_caesar += chr((code - 97 - offset + 26) % 26 + 97)
-                        else:
-                            res_caesar += c
-                    
-                    decoded_bytes = base64.b64decode(res_caesar)
-                    decompressed = zlib.decompress(decoded_bytes, 15 + 32)
-                    decrypted_json = json.loads(decompressed.decode('utf-8'))
-                    
-                    odds_data = parse_odds_json_to_list(decrypted_json)
-        except Exception as e:
-            print("Failed to get real odds from API:", e)
+            try:
+                html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
+                res_json = json.loads(html)
+                
+                if 'data' in res_json and res_json['data']:
+                    data_val = res_json['data']
+                    if isinstance(data_val, str):
+                        offset = res_json['code'] - 100
+                        
+                        res_caesar = ""
+                        for c in data_val:
+                            code = ord(c)
+                            if 65 <= code <= 90:
+                                res_caesar += chr((code - 65 - offset + 26) % 26 + 65)
+                            elif 97 <= code <= 122:
+                                res_caesar += chr((code - 97 - offset + 26) % 26 + 97)
+                            else:
+                                res_caesar += c
+                        
+                        decoded_bytes = base64.b64decode(res_caesar)
+                        decompressed = zlib.decompress(decoded_bytes, 15 + 32)
+                        decrypted_json = json.loads(decompressed.decode('utf-8'))
+                        
+                        odds_data = parse_odds_json_to_list(decrypted_json)
+            except Exception as e:
+                print("Failed to get real odds from API:", e)
 
     # 如果 API 未返回赔率数据，则触发 Playwright PC 网页端兜底
     if not odds_data:

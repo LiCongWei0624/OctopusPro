@@ -344,24 +344,22 @@ def scrape_matches():
                 home_el = item.find('div', class_='lier-team-home')
                 home_name = home_el.text.strip() if home_el else ""
                 home_name = re.sub(r'\s+', '', home_name)
+                # 清洗开赛进行中分钟数被 BS4 粘连到队名的污染（如 "00'金川人力" → "金川人力"）
+                home_name = re.sub(r"^\d+\'?", '', home_name).strip()
+                home_name = re.sub(r"\d+\'?$", '', home_name).strip()
                 
                 away_el = item.find('div', class_='lier-team-away')
                 away_name = away_el.text.strip() if away_el else ""
                 away_name = re.sub(r'\s+', '', away_name)
+                # 清洗开赛进行中分钟数被 BS4 粘连到队名的污染（如 "始兴市民00'" → "始兴市民"）
+                away_name = re.sub(r"^\d+\'?", '', away_name).strip()
+                away_name = re.sub(r"\d+\'?$", '', away_name).strip()
                 
                 score_str = score_el.text.strip() if score_el else ""
                 if score_str == "-":
                     score_str = ""
                     
-                # Filter for major competitions
-                is_major = False
-                for keyword in MAJOR_COMPETITIONS:
-                    if keyword in comp_str:
-                        is_major = True
-                        break
-                        
-                if not is_major and match_id not in guide_matches:
-                    continue
+                # 不再过滤小联赛：保留所有联赛赛事（包含韩国杯、挪甲等），以匹配雷速 942 场全量数据
 
                 match_date = date_str
                 if time_str and time_str.startswith("00:"):
@@ -447,10 +445,26 @@ def scrape_desktop_matches(date_str):
                         console.log("Successfully clicked 'All' filter on PC page.");
                     }
                 }""")
-                page.wait_for_timeout(1500) # 稍微等待全部列表加载完毕
+                page.wait_for_timeout(1500) # 等待全部列表初始加载
             except Exception as e:
                 print("Failed to toggle 'All' tab in browser:", e)
-                
+
+            # 无限滚动：雷速 PC 端使用懒加载，必须反复滚动到底部才能触发全量 942 场赛事渲染
+            print("Playwright Scraper: Starting infinite scroll to load all matches...")
+            prev_count = 0
+            scroll_attempts = 0
+            max_scroll_attempts = 80  # 最多滚动 80 次避免死循环
+            while scroll_attempts < max_scroll_attempts:
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(700)
+                current_count = page.evaluate("document.querySelectorAll('.dd-item').length")
+                print(f"  Scroll {scroll_attempts+1}: {current_count} items loaded")
+                if current_count == prev_count:
+                    break  # 计数不再增加，说明已到底部
+                prev_count = current_count
+                scroll_attempts += 1
+            print(f"Playwright Scraper: Done scrolling, total {prev_count} items loaded.")
+
             html = page.content()
             browser.close()
             
@@ -492,10 +506,16 @@ def scrape_desktop_matches(date_str):
                 home_el = item.find('div', class_='lier-team-home')
                 home_name = home_el.text.strip() if home_el else ""
                 home_name = re.sub(r'\s+', '', home_name)
+                # 清洗进行中比赛分钟数粘连到队名的污染
+                home_name = re.sub(r"^\d+\'?", '', home_name).strip()
+                home_name = re.sub(r"\d+\'?$", '', home_name).strip()
                 
                 away_el = item.find('div', class_='lier-team-away')
                 away_name = away_el.text.strip() if away_el else ""
                 away_name = re.sub(r'\s+', '', away_name)
+                # 清洗进行中比赛分钟数粘连到队名的污染
+                away_name = re.sub(r"^\d+\'?", '', away_name).strip()
+                away_name = re.sub(r"\d+\'?$", '', away_name).strip()
                 
                 score_str = score_el.text.strip() if score_el else ""
                 if score_str == "-":
