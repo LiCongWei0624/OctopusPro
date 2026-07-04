@@ -5,6 +5,8 @@ let selectedMatch = null;
 let activeDetailTab = 'intel'; // intel, history, squad, odds
 let matchDetailsCache = {}; // Cache for match details in memory
 let selectedLeague = '全部';
+let searchQuery = '';
+
 
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
@@ -178,6 +180,7 @@ function refreshDateData(date) {
 }
 
 // Render matches after selection or refresh
+// Render matches after selection or refresh
 function renderDateMatches(date) {
     const matches = groupedMatches[date] || [];
     const leagues = ['全部'];
@@ -199,15 +202,7 @@ function renderDateMatches(date) {
     const sortedLeagues = ['全部', ...otherLeagues];
     
     renderLeagueFilters(sortedLeagues);
-    
-    document.getElementById('match-count-badge').innerText = `${matches.length} 场`;
-    renderMatchCards(matches);
-    
-    if (matches.length > 0) {
-        selectMatch(matches[0]);
-    } else {
-        renderNoMatchSelected();
-    }
+    filterAndRenderMatches();
 }
 
 // Convert "MM-DD 星期X" to YYYYMMDD format
@@ -229,29 +224,44 @@ function convertToYYYYMMDD(dateTabStr) {
     return `${year}${mm}${dd}`;
 }
 
-// Render League Filters Pills
+// Render League Filters as Dropdown and Search Bar
 function renderLeagueFilters(leagues) {
     const filterBar = document.getElementById('league-filter-bar');
-    filterBar.innerHTML = '';
-    leagues.forEach(league => {
-        const pill = document.createElement('div');
-        pill.className = `league-pill ${selectedLeague === league ? 'active' : ''}`;
-        pill.innerText = league;
-        pill.onclick = () => selectLeague(league);
-        filterBar.appendChild(pill);
-    });
+    if (!filterBar) return;
+    
+    filterBar.innerHTML = `
+        <div class="filter-controls-row">
+            <div class="search-input-wrapper">
+                <svg class="search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" id="match-search-input" class="search-input-field" placeholder="搜索球队、联赛..." value="${searchQuery}" oninput="filterMatchesBySearch()">
+            </div>
+            <div class="dropdown-wrapper">
+                <select id="league-select" class="league-select-dropdown" onchange="filterMatchesByLeague(this.value)">
+                    ${leagues.map(l => `<option value="${l}" ${selectedLeague === l ? 'selected' : ''}>${l === '全部' ? '全部联赛' : l}</option>`).join('')}
+                </select>
+            </div>
+        </div>
+    `;
 }
 
-// Filter matches by League
-function selectLeague(league) {
-    selectedLeague = league;
-    document.querySelectorAll('.league-pill').forEach(p => {
-        if (p.innerText === league) p.classList.add('active');
-        else p.classList.remove('active');
+// Filter matches by selected league and search query, then render cards
+function filterAndRenderMatches() {
+    const matches = groupedMatches[selectedDate] || [];
+    const filtered = matches.filter(m => {
+        const leagueMatch = (selectedLeague === '全部' || m.competition === selectedLeague);
+        
+        const q = searchQuery.trim().toLowerCase();
+        const textMatch = !q || 
+            (m.competition && m.competition.toLowerCase().includes(q)) ||
+            (m.home_team && m.home_team.toLowerCase().includes(q)) ||
+            (m.away_team && m.away_team.toLowerCase().includes(q));
+            
+        return leagueMatch && textMatch;
     });
     
-    const matches = groupedMatches[selectedDate] || [];
-    const filtered = league === '全部' ? matches : matches.filter(m => m.competition === league);
     document.getElementById('match-count-badge').innerText = `${filtered.length} 场`;
     renderMatchCards(filtered);
     
@@ -263,6 +273,31 @@ function selectLeague(league) {
     } else {
         renderNoMatchSelected();
     }
+}
+
+// Handle search input events
+function filterMatchesBySearch() {
+    const searchInput = document.getElementById('match-search-input');
+    if (searchInput) {
+        searchQuery = searchInput.value;
+        filterAndRenderMatches();
+    }
+}
+
+// Handle league selector dropdown events
+function filterMatchesByLeague(leagueName) {
+    selectedLeague = leagueName;
+    filterAndRenderMatches();
+}
+
+// Filter matches by League (compatibility and direct call support)
+function selectLeague(league) {
+    selectedLeague = league;
+    const selectEl = document.getElementById('league-select');
+    if (selectEl) {
+        selectEl.value = league;
+    }
+    filterAndRenderMatches();
 }
 
 // Render Match Cards in Middle Column (Premium Horizontal Style)
