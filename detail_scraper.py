@@ -599,18 +599,47 @@ def get_real_odds(match_id):
     host_name = 'api-gateway.leisu.com'
     source_val = 'm_leisu'
     
-    # 1. Fetch server time
-    url_time = 'https://api-gateway.leisu.com/v1/web/public/time'
-    req_time = urllib.request.Request(url_time, headers=HEADERS)
-    try:
-        with urllib.request.urlopen(req_time) as resp:
-            server_time = json.loads(resp.read().decode('utf-8'))['data']
-    except Exception as e:
-        print("Failed to get time for odds:", e)
-        server_time = None
-        
+    # 1. 尝试从本地数据文件获取该赛事的最新状态
+    status = 1
+    data_file_path = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
+    if os.path.exists(data_file_path):
+        try:
+            with open(data_file_path, 'r', encoding='utf-8') as f:
+                matches = json.load(f)
+            for m in matches:
+                if str(m.get('id')) == str(match_id):
+                    status = int(m.get('status', 1))
+                    break
+        except Exception:
+            pass
+            
     odds_data = []
-    if server_time is not None:
+    
+    # 2. 如果比赛已经开始（进行中）或已结束，由于赛前静态 API (/v1/web/match/common/odds_list) 不会更新走地比分和赔率，
+    # 我们强制优先采用 Playwright 抓取网页端的 Vue 实时指数数据
+    is_live_or_finished = status in [2, 3, 4, 5, 7, 8]
+    if is_live_or_finished:
+        print(f"Match {match_id} is Live or Finished (status {status}). Fetching real-time odds via Playwright directly...")
+        try:
+            pc_odds_json = get_odds_via_playwright(match_id)
+            if pc_odds_json:
+                odds_data = parse_odds_json_to_list(pc_odds_json)
+        except Exception as pe:
+            print(f"Live Playwright fetch failed for {match_id}: {pe}")
+            
+    # 3. 如果是赛前，或者刚才 Playwright 抓取失败了，我们再使用 API 作为备用/主通道
+    if not odds_data:
+        # Fetch server time
+        url_time = 'https://api-gateway.leisu.com/v1/web/public/time'
+        req_time = urllib.request.Request(url_time, headers=HEADERS)
+        try:
+            with urllib.request.urlopen(req_time) as resp:
+                server_time = json.loads(resp.read().decode('utf-8'))['data']
+        except Exception as e:
+            print("Failed to get time for odds:", e)
+            server_time = None
+            
+        if server_time is not None:
         r = server_time + 10
         c_val = uuid.uuid4().hex
         

@@ -471,13 +471,8 @@ def scrape_desktop_matches(date_str):
             if score_str == "-":
                 score_str = ""
                 
-            is_major = False
-            for keyword in MAJOR_COMPETITIONS:
-                if keyword in comp_str:
-                    is_major = True
-                    break
-            if not is_major:
-                continue
+            # 移除 MAJOR_COMPETITIONS 过滤，保留单日全部可见赛事的比分和状态同步
+
                 
             status = 1
             status_el = item.find('div', class_='lier-status')
