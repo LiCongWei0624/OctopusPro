@@ -84,18 +84,24 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
     # Then add desktop matches as fallback and update scores/status for existing ones
     for dm in desktop_matches:
         match_id = str(dm['id'])
-        # 寻找已由移动端创建的对应比赛
+        # 寻找已由移动端创建 of 对应比赛
         existing_item = next((item for item in formatted_new_matches if str(item['id']) == match_id), None)
         
         if existing_item:
-            # 优先采用 PC 网页端更实时的比分和比赛状态（如进行中、已结束）进行覆盖更新
+            # 优先采用 PC 网页端更实时的比赛状态进行覆盖更新
             dm_status = dm.get('status', 1)
-            dm_score = dm.get('score', '')
-            if dm_status in [2, 3, 4, 5, 7, 8] or dm_score:
+            if dm_status in [2, 3, 4, 5, 7, 8]:
                 existing_item['status'] = dm_status
+                
+            # 绝对不能用空的或者无意义的比分去覆盖原有的有效比分！
+            dm_score = dm.get('score', '')
+            if dm_score and dm_score != '-':
                 existing_item['score'] = dm_score
-                existing_item['half_score'] = dm.get('half_score', '')
-                existing_item['penalty_score'] = dm.get('penalty_score', '')
+            if dm.get('half_score') and dm.get('half_score') != '-':
+                existing_item['half_score'] = dm['half_score']
+            if dm.get('penalty_score') and dm.get('penalty_score') != '-':
+                existing_item['penalty_score'] = dm['penalty_score']
+                
             # 补全缺失的时间或更新日期
             if dm.get('time') and not existing_item.get('time'):
                 existing_item['time'] = dm['time']
@@ -105,10 +111,17 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
             seen_ids.add(match_id)
             if match_id in existing_date_matches:
                 item = existing_date_matches[match_id].copy()
-                item['score'] = dm['score']
-                item['half_score'] = dm.get('half_score', '')
-                item['penalty_score'] = dm.get('penalty_score', '')
                 item['status'] = dm.get('status', 1)
+                
+                # 只有在 PC 网页端有有效比分时才更新，否则保留数据库里的比分
+                dm_score = dm.get('score', '')
+                if dm_score and dm_score != '-':
+                    item['score'] = dm_score
+                if dm.get('half_score') and dm.get('half_score') != '-':
+                    item['half_score'] = dm['half_score']
+                if dm.get('penalty_score') and dm.get('penalty_score') != '-':
+                    item['penalty_score'] = dm['penalty_score']
+                    
                 # 补全缺失的时间或更新日期
                 if dm.get('time') and not item.get('time'):
                     item['time'] = dm['time']
