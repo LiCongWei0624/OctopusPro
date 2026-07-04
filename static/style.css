@@ -175,13 +175,13 @@ body {
 /* Workspace Panels */
 .workspace {
     display: grid;
-    grid-template-columns: 220px 380px 1fr;
+    grid-template-columns: 380px 1fr;
     height: calc(100vh - 64px);
     overflow: hidden;
 }
 
 /* Scrollable Container settings */
-.sidebar-dates, .panel-matches {
+.panel-matches {
     height: 100%;
     overflow-y: auto;
     background-color: var(--bg-panel);
@@ -236,40 +236,55 @@ body {
     position: relative;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
 }
 .calendar-picker-input {
     position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
     opacity: 0;
-    width: 0;
-    height: 0;
-    padding: 0;
-    margin: 0;
-    pointer-events: none;
+    cursor: pointer;
+    z-index: 2;
 }
 .calendar-picker-btn {
+    position: absolute;
+    top: 0;
+    left: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    width: 100%;
+    height: 100%;
     border-radius: 50%;
     background-color: var(--bg-body-secondary);
     border: 1px solid var(--border-color);
     color: var(--text-secondary);
-    cursor: pointer;
     transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 1;
 }
-.calendar-picker-btn:hover {
+.calendar-picker-input:hover ~ .calendar-picker-btn {
     background-color: var(--border-light);
     color: var(--color-primary);
     border-color: var(--color-primary);
     transform: scale(1.08);
 }
+.date-selection-top {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    margin-bottom: 0.65rem;
+}
 .date-quick-nav {
     display: flex;
     gap: 0.35rem;
-    margin-bottom: 0.85rem;
-    width: 100%;
+    flex: 1;
+    width: auto;
 }
 .btn-quick-date {
     flex: 1;
@@ -294,47 +309,45 @@ body {
     box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2);
 }
 
-/* --- Date List / Sidebar-dates --- */
+/* --- 横向滑动长轴极简日期列表 --- */
 .date-tabs {
     list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+    display: flex !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    scrollbar-width: none !important;
+    white-space: nowrap !important;
+    gap: 0.4rem !important;
+    padding-bottom: 0.4rem !important;
+    margin-bottom: 0.85rem !important;
+    border-bottom: 1.5px solid var(--border-color);
 }
-
+.date-tabs::-webkit-scrollbar {
+    display: none !important;
+}
 .date-tab {
-    padding: 0.75rem 1rem;
-    border-radius: var(--border-radius-sm);
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    transition: var(--transition-smooth);
-    border: 1px solid transparent;
-}
-
-.date-tab:hover {
+    flex-shrink: 0 !important;
+    padding: 0.35rem 0.75rem !important;
+    font-size: 0.78rem !important;
+    border-radius: 6px !important;
     background-color: var(--bg-body-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+.date-tab:hover {
+    background-color: var(--border-light);
     color: var(--text-primary);
 }
-
 .date-tab.active {
-    background-color: #fff;
-    color: var(--color-primary);
-    border-color: var(--border-color);
-    box-shadow: var(--shadow-soft);
-    position: relative;
+    background-color: var(--color-primary-light) !important;
+    color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+    font-weight: 700;
 }
-
 .date-tab.active::after {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 25%;
-    width: 3px;
-    height: 50%;
-    background-color: var(--color-primary);
-    border-radius: 0 4px 4px 0;
+    display: none !important;
 }
 
 /* --- Matches List / panel-matches --- */
