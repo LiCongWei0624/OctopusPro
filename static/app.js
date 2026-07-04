@@ -125,14 +125,36 @@ function groupMatchesByDate(matches) {
 // Render Date Sidebar
 function renderDateSidebar() {
     const container = document.getElementById('date-list');
+    if (!container) return;
     container.innerHTML = '';
+    
+    const todayStr = getTodayDateString();
+    
+    const dateObj = new Date();
+    dateObj.setDate(dateObj.getDate() - 1);
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const yesterdayStr = `${mm}-${dd} ${weekdays[dateObj.getDay()]}`;
+    
+    const tObj = new Date();
+    tObj.setDate(tObj.getDate() + 1);
+    const tMm = String(tObj.getMonth() + 1).padStart(2, '0');
+    const tDd = String(tObj.getDate()).padStart(2, '0');
+    const tomorrowStr = `${tMm}-${tDd} ${weekdays[tObj.getDay()]}`;
     
     const dates = getDatesRange();
     dates.forEach(date => {
         const li = document.createElement('li');
         li.className = `date-tab ${selectedDate === date ? 'active' : ''}`;
         li.id = `date-tab-${date}`;
-        li.innerText = date;
+        
+        let label = date;
+        if (date === todayStr) label = `${date.split(' ')[0]} 今天`;
+        else if (date === yesterdayStr) label = `${date.split(' ')[0]} 昨天`;
+        else if (date === tomorrowStr) label = `${date.split(' ')[0]} 明天`;
+        
+        li.innerText = label;
         li.onclick = () => selectDate(date);
         container.appendChild(li);
     });
@@ -148,7 +170,33 @@ function selectDate(date) {
     const activeTab = document.getElementById(`date-tab-${date}`);
     if (activeTab) activeTab.classList.add('active');
     
+    // Sync active classes on quick nav buttons
     const todayStr = getTodayDateString();
+    const dateObj = new Date();
+    dateObj.setDate(dateObj.getDate() - 1);
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const yesterdayStr = `${mm}-${dd} ${weekdays[dateObj.getDay()]}`;
+    
+    const tObj = new Date();
+    tObj.setDate(tObj.getDate() + 1);
+    const tMm = String(tObj.getMonth() + 1).padStart(2, '0');
+    const tDd = String(tObj.getDate()).padStart(2, '0');
+    const tomorrowStr = `${tMm}-${tDd} ${weekdays[tObj.getDay()]}`;
+    
+    document.querySelectorAll('.btn-quick-date').forEach(btn => btn.classList.remove('active-today'));
+    if (date === todayStr) {
+        const btn = document.getElementById('btn-quick-today');
+        if (btn) btn.classList.add('active-today');
+    } else if (date === yesterdayStr) {
+        const btn = Array.from(document.querySelectorAll('.btn-quick-date')).find(b => b.textContent === '昨天');
+        if (btn) btn.classList.add('active-today');
+    } else if (date === tomorrowStr) {
+        const btn = Array.from(document.querySelectorAll('.btn-quick-date')).find(b => b.textContent === '明天');
+        if (btn) btn.classList.add('active-today');
+    }
+    
     if (date !== todayStr) {
         refreshDateData(date);
     } else {
@@ -1616,7 +1664,55 @@ function getDatesRange() {
         const w = weekdays[d.getDay()];
         dates.push(`${mm}-${dd} ${w}`);
     }
+    
+    // 如果用户通过日历选择了一个超出默认-10到+10天范围的日期，则动态插入并排序
+    if (selectedDate && !dates.includes(selectedDate)) {
+        dates.push(selectedDate);
+        dates.sort((a, b) => {
+            const parseDate = (s) => {
+                const parts = s.split(' ')[0].split('-');
+                return parseInt(parts[0]) * 31 + parseInt(parts[1]);
+            };
+            return parseDate(a) - parseDate(b);
+        });
+    }
     return dates;
+}
+
+// 昨天、今天、明天极速快捷键点击处理
+function selectQuickDate(type) {
+    const today = new Date();
+    if (type === 'yesterday') {
+        today.setDate(today.getDate() - 1);
+    } else if (type === 'tomorrow') {
+        today.setDate(today.getDate() + 1);
+    }
+    
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    const dd = String(today.getDate()).padStart(2, '0');
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const w = weekdays[today.getDay()];
+    const targetDateStr = `${mm}-${dd} ${w}`;
+    
+    selectDate(targetDateStr);
+}
+
+// 日历 Datepicker 选择任意日期处理
+function selectCalendarDate(dateVal) {
+    if (!dateVal) return;
+    
+    const dateObj = new Date(dateVal);
+    const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const dd = String(dateObj.getDate()).padStart(2, '0');
+    const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+    const w = weekdays[dateObj.getDay()];
+    const targetDateStr = `${mm}-${dd} ${w}`;
+    
+    selectedDate = targetDateStr;
+    selectDate(targetDateStr);
+    
+    // 强制刷新边栏，使外部点选的日期在 dates 列表中生成并高亮
+    renderDateSidebar();
 }
 
 // 全局图表缓存实例

@@ -231,6 +231,69 @@ body {
     border-radius: 10px;
 }
 
+/* --- 日历选择器与快捷导航快捷键 --- */
+.datepicker-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+.calendar-picker-input {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    padding: 0;
+    margin: 0;
+    pointer-events: none;
+}
+.calendar-picker-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background-color: var(--bg-body-secondary);
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.calendar-picker-btn:hover {
+    background-color: var(--border-light);
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    transform: scale(1.08);
+}
+.date-quick-nav {
+    display: flex;
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+    width: 100%;
+}
+.btn-quick-date {
+    flex: 1;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background-color: var(--bg-body-secondary);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.btn-quick-date:hover {
+    background-color: var(--border-light);
+    color: var(--text-primary);
+}
+.btn-quick-date.active-today {
+    background-color: var(--color-primary) !important;
+    color: #ffffff !important;
+    border-color: var(--color-primary) !important;
+    box-shadow: 0 2px 6px rgba(79, 70, 229, 0.2);
+}
+
 /* --- Date List / Sidebar-dates --- */
 .date-tabs {
     list-style: none;

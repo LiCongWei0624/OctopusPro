@@ -45,8 +45,25 @@
         <div class="workspace">
             <!-- Col 1: Date Sidebar -->
             <aside class="sidebar-dates">
-                <div class="sidebar-header">
+                <div class="sidebar-header" style="display: flex; align-items: center; justify-content: space-between;">
                     <h3>选择日期</h3>
+                    <div class="datepicker-container">
+                        <input type="date" id="calendar-date-picker" class="calendar-picker-input" onchange="selectCalendarDate(this.value)">
+                        <label for="calendar-date-picker" class="calendar-picker-btn" title="点击日历选择任意日期">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                <line x1="16" y1="2" x2="16" y2="6"></line>
+                                <line x1="8" y1="2" x2="8" y2="6"></line>
+                                <line x1="3" y1="10" x2="21" y2="10"></line>
+                            </svg>
+                        </label>
+                    </div>
+                </div>
+                <!-- 昨天、今天、明天 极速捷径 -->
+                <div class="date-quick-nav">
+                    <button class="btn-quick-date" onclick="selectQuickDate('yesterday')">昨天</button>
+                    <button id="btn-quick-today" class="btn-quick-date active-today" onclick="selectQuickDate('today')">今天</button>
+                    <button class="btn-quick-date" onclick="selectQuickDate('tomorrow')">明天</button>
                 </div>
                 <ul id="date-list" class="date-tabs">
                     <!-- Dynamic Date Tabs -->
