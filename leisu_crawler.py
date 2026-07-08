@@ -167,10 +167,13 @@ console.log(encrypt('{payload_str}'));
         real_url = url_api
         real_domain = 'api-gateway.leisu.com'
         
-    if '<textarea id="renderData"' in html:
+    if 'renderData' in html:
         user_agent = headers.get('User-Agent', '')
         cookie_val = solve_waf_via_node(html, real_url, user_agent)
         if cookie_val:
+            # 重试前清空 cj 脏数据，防范过期 Cookie 重写覆盖
+            cj.clear()
+            
             waf_cookie = http.cookiejar.Cookie(
                 version=0, name='acw_sc__v2', value=cookie_val,
                 port=None, port_specified=False,
