@@ -79,7 +79,7 @@ def solve_waf_via_node(html, url, user_agent):
         pass
     return None
 
-def fetch_matches_for_tier(date_str, n_val):
+def fetch_matches_for_tier(date_str, n_val, cj=None):
     host_name = 'api-gateway.leisu.com'
     source_val = 'm_leisu'
     
@@ -137,7 +137,8 @@ console.log(encrypt('{payload_str}'));
     
     url_api = f"https://{host_name}/v1/web/match/football/match_list?date={date_str}&n={n_val}"
     
-    cj = http.cookiejar.CookieJar()
+    if cj is None:
+        cj = http.cookiejar.CookieJar()
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
     
     headers = HEADERS.copy()
@@ -202,24 +203,49 @@ console.log(encrypt('{payload_str}'));
             return res_json
     return None
 
-def fetch_matches(date_str, n_values=[1, 2]):
+def fetch_matches(date_str, n_values=[1, 2, 3, 4, 5, 7]):
     """
     Fetches unique matches for a given date.
     By default, n_values=[1, 2] fetches major matches (Tier 1 & Tier 2).
     If you want all matches (including lower-tier small matches), use n_values=[1, 2, 3, 4, 5, 7].
     """
+    from concurrent.futures import ThreadPoolExecutor
     all_matches = {}
     events_map = {}
     
-    for n in n_values:
-        data = fetch_matches_for_tier(date_str, n)
-        if data and isinstance(data, dict):
-            matches = data.get('matches', [])
-            events = data.get('events', {})
-            events_map.update(events)
-            for m in matches:
-                all_matches[m['id']] = m
-        time.sleep(0.5) # small sleep to prevent rate limiting
+    if not n_values:
+        return []
+        
+    cj = http.cookiejar.CookieJar()
+    
+    # 1. 预热第一志愿，先单独拉取首个层级获取并建立全局 WAF Cookie
+    first_n = n_values[0]
+    first_data = fetch_matches_for_tier(date_str, first_n, cj=cj)
+    if first_data and isinstance(first_data, dict):
+        matches = first_data.get('matches', [])
+        events = first_data.get('events', {})
+        events_map.update(events)
+        for m in matches:
+            all_matches[m['id']] = m
+            
+    # 2. 剩余层级启用多线程并发拉取，直接复用已解出的 WAF Cookie
+    remaining_ns = n_values[1:]
+    if remaining_ns:
+        def worker(n_val):
+            # 错开极短时间内的并发请求以防接口频率限制
+            time.sleep(0.1)
+            return fetch_matches_for_tier(date_str, n_val, cj=cj)
+            
+        with ThreadPoolExecutor(max_workers=len(remaining_ns)) as executor:
+            results = executor.map(worker, remaining_ns)
+            
+        for data in results:
+            if data and isinstance(data, dict):
+                matches = data.get('matches', [])
+                events = data.get('events', {})
+                events_map.update(events)
+                for m in matches:
+                    all_matches[m['id']] = m
         
     # Format and attach competition info to each match
     formatted_matches = []

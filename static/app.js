@@ -661,6 +661,9 @@ function renderMatchDetails(match, details) {
     if (activeDetailTab === 'ai') {
         checkAndLoadCachedReport(match.id);
     }
+    
+    // 渲染完详情后，自动静默触发 12 家博彩公司走势图的排队异步拉取写缓存，供 AI 全量分析使用
+    triggerOddsBackgroundFetch(match.id, details);
 }
 
 // Force refresh current match details
@@ -829,12 +832,58 @@ function checkAndLoadCachedReport(matchId) {
         const report = document.getElementById('ai-report-content');
         if (res.success && res.cached && report) {
             renderFullMarkdownReport(res.text);
+        } else if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
         }
     })
-    .catch(err => console.log("本场赛事尚未生成 AI 预测缓存报告"));
+    .catch(err => {
+        const report = document.getElementById('ai-report-content');
+        if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+        }
+        console.log("本场赛事尚未生成 AI 预测缓存报告");
+    });
+}
+
+let aiPollingTimer = null;
+
+function checkAndLoadCachedReport(matchId) {
+    if (!selectedMatch) return;
+    
+    fetch(`/api/match_ai_analysis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            match_id: matchId,
+            home_team: selectedMatch.home_team,
+            away_team: selectedMatch.away_team,
+            force: false
+        })
+    })
+    .then(res => res.json())
+    .then(res => {
+        const report = document.getElementById('ai-report-content');
+        if (res.success && res.status === 'completed' && report) {
+            renderFullMarkdownReport(res.text);
+        } else if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+        }
+    })
+    .catch(err => {
+        const report = document.getElementById('ai-report-content');
+        if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+        }
+        console.log("本场赛事尚未生成 AI 预测缓存报告");
+    });
 }
 
 function generateAiReport(matchId, homeTeam, awayTeam) {
+    if (!matchDetailsCache[matchId]) {
+        alert("本场比赛的独家情报等基础数据尚未加载完成，请稍候数据加载成功后，再手动点击一键生成分析！");
+        return;
+    }
+    
     const runBtn = document.getElementById('btn-run-ai-analysis');
     const skeleton = document.getElementById('ai-generating-status');
     const report = document.getElementById('ai-report-content');
@@ -850,8 +899,12 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
         if (runText) runText.textContent = 'AI 研判生成中...';
     }
     
-    accumulatedMarkdown = '';
+    if (aiPollingTimer) {
+        clearInterval(aiPollingTimer);
+        aiPollingTimer = null;
+    }
     
+    // 1. 发起后台异步托管生成
     fetch('/api/match_ai_analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -862,84 +915,66 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
             force: true
         })
     })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error(`HTTP 异常 ${response.status}`);
+    .then(res => res.json())
+    .then(res => {
+        if (!res.success) {
+            throw new Error(res.error || "异步托管生成请求失败");
         }
         
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-            return response.json().then(res => {
-                if (!res.success) {
-                    throw new Error(res.error || "生成失败");
-                }
-                if (res.cached) {
-                    if (skeleton && report) {
-                        skeleton.style.display = 'none';
-                        report.style.display = 'block';
-                    }
-                    renderFullMarkdownReport(res.text);
-                }
-            });
-        }
+        console.log("[AI Background Worker] Managed successfully! Message:", res.message);
         
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
-        
-        if (skeleton && report) {
-            skeleton.style.display = 'none';
-            report.style.display = 'block';
-        }
-        
-        function readChunk() {
-            return reader.read().then(({ done, value }) => {
-                if (done) {
-                    if (runBtn) {
-                        runBtn.disabled = false;
-                        const runText = runBtn.querySelector('span');
-                        if (runText) runText.textContent = '一键生成 AI 深度研判报告';
-                    }
-                    return;
-                }
-                
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-                
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (trimmed.startsWith('data:')) {
-                        try {
-                            const jsonStr = trimmed.slice(5).trim();
-                            const parsed = JSON.parse(jsonStr);
-                            if (parsed.error) {
-                                report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${parsed.error}</p>`;
-                                if (runBtn) {
-                                    runBtn.disabled = false;
-                                    const runText = runBtn.querySelector('span');
-                                    if (runText) runText.textContent = '一键生成 AI 深度研判报告';
-                                }
-                                return;
+        // 2. 开启每 2 秒一次的心跳短轮询
+        aiPollingTimer = setInterval(() => {
+            fetch(`/api/ai_analysis_status?match_id=${matchId}`)
+                .then(stRes => stRes.json())
+                .then(stRes => {
+                    if (stRes.success) {
+                        if (stRes.status === 'completed') {
+                            // 成功写盘，清空心跳并渲染
+                            clearInterval(aiPollingTimer);
+                            aiPollingTimer = null;
+                            
+                            if (skeleton && report) {
+                                skeleton.style.display = 'none';
+                                report.style.display = 'block';
                             }
-                            if (parsed.text) {
-                                appendTokenToReport(parsed.text);
+                            if (runBtn) {
+                                runBtn.disabled = false;
+                                const runText = runBtn.querySelector('span');
+                                if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                             }
-                        } catch (e) {
-                            // ignore syntax errors during partial json chunk
+                            renderFullMarkdownReport(stRes.text);
+                        } else if (stRes.status === 'failed') {
+                            // 大模型报错
+                            clearInterval(aiPollingTimer);
+                            aiPollingTimer = null;
+                            
+                            if (skeleton && report) {
+                                skeleton.style.display = 'none';
+                                report.style.display = 'block';
+                                report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
+                            }
+                            if (runBtn) {
+                                runBtn.disabled = false;
+                                const runText = runBtn.querySelector('span');
+                                if (runText) runText.textContent = '一键生成 AI 深度研判报告';
+                            }
+                        } else if (stRes.status === 'processing') {
+                            // 正在处理，前端 UI 继续保持 Shimmer 动画
+                            console.log("[AI Background Worker] Still processing...");
                         }
                     }
-                }
-                return readChunk();
-            });
-        }
-        return readChunk();
+                })
+                .catch(err => {
+                    console.error("[AI Status Polling] Ping failed:", err);
+                });
+        }, 2000);
     })
     .catch(err => {
         if (skeleton && report) {
             skeleton.style.display = 'none';
             report.style.display = 'block';
-            report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${err.message || err}</p>`;
+            report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
         }
         if (runBtn) {
             runBtn.disabled = false;
@@ -1288,15 +1323,36 @@ function renderHistoryTab(match, details) {
     return tabHtml;
 }
 
+function renderPlayerEvents(player, incidents) {
+    if (!incidents || incidents.length === 0) return '';
+    let icons = '';
+    incidents.forEach(inc => {
+        const type = inc.type;
+        const time = inc.time;
+        if (type === 1) {
+            icons += ` <span class="event-icon" title="${time}分钟进球">⚽ ${time}'</span>`;
+        } else if (type === 3) {
+            icons += ` <span class="event-icon" title="${time}分钟黄牌">🟨 ${time}'</span>`;
+        } else if (type === 9) {
+            if (inc.in_player_id === player.player_id) {
+                icons += ` <span class="event-icon" title="${time}分钟换上" style="color:var(--color-success)">⬆️ ${time}'</span>`;
+            } else if (inc.out_player_id === player.player_id) {
+                icons += ` <span class="event-icon" title="${time}分钟换下" style="color:var(--text-muted)">⬇️ ${time}'</span>`;
+            }
+        }
+    });
+    return icons;
+}
+
 function renderSquadTab(match, details) {
     let tabHtml = '';
     
-    const hasHomeInjuries = details.injuries && (details.injuries.home.injuries.length > 0 || details.injuries.home.suspensions.length > 0);
-    const hasAwayInjuries = details.injuries && (details.injuries.away.injuries.length > 0 || details.injuries.away.suspensions.length > 0);
+    const hasHomeInjuries = details.injuries && details.injuries.home && (details.injuries.home.injuries.length > 0 || details.injuries.home.suspensions.length > 0);
+    const hasAwayInjuries = details.injuries && details.injuries.away && (details.injuries.away.injuries.length > 0 || details.injuries.away.suspensions.length > 0);
     
-    // Home injuries
+    // 1. Home injuries
     tabHtml += `<div class="details-card">`;
-    tabHtml += `<div class="details-card-title">${match.home_team} 伤停与阵容信息</div>`;
+    tabHtml += `<div class="details-card-title">${match.home_team} 伤停信息</div>`;
     if (hasHomeInjuries) {
         tabHtml += `
             <table class="table-panel">
@@ -1336,16 +1392,16 @@ function renderSquadTab(match, details) {
         `;
     } else {
         tabHtml += `
-            <p style="color:var(--text-muted); font-style:italic;">
+            <p style="color:var(--text-muted); font-style:italic; margin: 0.5rem 0;">
                 此场赛事该队暂无伤停球员，主力阵容齐整。
             </p>
         `;
     }
     tabHtml += `</div>`;
     
-    // Away injuries
+    // 2. Away injuries
     tabHtml += `<div class="details-card">`;
-    tabHtml += `<div class="details-card-title">${match.away_team} 伤停与阵容信息</div>`;
+    tabHtml += `<div class="details-card-title">${match.away_team} 伤停信息</div>`;
     if (hasAwayInjuries) {
         tabHtml += `
             <table class="table-panel">
@@ -1385,18 +1441,96 @@ function renderSquadTab(match, details) {
         `;
     } else {
         tabHtml += `
-            <p style="color:var(--text-muted); font-style:italic;">
+            <p style="color:var(--text-muted); font-style:italic; margin: 0.5rem 0;">
                 此场赛事该队暂无伤停球员，主力阵容齐整。
             </p>
         `;
     }
     tabHtml += `</div>`;
     
-    tabHtml += `
-        <div style="font-size:0.8rem; color:var(--text-muted); padding:0 0.5rem; text-align:center;">
-            💡 注：首发及替补名单通常在开赛前一小时内由赛事官方公布，本版块展示实时伤病/停赛阵容削弱情报。
-        </div>
-    `;
+    // 3. Render starting lineup and substitutes if available
+    const hasLineup = details.injuries && details.injuries.home && details.injuries.home.startings && details.injuries.home.startings.length > 0;
+    if (hasLineup) {
+        tabHtml += `
+            <div class="details-card">
+                <div class="details-card-title" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>⚔️ 首发对决阵容</span>
+                    <span style="font-size:0.82rem; font-weight:500; color:var(--text-muted); background:var(--bg-hover); padding:2px 8px; border-radius:12px;">
+                        ${details.injuries.home_formation || '未定'} 阵型  VS  ${details.injuries.away_formation || '未定'} 阵型
+                    </span>
+                </div>
+                <div class="lineup-vs-container">
+                    <div class="lineup-column home-lineup">
+                        <div class="column-team-header" style="text-align:left; font-weight:700; font-size:0.88rem; margin-bottom:0.4rem; color:var(--color-primary);">${match.home_team}</div>
+                        ${details.injuries.home.startings.map(p => `
+                            <div class="player-row">
+                                <span class="player-number">${p.shirt_number}</span>
+                                <img src="${p.logo}" class="player-avatar" onerror="this.src='https://cdn.leisu.com/image/player_default.png'">
+                                <span class="player-name">${p.name}</span>
+                                <span class="player-position">${p.position}</span>
+                                <span class="player-events">${renderPlayerEvents(p, p.incidents)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="lineup-column away-lineup">
+                        <div class="column-team-header" style="text-align:right; font-weight:700; font-size:0.88rem; margin-bottom:0.4rem; color:var(--color-primary);">${match.away_team}</div>
+                        ${details.injuries.away.startings.map(p => `
+                            <div class="player-row row-reverse">
+                                <span class="player-number">${p.shirt_number}</span>
+                                <img src="${p.logo}" class="player-avatar" onerror="this.src='https://cdn.leisu.com/image/player_default.png'">
+                                <span class="player-name">${p.name}</span>
+                                <span class="player-position">${p.position}</span>
+                                <span class="player-events">${renderPlayerEvents(p, p.incidents)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                
+                <!-- 主教练对决 -->
+                <div class="managers-versus">
+                    <div class="manager-item">主教练: <strong>${details.injuries.home_manager || '未知'}</strong></div>
+                    <div class="vs-label">VS</div>
+                    <div class="manager-item" style="text-align:right;">主教练: <strong>${details.injuries.away_manager || '未知'}</strong></div>
+                </div>
+            </div>
+            
+            <div class="details-card">
+                <div class="details-card-title">🔁 替补席名单</div>
+                <div class="lineup-vs-container">
+                    <div class="lineup-column home-lineup">
+                        ${details.injuries.home.substitutes.map(p => `
+                            <div class="player-row">
+                                <span class="player-number">${p.shirt_number}</span>
+                                <img src="${p.logo}" class="player-avatar" onerror="this.src='https://cdn.leisu.com/image/player_default.png'">
+                                <span class="player-name">${p.name}</span>
+                                <span class="player-position">${p.position}</span>
+                                <span class="player-events">${renderPlayerEvents(p, p.incidents)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="lineup-column away-lineup">
+                        ${details.injuries.away.substitutes.map(p => `
+                            <div class="player-row row-reverse">
+                                <span class="player-number">${p.shirt_number}</span>
+                                <img src="${p.logo}" class="player-avatar" onerror="this.src='https://cdn.leisu.com/image/player_default.png'">
+                                <span class="player-name">${p.name}</span>
+                                <span class="player-position">${p.position}</span>
+                                <span class="player-events">${renderPlayerEvents(p, p.incidents)}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        tabHtml += `
+            <div class="details-card" style="text-align:center; padding: 1.5rem 0;">
+                <p style="color:var(--text-muted); font-style:italic;">
+                    💡 注：此场赛事官方暂未公布双方首发及替补名单。首发及替补名单通常在开赛前一小时内由赛事官方公布。
+                </p>
+            </div>
+        `;
+    }
     
     return tabHtml;
 }
@@ -2404,4 +2538,100 @@ function autoFixHtmlCacheBug() {
             renderDateSidebar();
         }
     }
+}
+
+// 全局静默指数队列管理状态
+let oddsFetchQueue = [];
+let currentOddsFetchMatchId = null;
+let oddsFetchIntervalId = null;
+
+function triggerOddsBackgroundFetch(matchId, details) {
+    if (!matchId || !details) return;
+    
+    // 自动获取前端 AI 选项卡按钮并初始化状态，解禁之前残留的按钮以防锁死
+    const aiTab = document.querySelector('.detail-tab[onclick*="\'ai\'"]');
+    const resetAiTabUI = () => {
+        if (aiTab) {
+            aiTab.classList.remove('tab-disabled');
+            aiTab.removeAttribute('title');
+            const fText = aiTab.querySelector('.tab-text-full');
+            const sText = aiTab.querySelector('.tab-text-short');
+            if (fText) fText.textContent = 'AI 预测分析';
+            if (sText) sText.textContent = 'AI';
+        }
+    };
+    resetAiTabUI();
+    
+    currentOddsFetchMatchId = matchId;
+    oddsFetchQueue = [];
+    
+    // 如果有正在运行的队列轮询器，先强行掐死释放资源
+    if (oddsFetchIntervalId) {
+        clearInterval(oddsFetchIntervalId);
+        oddsFetchIntervalId = null;
+    }
+    
+    const companyToCid = {
+        "36*": 2, "皇*": 3, "立*": 5, "澳*": 7, 
+        "威***": 9, "易**": 10, "韦*": 11, "Inter*": 13,
+        "12*": 14, "利*": 15, "盈*": 16, "18**": 17
+    };
+    
+    const indexData = details.odds_index || [];
+    
+    indexData.forEach(row => {
+        const cid = row.cid || companyToCid[row.company];
+        if (cid) {
+            oddsFetchQueue.push({ matchId, cid, type: 1 });
+        }
+    });
+    
+    if (oddsFetchQueue.length === 0) return;
+    
+    // 置灰并挂载“指数获取中”提示，阻止切入 AI 分析页签
+    if (aiTab) {
+        aiTab.classList.add('tab-disabled');
+        aiTab.setAttribute('title', '正在获取全量指数数据，请稍候...');
+        const fText = aiTab.querySelector('.tab-text-full');
+        const sText = aiTab.querySelector('.tab-text-short');
+        if (fText) fText.textContent = 'AI 预测分析 (获取指数中...)';
+        if (sText) sText.textContent = 'AI (同步中)';
+    }
+    
+    console.log(`[Background Fetcher] Queue initialized with ${oddsFetchQueue.length} companies to cache.`);
+    
+    // 开启 1500ms 慢速、安全的青蛙式排队静默轮询，完全杜绝 WAF 封号
+    oddsFetchIntervalId = setInterval(() => {
+        if (oddsFetchQueue.length === 0) {
+            clearInterval(oddsFetchIntervalId);
+            oddsFetchIntervalId = null;
+            resetAiTabUI();
+            console.log(`[Background Fetcher] All odds trends successfully cached for match ${matchId}!`);
+            return;
+        }
+        
+        // 取出排在首位的任务并请求
+        const task = oddsFetchQueue.shift();
+        if (task.matchId === currentOddsFetchMatchId) {
+            console.log(`[Background Fetcher] Fetching trend for match ${task.matchId}, company ${task.cid}...`);
+            fetch(`/api/match_odds_detail?match_id=${task.matchId}&cid=${task.cid}&type=${task.type}`)
+                .then(res => res.json())
+                .then(res => {
+                    if (res.success) {
+                        console.log(`[Background Fetcher] Cached trend for company ${task.cid} (all 3 subtabs written)`);
+                    } else {
+                        console.warn(`[Background Fetcher] Skip/Fail for company ${task.cid}:`, res.error);
+                    }
+                })
+                .catch(err => {
+                    console.error(`[Background Fetcher] Error:`, err);
+                })
+                .finally(() => {
+                    // 当队列拉完的瞬间释放 UI 按钮
+                    if (oddsFetchQueue.length === 0 && task.matchId === currentOddsFetchMatchId) {
+                        resetAiTabUI();
+                    }
+                });
+        }
+    }, 1500);
 }
