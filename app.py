@@ -903,18 +903,20 @@ def debug_find_kst():
     headers['Referer'] = 'https://odds.leisu.com/'
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
-        kst_indices = [m.start() for m in re.finditer('KST', html, re.IGNORECASE)]
-        previews = []
-        for idx in kst_indices:
-            previews.append(html[max(0, idx-150): min(len(html), idx+150)])
         
-        num_matches = re.findall(r'\b\d{10,20}\b', html)
+        # 寻找形如 17835 开头的 10 位数字（这是当前的时间戳区间）
+        num_matches = re.finditer(r'\b(17835\d{5})\b', html)
+        previews = []
+        for m in num_matches:
+            idx = m.start()
+            val = m.group(1)
+            previews.append(f"Val={val} Context: " + html[max(0, idx-60): min(len(html), idx+60)].strip().replace('\n', ' '))
+            
         return jsonify({
             'success': True,
             'html_length': len(html),
-            'kst_occurrences': len(kst_indices),
-            'kst_previews': previews,
-            'large_numbers': num_matches[:15]
+            'found_count': len(previews),
+            'previews': previews[:15]
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
