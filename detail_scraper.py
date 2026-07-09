@@ -1404,13 +1404,17 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         
     # 3. 构造请求与发送
     url_api = f"https://api-gateway.leisu.com/v1/web/match/common/odds_detail?id={match_id}&cid={cid}&type={type_val}"
-    headers = HEADERS.copy()
-    headers['Accept'] = f"application/json, text/plain, health/json;;{encrypted_payload}"
-    # 改回正确的 API 网关 Accept 签名头部
-    headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
-    headers['Origin'] = 'https://m.leisu.com'
-    headers['source'] = source_val
-    headers['Referer'] = f'https://m.leisu.com/match/detail/football/{match_id}'
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+        'Accept': f"application/json, text/plain, */*;;{encrypted_payload}",
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Origin': 'https://m.leisu.com',
+        'source': source_val,
+        'Referer': f'https://m.leisu.com/match/detail/football/{match_id}'
+    }
     
     cj = GLOBAL_CJ
     opener = GLOBAL_OPENER
