@@ -904,19 +904,19 @@ def debug_find_kst():
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
         
-        # 寻找形如 17835 开头的 10 位数字（这是当前的时间戳区间）
-        num_matches = re.finditer(r'\b(17835\d{5})\b', html)
+        # 寻找所有的 <script> 标签内容
+        scripts = re.findall(r'<script[^>]*>([\s\S]*?)<\/script>', html)
         previews = []
-        for m in num_matches:
-            idx = m.start()
-            val = m.group(1)
-            previews.append(f"Val={val} Context: " + html[max(0, idx-60): min(len(html), idx+60)].strip().replace('\n', ' '))
-            
+        for i, s in enumerate(scripts):
+            s_clean = s.strip()
+            if len(s_clean) > 0:
+                previews.append(f"Script {i} (Length={len(s_clean)}): " + s_clean[:400] + "...")
+                
         return jsonify({
             'success': True,
             'html_length': len(html),
-            'found_count': len(previews),
-            'previews': previews[:15]
+            'scripts_count': len(scripts),
+            'previews': previews
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
