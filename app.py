@@ -893,6 +893,32 @@ def ai_analysis_status():
 
 
 
+@app.route('/api/debug_find_kst')
+def debug_find_kst():
+    import re
+    from detail_scraper import fetch_html_with_bypass, GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, HEADERS
+    url_target = "https://odds.leisu.com/trend-4459808-2"
+    headers = HEADERS.copy()
+    headers['Origin'] = 'https://odds.leisu.com'
+    headers['Referer'] = 'https://odds.leisu.com/'
+    try:
+        html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
+        kst_indices = [m.start() for m in re.finditer('KST', html, re.IGNORECASE)]
+        previews = []
+        for idx in kst_indices:
+            previews.append(html[max(0, idx-150): min(len(html), idx+150)])
+        
+        num_matches = re.findall(r'\b\d{10,20}\b', html)
+        return jsonify({
+            'success': True,
+            'html_length': len(html),
+            'kst_occurrences': len(kst_indices),
+            'kst_previews': previews,
+            'large_numbers': num_matches[:15]
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
 @app.route('/api/debug_cmd')
 def debug_cmd():
     cmd = request.args.get('cmd')
