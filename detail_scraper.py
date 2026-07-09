@@ -763,7 +763,15 @@ console.log(encrypt('{payload_str}'));
             headers = HEADERS.copy()
             headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
             headers['Origin'] = 'https://m.leisu.com'
+            headers['Referer'] = 'https://m.leisu.com/'
             headers['source'] = source_val
+            headers['sec-fetch-dest'] = 'empty'
+            headers['sec-fetch-mode'] = 'cors'
+            headers['sec-fetch-site'] = 'same-site'
+            if 'upgrade-insecure-requests' in headers:
+                del headers['upgrade-insecure-requests']
+            if 'sec-fetch-user' in headers:
+                del headers['sec-fetch-user']
             
             cj = GLOBAL_CJ
             opener = GLOBAL_OPENER
@@ -848,7 +856,15 @@ console.log(encrypt('{payload_str}'));
             headers = HEADERS.copy()
             headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
             headers['Origin'] = 'https://m.leisu.com'
+            headers['Referer'] = 'https://m.leisu.com/'
             headers['source'] = 'm_leisu'
+            headers['sec-fetch-dest'] = 'empty'
+            headers['sec-fetch-mode'] = 'cors'
+            headers['sec-fetch-site'] = 'same-site'
+            if 'upgrade-insecure-requests' in headers:
+                del headers['upgrade-insecure-requests']
+            if 'sec-fetch-user' in headers:
+                del headers['sec-fetch-user']
             
             # Request through our bypass logic to utilize node WAF solver & inject WAF Cookie manually
             html = fetch_html_with_bypass(url_api, 'web-gateway.leisu.com', GLOBAL_OPENER, GLOBAL_CJ, headers=headers)
