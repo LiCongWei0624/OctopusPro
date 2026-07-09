@@ -123,14 +123,30 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
         
     req = urllib.request.Request(url, headers=use_headers)
     try:
-        with opener.open(req, timeout=10) as response:
-            content_bytes = response.read()
-            if response.info().get('Content-Encoding') == 'gzip':
-                content_bytes = zlib.decompress(content_bytes, 15 + 32)
-            html = content_bytes.decode('utf-8')
-            real_url = response.geturl()
-            real_domain = urlparse(real_url).netloc
-            
+        try:
+            with opener.open(req, timeout=10) as response:
+                content_bytes = response.read()
+                if response.info().get('Content-Encoding') == 'gzip':
+                    content_bytes = zlib.decompress(content_bytes, 15 + 32)
+                html = content_bytes.decode('utf-8')
+                real_url = response.geturl()
+                real_domain = urlparse(real_url).netloc
+        except urllib.error.HTTPError as http_err:
+            if http_err.code in (403, 503):
+                err_content = http_err.read()
+                if http_err.info().get('Content-Encoding') == 'gzip':
+                    try:
+                        err_content = zlib.decompress(err_content, 15 + 32)
+                    except:
+                        pass
+                html = err_content.decode('utf-8', errors='ignore')
+                real_url = url
+                real_domain = domain
+                if 'renderData' not in html:
+                    raise http_err
+            else:
+                raise http_err
+                
         if 'renderData' in html:
             user_agent = use_headers.get('User-Agent', '')
             cookie_val = solve_waf_via_node(html, real_url, user_agent)
