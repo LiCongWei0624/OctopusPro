@@ -1044,7 +1044,7 @@ function renderStreamingMarkdown(reports, statusList) {
 
 // 批量跑批触发
 function startBatchAiAnalysis() {
-    const btn = document.getElementById('btn-batch-ai-run');
+    const btn = document.getElementById('global-batch-ai-btn');
     if (btn && btn.classList.contains('btn-loading')) return;
     
     if (btn) {
@@ -1233,16 +1233,11 @@ function renderAiTab(match, details) {
     
     return `
         <div class="ai-prediction-container">
-            <!-- 运行分析与批量跑批按钮 -->
-            <div style="display: flex; gap: 0.6rem; width: 100%; margin-bottom: 0.85rem; align-items: stretch;">
-                <button id="btn-run-ai-analysis" class="btn-ai-run" style="flex: 1; margin: 0;" onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                    <span>一键生成 AI 深度研判报告</span>
-                </button>
-                <button id="btn-batch-ai-run" class="btn-ai-batch" style="width: 160px; flex-shrink: 0; margin: 0;" onclick="startBatchAiAnalysis()">
-                    <span>⚡ 今日批量跑批</span>
-                </button>
-            </div>
+            <!-- 一键生成研判报告按钮 -->
+            <button id="btn-run-ai-analysis" class="btn-ai-run" style="width: 100%; margin-bottom: 0.85rem;" onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <span>一键生成 AI 深度研判报告</span>
+            </button>
 
             <!-- 下方 AI 分析生成骨架屏与报告区域 -->
             <div class="details-card">
