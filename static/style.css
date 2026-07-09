@@ -1165,6 +1165,21 @@ body {
     align-items: center;
     width: 100%;
 }
+.filter-controls-column {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 100%;
+}
+.filter-dropdowns-row {
+    display: flex;
+    gap: 0.5rem;
+    width: 100%;
+}
+.filter-dropdowns-row .dropdown-wrapper {
+    flex: 1;
+    width: auto;
+}
 .search-input-wrapper {
     position: relative;
     flex: 1;
@@ -1423,6 +1438,149 @@ body {
     background-size: 200% 100%;
     animation: shimmer-load 1.5s infinite linear;
     border-radius: var(--border-radius-lg);
+}
+
+/* --- AI 思考与推理过程折叠框 --- */
+.ai-think-details {
+    background-color: var(--bg-body-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    padding: 0.75rem 1rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    transition: var(--transition-smooth);
+}
+.ai-think-details[open] {
+    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+.ai-think-details summary {
+    font-weight: 700;
+    color: var(--color-primary);
+    cursor: pointer;
+    outline: none;
+    user-select: none;
+    margin-bottom: 0.25rem;
+}
+.ai-think-details[open] summary {
+    margin-bottom: 0.75rem;
+    border-bottom: 1px dashed var(--border-color);
+    padding-bottom: 0.5rem;
+}
+.ai-think-details summary::-webkit-details-marker {
+    color: var(--color-primary);
+}
+/* 打字机光标 */
+.ai-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background-color: var(--color-primary);
+    margin-left: 2px;
+    vertical-align: middle;
+    animation: cursor-blink 1s infinite steps(2, start);
+}
+@keyframes cursor-blink {
+    to { visibility: hidden; }
+}
+
+/* --- AI 多版本切换子页签 --- */
+.ai-version-tabs {
+    display: flex;
+    gap: 0.35rem;
+    margin-bottom: 0.85rem;
+    background-color: var(--bg-body-secondary);
+    padding: 0.2rem;
+    border-radius: var(--border-radius-sm);
+    border: 1px solid var(--border-color);
+}
+.ai-version-tab {
+    flex: 1;
+    border: none;
+    background: none;
+    font-family: var(--font-family);
+    font-weight: 700;
+    font-size: 0.76rem;
+    color: var(--text-secondary);
+    padding: 0.35rem 0.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: var(--transition-smooth);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.25rem;
+}
+.ai-version-tab:hover {
+    color: var(--text-primary);
+    background-color: rgba(255, 255, 255, 0.4);
+}
+.ai-version-tab.active {
+    background-color: var(--bg-panel);
+    color: var(--color-primary);
+    box-shadow: var(--shadow-soft);
+}
+.ai-version-tab.processing::after {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    background-color: var(--color-warning);
+    border-radius: 50%;
+    animation: beacon-pulse 1.5s infinite ease-in-out;
+}
+
+/* --- 全局批量跑批进度横幅 --- */
+.batch-progress-banner {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: linear-gradient(135deg, #4f46e5, #312e81);
+    color: #ffffff;
+    padding: 0.85rem 1.25rem;
+    border-radius: var(--border-radius-lg);
+    box-shadow: 0 10px 30px rgba(79, 70, 229, 0.3);
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    width: 320px;
+    animation: banner-slide-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+@keyframes banner-slide-in {
+    from {
+        transform: translateY(100px) scale(0.9);
+        opacity: 0;
+    }
+    to {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+    }
+}
+.batch-progress-title {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+.batch-progress-bar-track {
+    height: 6px;
+    background-color: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.batch-progress-bar-fill {
+    height: 100%;
+    background-color: var(--color-success);
+    width: 0%;
+    transition: width 0.4s ease;
+}
+.batch-progress-status {
+    font-size: 0.72rem;
+    color: rgba(255, 255, 255, 0.8);
+    font-weight: 500;
 }
 
 /* AI Markdown content area */

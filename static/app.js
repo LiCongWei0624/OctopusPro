@@ -5,7 +5,13 @@ let selectedMatch = null;
 let activeDetailTab = 'intel'; // intel, history, squad, odds
 let matchDetailsCache = {}; // Cache for match details in memory
 let selectedLeague = '全部';
+let selectedStatus = '全部';
 let searchQuery = '';
+let activeReportVersion = 0;
+let latestReports = ['', '', ''];
+let latestStatusList = ['processing', 'processing', 'processing'];
+let batchPollingTimer = null;
+let aiPollingTimer = null;
 
 // Sliding date range options & Custom Datepicker states
 let startOffsetDays = -2;
@@ -49,10 +55,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     allMatches = res.data;
                     groupMatchesByDate(allMatches);
                     if (selectedDate === todayStr) {
-                        const matches = groupedMatches[todayStr] || [];
-                        const filtered = selectedLeague === '全部' ? matches : matches.filter(m => m.competition === selectedLeague);
-                        document.getElementById('match-count-badge').innerText = `${filtered.length} 场`;
-                        renderMatchCards(filtered);
+                        filterAndRenderMatches();
                     }
                     updateSyncTime();
                 }
@@ -191,6 +194,7 @@ function renderDateSidebar() {
 function selectDate(date) {
     selectedDate = date;
     selectedLeague = '全部';
+    selectedStatus = '全部';
     
     // 检查对应日期的页签是否存在于 DOM 中
     const tabExists = !!document.getElementById(`date-tab-${date}`);
@@ -283,13 +287,15 @@ function convertToYYYYMMDD(dateTabStr) {
     return `${year}${mm}${dd}`;
 }
 
-// Render League Filters as Dropdown and Search Bar
+// Render League & Status Filters and Search Bar
 function renderLeagueFilters(leagues) {
     const filterBar = document.getElementById('league-filter-bar');
     if (!filterBar) return;
     
+    const statuses = ['全部', '进行中', '未开始', '已结束', '异常/推迟'];
+    
     filterBar.innerHTML = `
-        <div class="filter-controls-row">
+        <div class="filter-controls-column">
             <div class="search-input-wrapper">
                 <svg class="search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3">
                     <circle cx="11" cy="11" r="8"></circle>
@@ -297,13 +303,26 @@ function renderLeagueFilters(leagues) {
                 </svg>
                 <input type="text" id="match-search-input" class="search-input-field" placeholder="搜索球队、联赛..." value="${searchQuery}" oninput="filterMatchesBySearch()">
             </div>
-            <div class="dropdown-wrapper">
-                <select id="league-select" class="league-select-dropdown" onchange="filterMatchesByLeague(this.value)">
-                    ${leagues.map(l => `<option value="${l}" ${selectedLeague === l ? 'selected' : ''}>${l === '全部' ? '全部联赛' : l}</option>`).join('')}
-                </select>
+            <div class="filter-dropdowns-row">
+                <div class="dropdown-wrapper">
+                    <select id="league-select" class="league-select-dropdown" onchange="filterMatchesByLeague(this.value)">
+                        ${leagues.map(l => `<option value="${l}" ${selectedLeague === l ? 'selected' : ''}>${l === '全部' ? '全部联赛' : l}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="dropdown-wrapper">
+                    <select id="status-select" class="league-select-dropdown" onchange="filterMatchesByStatus(this.value)">
+                        ${statuses.map(s => `<option value="${s}" ${selectedStatus === s ? 'selected' : ''}>${s === '全部' ? '全部状态' : s}</option>`).join('')}
+                    </select>
+                </div>
             </div>
         </div>
     `;
+}
+
+// Handle status selector dropdown events
+function filterMatchesByStatus(statusName) {
+    selectedStatus = statusName;
+    filterAndRenderMatches();
 }
 
 // Filter matches by selected league and search query, then render cards
@@ -318,7 +337,21 @@ function filterAndRenderMatches() {
             (m.home_team && m.home_team.toLowerCase().includes(q)) ||
             (m.away_team && m.away_team.toLowerCase().includes(q));
             
-        return leagueMatch && textMatch;
+        const status = Number(m.status || 1);
+        let statusMatch = false;
+        if (selectedStatus === '全部') {
+            statusMatch = true;
+        } else if (selectedStatus === '进行中') {
+            statusMatch = (status === 2 || status === 3 || status === 4 || status === 5 || status === 7 || status === 10);
+        } else if (selectedStatus === '未开始') {
+            statusMatch = (status === 1 || status === 13);
+        } else if (selectedStatus === '已结束') {
+            statusMatch = (status === 8 || status === 11);
+        } else if (selectedStatus === '异常/推迟') {
+            statusMatch = (status === 9 || status === 12);
+        }
+            
+        return leagueMatch && textMatch && statusMatch;
     });
     
     document.getElementById('match-count-badge').innerText = `${filtered.length} 场`;
@@ -809,74 +842,7 @@ function saveGlobalAiConfigToServer() {
             setTimeout(() => { statusSpan.style.display = 'none'; }, 3000);
         } else {
             console.error("连接保存配置接口失败:", err);
-        }
-    });
-}
 window.saveGlobalAiConfigToServer = saveGlobalAiConfigToServer;
-
-function checkAndLoadCachedReport(matchId) {
-    if (!selectedMatch) return;
-    
-    fetch('/api/match_ai_analysis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            match_id: matchId,
-            home_team: selectedMatch.home_team,
-            away_team: selectedMatch.away_team,
-            force: false
-        })
-    })
-    .then(res => res.json())
-    .then(res => {
-        const report = document.getElementById('ai-report-content');
-        if (res.success && res.cached && report) {
-            renderFullMarkdownReport(res.text);
-        } else if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-    })
-    .catch(err => {
-        const report = document.getElementById('ai-report-content');
-        if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-        console.log("本场赛事尚未生成 AI 预测缓存报告");
-    });
-}
-
-let aiPollingTimer = null;
-
-function checkAndLoadCachedReport(matchId) {
-    if (!selectedMatch) return;
-    
-    fetch(`/api/match_ai_analysis`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            match_id: matchId,
-            home_team: selectedMatch.home_team,
-            away_team: selectedMatch.away_team,
-            force: false
-        })
-    })
-    .then(res => res.json())
-    .then(res => {
-        const report = document.getElementById('ai-report-content');
-        if (res.success && res.status === 'completed' && report) {
-            renderFullMarkdownReport(res.text);
-        } else if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-    })
-    .catch(err => {
-        const report = document.getElementById('ai-report-content');
-        if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-        console.log("本场赛事尚未生成 AI 预测缓存报告");
-    });
-}
 
 function generateAiReport(matchId, homeTeam, awayTeam) {
     if (!matchDetailsCache[matchId]) {
@@ -888,15 +854,21 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
     const skeleton = document.getElementById('ai-generating-status');
     const report = document.getElementById('ai-report-content');
     
+    // 初始化三版本状态与展示
+    latestReports = ['', '', ''];
+    latestStatusList = ['processing', 'processing', 'processing'];
+    activeReportVersion = 0; 
+    
     if (skeleton && report) {
-        skeleton.style.display = 'flex';
-        report.style.display = 'none';
-        report.innerHTML = '';
+        skeleton.style.display = 'none';
+        report.style.display = 'block';
     }
+    renderReportContent(true);
+    
     if (runBtn) {
         runBtn.disabled = true;
         const runText = runBtn.querySelector('span');
-        if (runText) runText.textContent = 'AI 研判生成中...';
+        if (runText) runText.textContent = 'AI 研判并发生成中...';
     }
     
     if (aiPollingTimer) {
@@ -923,35 +895,27 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
         
         console.log("[AI Background Worker] Managed successfully! Message:", res.message);
         
-        // 2. 开启每 2 秒一次的心跳短轮询
+        // 2. 开启心跳短轮询
         aiPollingTimer = setInterval(() => {
             fetch(`/api/ai_analysis_status?match_id=${matchId}`)
                 .then(stRes => stRes.json())
                 .then(stRes => {
                     if (stRes.success) {
                         if (stRes.status === 'completed') {
-                            // 成功写盘，清空心跳并渲染
                             clearInterval(aiPollingTimer);
                             aiPollingTimer = null;
                             
-                            if (skeleton && report) {
-                                skeleton.style.display = 'none';
-                                report.style.display = 'block';
-                            }
                             if (runBtn) {
                                 runBtn.disabled = false;
                                 const runText = runBtn.querySelector('span');
                                 if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                             }
-                            renderFullMarkdownReport(stRes.text);
+                            renderFullMarkdownReport(stRes.reports);
                         } else if (stRes.status === 'failed') {
-                            // 大模型报错
                             clearInterval(aiPollingTimer);
                             aiPollingTimer = null;
                             
-                            if (skeleton && report) {
-                                skeleton.style.display = 'none';
-                                report.style.display = 'block';
+                            if (report) {
                                 report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
                             }
                             if (runBtn) {
@@ -960,20 +924,18 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                                 if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                             }
                         } else if (stRes.status === 'processing') {
-                            // 正在处理，前端 UI 继续保持 Shimmer 动画
-                            console.log("[AI Background Worker] Still processing...");
+                            // 正在并发处理中，流式刷新三版本结果
+                            renderStreamingMarkdown(stRes.reports, stRes.status_list);
                         }
                     }
                 })
                 .catch(err => {
                     console.error("[AI Status Polling] Ping failed:", err);
                 });
-        }, 2000);
+        }, 1500);
     })
     .catch(err => {
-        if (skeleton && report) {
-            skeleton.style.display = 'none';
-            report.style.display = 'block';
+        if (report) {
             report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
         }
         if (runBtn) {
@@ -985,22 +947,174 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
 }
 window.generateAiReport = generateAiReport;
 
-function appendTokenToReport(token) {
-    const report = document.getElementById('ai-report-content');
-    if (!report) return;
-    accumulatedMarkdown += token;
-    report.innerHTML = parseSimpleMarkdown(accumulatedMarkdown);
+function renderReportContent(isStreaming = false) {
+    const reportContainer = document.getElementById('ai-report-content');
+    if (!reportContainer) return;
+    
+    const text = latestReports[activeReportVersion] || '';
+    const status = latestStatusList[activeReportVersion] || 'idle';
+    
+    let tabsHtml = '';
+    // 只要有任意一个版本有文字，或者正在处理中，就显示版本页签
+    if (latestReports.some(r => r && r.trim() !== '') || latestStatusList.some(s => s === 'processing')) {
+        tabsHtml = `
+            <div class="ai-version-tabs">
+                <button class="ai-version-tab ${activeReportVersion === 0 ? 'active' : ''} ${latestStatusList[0] === 'processing' ? 'processing' : ''}" onclick="switchReportVersion(0)">
+                    🤖 研判版本 A
+                </button>
+                <button class="ai-version-tab ${activeReportVersion === 1 ? 'active' : ''} ${latestStatusList[1] === 'processing' ? 'processing' : ''}" onclick="switchReportVersion(1)">
+                    🤖 研判版本 B
+                </button>
+                <button class="ai-version-tab ${activeReportVersion === 2 ? 'active' : ''} ${latestStatusList[2] === 'processing' ? 'processing' : ''}" onclick="switchReportVersion(2)">
+                    🤖 研判版本 C
+                </button>
+            </div>
+        `;
+    }
+    
+    let textHtml = '';
+    if (text && text.trim() !== '') {
+        textHtml = parseSimpleMarkdown(text, isStreaming && status === 'processing');
+    } else {
+        if (status === 'processing') {
+            textHtml = `<p style="color:var(--text-muted); font-style:italic;"><span class="pulse-beacon" style="display:inline-block; width:8px; height:8px; margin-right:6px; background-color: var(--color-primary); box-shadow: 0 0 6px var(--color-primary);"></span>大模型正在全力组织该版本研判逻辑，请稍候...<span class="ai-cursor"></span></p>`;
+        } else {
+            textHtml = `<p style="color:var(--text-muted); font-style:italic;">该版本的研判报告为空，或生成中发生错误。</p>`;
+        }
+    }
+    
+    reportContainer.innerHTML = tabsHtml + textHtml;
 }
 
+function switchReportVersion(verIdx) {
+    activeReportVersion = verIdx;
+    renderReportContent(true);
+}
+window.switchReportVersion = switchReportVersion;
+
 function renderFullMarkdownReport(text) {
-    const report = document.getElementById('ai-report-content');
-    if (report) {
-        accumulatedMarkdown = text;
-        report.innerHTML = parseSimpleMarkdown(text);
+    if (Array.isArray(text)) {
+        latestReports = text;
+        latestStatusList = ['completed', 'completed', 'completed'];
+    } else {
+        latestReports = [text || '', '', ''];
+        latestStatusList = ['completed', 'completed', 'completed'];
+    }
+    renderReportContent(false);
+}
+
+function renderStreamingMarkdown(reports, statusList) {
+    latestReports = Array.isArray(reports) ? reports : [reports || '', '', ''];
+    latestStatusList = Array.isArray(statusList) ? statusList : ['processing', 'processing', 'processing'];
+    renderReportContent(true);
+}
+
+// 批量跑批触发
+function startBatchAiAnalysis() {
+    const btn = document.getElementById('btn-batch-ai-run');
+    if (btn && btn.classList.contains('btn-loading')) return;
+    
+    if (btn) {
+        btn.classList.add('btn-loading');
+        btn.disabled = true;
+    }
+    
+    fetch('/api/batch_ai_analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(res => res.json())
+    .then(res => {
+        if (btn) {
+            btn.classList.remove('btn-loading');
+            btn.disabled = false;
+        }
+        
+        if (res.success) {
+            if (res.total === 0) {
+                alert(res.message);
+                return;
+            }
+            alert(res.message);
+            if (batchPollingTimer) {
+                clearInterval(batchPollingTimer);
+            }
+            showBatchProgressBanner(0, res.total, 0);
+            batchPollingTimer = setInterval(checkBatchStatus, 3000);
+        } else {
+            alert("批量分析启动失败: " + res.error);
+        }
+    })
+    .catch(err => {
+        if (btn) {
+            btn.classList.remove('btn-loading');
+            btn.disabled = false;
+        }
+        alert("批量跑批请求网络错误。");
+        console.error(err);
+    });
+}
+window.startBatchAiAnalysis = startBatchAiAnalysis;
+
+function checkBatchStatus() {
+    fetch('/api/batch_ai_status')
+        .then(res => res.json())
+        .then(res => {
+            if (res.success) {
+                if (res.active) {
+                    showBatchProgressBanner(res.completed, res.total, res.error_count);
+                } else {
+                    if (batchPollingTimer) {
+                        clearInterval(batchPollingTimer);
+                        batchPollingTimer = null;
+                    }
+                    hideBatchProgressBanner();
+                    if (res.total > 0) {
+                        alert(`今日全天 AI 批量研判已完成！\n共跑批: ${res.total} 场 | 成功: ${res.completed - res.error_count} 场 | 失败: ${res.error_count} 场`);
+                        if (selectedMatch) {
+                            checkAndLoadCachedReport(selectedMatch.id);
+                        }
+                    }
+                }
+            }
+        })
+        .catch(err => console.error("轮询跑批状态失败:", err));
+}
+
+function showBatchProgressBanner(completed, total, errorCount) {
+    let banner = document.getElementById('batch-progress-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'batch-progress-banner';
+        banner.className = 'batch-progress-banner';
+        document.body.appendChild(banner);
+    }
+    
+    const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
+    const successCount = completed - errorCount;
+    
+    banner.innerHTML = `
+        <div class="batch-progress-title">
+            <span>⚡ 今日重点赛事 AI 批量跑批中</span>
+            <span>${completed}/${total}</span>
+        </div>
+        <div class="batch-progress-bar-track">
+            <div class="batch-progress-bar-fill" style="width: ${pct}%"></div>
+        </div>
+        <div class="batch-progress-status">
+            当前进度 ${pct}% (成功: ${successCount} | 失败: ${errorCount})
+        </div>
+    `;
+}
+
+function hideBatchProgressBanner() {
+    const banner = document.getElementById('batch-progress-banner');
+    if (banner) {
+        banner.remove();
     }
 }
 
-function parseSimpleMarkdown(md) {
+function parseSimpleMarkdown(md, isStreaming = false) {
     let html = md;
     
     // 替换 > 引用块
@@ -1030,17 +1144,48 @@ function parseSimpleMarkdown(md) {
         if (trimmed.startsWith('<h') || trimmed.startsWith('<li') || trimmed.startsWith('<blockquote')) {
             return trimmed;
         }
+        if (trimmed === '<think>' || trimmed === '</think>') {
+            return trimmed;
+        }
         return `<p>${trimmed}</p>`;
     }).join('');
     
     // Single newlines to linebreaks
     html = html.replace(/\n/g, '<br>');
     
+    // 2. 处理 <think> 标签的推理过程折叠框替换
+    if (html.includes('<think>')) {
+        if (html.includes('</think>')) {
+            // 已闭合（思考完成），默认折叠收起
+            html = html.replace(/<think>([\s\S]*?)<\/think>/g, (match, p1) => {
+                return `<details class="ai-think-details"><summary>🧠 AI 思考推理过程（已完成，点击展开/折叠）</summary>${p1}</details>`;
+            });
+            if (isStreaming) {
+                html += '<span class="ai-cursor"></span>';
+            }
+        } else {
+            // 未闭合（正在流式思考中），折叠框设为 open，且将光标塞在折叠框内末尾
+            const index = html.indexOf('<think>');
+            const before = html.substring(0, index);
+            const inside = html.substring(index + 7); // 跳过 '<think>'
+            let summary = "🧠 AI 正在思考推理中...";
+            
+            if (isStreaming) {
+                html = `${before}<details class="ai-think-details" open><summary>${summary}</summary>${inside}<span class="ai-cursor"></span></details>`;
+            } else {
+                html = `${before}<details class="ai-think-details" open><summary>${summary}</summary>${inside}</details>`;
+            }
+        }
+    } else {
+        if (isStreaming) {
+            html += '<span class="ai-cursor"></span>';
+        }
+    }
+    
     return html;
 }
 
 function renderAiTab(match, details) {
-    // If config hasn't been loaded from database, fetch it asynchronously
     if (!currentAiConfig) {
         loadAiConfigFromServer(() => {
             if (activeDetailTab === 'ai') {
@@ -1055,11 +1200,16 @@ function renderAiTab(match, details) {
     
     return `
         <div class="ai-prediction-container">
-            <!-- 运行分析按钮 -->
-            <button id="btn-run-ai-analysis" class="btn-ai-run" onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                <span>一键生成 AI 深度研判报告</span>
-            </button>
+            <!-- 运行分析与批量跑批按钮 -->
+            <div style="display: flex; gap: 0.5rem; width: 100%; margin-bottom: 0.5rem;">
+                <button id="btn-run-ai-analysis" class="btn-ai-run" style="flex: 1; margin-bottom: 0;" onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                    <span>一键生成 AI 深度研判报告</span>
+                </button>
+                <button id="btn-batch-ai-run" class="btn-refresh-detail" style="margin: 0; background: rgba(79, 70, 229, 0.08); border-color: rgba(79, 70, 229, 0.2); font-weight: 700; color: var(--color-primary);" onclick="startBatchAiAnalysis()">
+                    <span>⚡ 批量跑批</span>
+                </button>
+            </div>
 
             <!-- 下方 AI 分析生成骨架屏与报告区域 -->
             <div class="details-card">

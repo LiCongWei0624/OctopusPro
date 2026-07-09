@@ -489,107 +489,9 @@ def get_cached_odds_detail(match_id, cid):
 import threading
 ai_tasks = {}
 
-def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file):
-    global ai_tasks
-    try:
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-        url = f"{api_base}/chat/completions"
-        payload = {
-            "model": model_name,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"请针对以下赛事数据进行深度研判。特别是要根据这场的盘口走势，去匹配历史已踢完的相同盘口的比赛，仔细比对其中的【历史相似初盘走势与胜平负比例统计】数据，列出踢出来的胜、平、负真实比例。通过对比同样的盘口与走势变化下胜率的概率学分布，研判得出买哪边赢盘或赢球的胜率期望更高，并在新增的“同初盘/同走势历史赛果概率对比”结论中给出明确倾向推荐：\n\n{context_str}"}
-            ],
-            "temperature": 0.3
-        }
-        
-        import requests
-        r = requests.post(url, headers=headers, json=payload, timeout=90)
-        if r.status_code != 200:
-            raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {r.text}")
-            
-        res_json = r.json()
-        choice = res_json['choices'][0]['message']
-        ai_output = choice.get('content', '')
-        
-        if not ai_output:
-            raise Exception("大模型返回内容为空")
-            
-        # 写入物理缓存文件
-        with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
-            json.dump({'text': ai_output}, cache_f, ensure_ascii=False, indent=2)
-            
-        ai_tasks[str(match_id)] = {'status': 'completed'}
-    except Exception as e:
-        print(f"Background AI Thread error for match {match_id}: {e}")
-        ai_tasks[str(match_id)] = {'status': 'failed', 'error': str(e)}
+import concurrent.futures
 
-@app.route('/api/match_ai_analysis', methods=['POST'])
-def match_ai_analysis():
-    global ai_tasks
-    data = request.json
-    if not data:
-        return jsonify({'success': False, 'error': 'Missing request body'})
-        
-    match_id = str(data.get('match_id'))
-    home = data.get('home_team')
-    away = data.get('away_team')
-    force = data.get('force') == True
-    
-    if not match_id or not home or not away:
-        return jsonify({'success': False, 'error': 'Missing match details (id, home_team, away_team)'})
-        
-    # 1. 读取 AI 配置
-    api_key = ""
-    api_base = "https://opencode.ai/zen/v1"
-    model_name = "minimax-m2.5-free"
-    system_prompt = ""
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
-                api_key = cfg.get('api_key', '')
-                api_base = cfg.get('api_base', 'https://opencode.ai/zen/v1')
-                model_name = cfg.get('model_name', 'minimax-m2.5-free')
-                system_prompt = cfg.get('system_prompt', '')
-        except Exception:
-            pass
-            
-    if not system_prompt:
-        system_prompt = DEFAULT_SYSTEM_PROMPT
-            
-    if not api_key:
-        return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
-        
-    ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
-    
-    # 2. 如果非强刷，优先命中缓存
-    if not force:
-        if os.path.exists(ai_cache_file):
-            try:
-                with open(ai_cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                return jsonify({'success': True, 'status': 'completed', 'cached': True, 'text': cache_data.get('text', '')})
-            except Exception:
-                pass
-        return jsonify({'success': True, 'status': 'idle', 'cached': False, 'text': ''})
-
-    # 3. 检查是否有任务正在跑
-    task = ai_tasks.get(match_id)
-    if task and task['status'] == 'processing':
-        return jsonify({'success': True, 'status': 'processing', 'message': '该比赛的 AI 预测报告正在后台异步生成中，请耐心等候...'})
-        
-    # 清理历史缓存以重新生成
-    if os.path.exists(ai_cache_file):
-        try:
-            os.remove(ai_cache_file)
-        except:
-            pass
-            
-    # 4. 获取最新的详情和盘口
+def build_match_prompt_context(match_id, home, away):
     details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
     details = None
     if os.path.exists(details_cache_file):
@@ -603,7 +505,7 @@ def match_ai_analysis():
         try:
             details = get_complete_match_details(match_id, home, away)
         except Exception as e:
-            return jsonify({'success': False, 'error': f"获取比赛详情数据失败: {str(e)}"})
+            return False, f"获取比赛详情数据失败: {str(e)}", ""
 
     similar_trend_data = {}
     win_probability_data = {}
@@ -619,7 +521,7 @@ def match_ai_analysis():
         except Exception as e_db:
             print("Failed to load match meta from parsed_matches:", e_db)
 
-    # 5. 拼装 Prompt 上下文
+    # 拼装 Prompt 上下文
     context_lines = []
     context_lines.append(f"【比赛信息】")
     context_lines.append(f"赛事竞争：{details.get('competition', '') or '未知赛事'}")
@@ -734,9 +636,197 @@ def match_ai_analysis():
             pass
 
     context_str = "\n".join(context_lines)
+    return True, "", context_str
 
-    # 6. 后台拉起独立线程请求 AI 并托管
-    ai_tasks[match_id] = {'status': 'processing'}
+def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str):
+    global ai_tasks
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    url = f"{api_base}/chat/completions"
+    
+    # 根据版本索引微调 temperature 以及提示语，确保三个版本具有不一样的推演切入点
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"请针对以下赛事数据进行深度研判。特别是要根据这场的盘口走势，去匹配历史已踢完的相同盘口的比赛，仔细比对其中的【历史相似初盘走势与胜平负比例统计】数据，列出踢出来的胜、平、负真实比例。通过对比同样的盘口与走势变化下胜率的概率学分布，研判得出买哪边赢盘或赢球的胜率期望更高，并在新增的“同初盘/同走势历史赛果概率对比”结论中给出明确倾向推荐。这是第 {version_idx+1} 次研判，请提供独特的分析切入点与结论：\n\n{context_str}"}
+        ],
+        "temperature": 0.3 + (version_idx * 0.15),
+        "stream": True
+    }
+    
+    import requests
+    r = requests.post(url, headers=headers, json=payload, timeout=90, stream=True)
+    if r.status_code != 200:
+        err_text = ""
+        try:
+            for line in r.iter_lines():
+                if line:
+                    err_text += line.decode('utf-8')
+        except:
+            pass
+        raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
+        
+    ai_output = ""
+    in_reasoning = False
+    
+    for line in r.iter_lines():
+        if not line:
+            continue
+        line_str = line.decode('utf-8').strip()
+        if line_str.startswith("data:"):
+            data_content = line_str[5:].strip()
+            if data_content == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_content)
+                delta = chunk['choices'][0]['delta']
+                
+                reasoning = delta.get('reasoning_content', '')
+                content = delta.get('content', '')
+                
+                if reasoning:
+                    if not in_reasoning:
+                        ai_output += "<think>\n"
+                        in_reasoning = True
+                    ai_output += reasoning
+                else:
+                    if in_reasoning:
+                        ai_output += "\n</think>\n"
+                        in_reasoning = False
+                    if content:
+                        ai_output += content
+                        
+                ai_tasks[str(match_id)]['reports'][version_idx] = ai_output
+            except Exception:
+                pass
+                
+    if in_reasoning:
+        ai_output += "\n</think>\n"
+        ai_tasks[str(match_id)]['reports'][version_idx] = ai_output
+        
+    return ai_output
+
+def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file):
+    global ai_tasks
+    try:
+        ai_tasks[str(match_id)] = {
+            'status': 'processing', 
+            'reports': ['', '', ''],
+            'status_list': ['processing', 'processing', 'processing']
+        }
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(
+                    run_single_version, 
+                    i, match_id, api_base, api_key, model_name, system_prompt, context_str
+                ): i for i in range(3)
+            }
+            
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                try:
+                    future.result()
+                    ai_tasks[str(match_id)]['status_list'][idx] = 'completed'
+                except Exception as sub_e:
+                    print(f"Sub-thread {idx} failed for match {match_id}: {sub_e}")
+                    ai_tasks[str(match_id)]['status_list'][idx] = 'failed'
+                    ai_tasks[str(match_id)]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+        
+        # 判断是否全都失败
+        st_list = ai_tasks[str(match_id)]['status_list']
+        if all(s == 'failed' for s in st_list):
+            raise Exception("三个版本的 AI 研判全部请求失败。")
+            
+        final_reports = ai_tasks[str(match_id)]['reports']
+        with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
+            json.dump({'reports': final_reports}, cache_f, ensure_ascii=False, indent=2)
+            
+        ai_tasks[str(match_id)]['status'] = 'completed'
+    except Exception as e:
+        print(f"Background AI Thread error for match {match_id}: {e}")
+        ai_tasks[str(match_id)] = {'status': 'failed', 'error': str(e)}
+
+@app.route('/api/match_ai_analysis', methods=['POST'])
+def match_ai_analysis():
+    global ai_tasks
+    data = request.json
+    if not data:
+        return jsonify({'success': False, 'error': 'Missing request body'})
+        
+    match_id = str(data.get('match_id'))
+    home = data.get('home_team')
+    away = data.get('away_team')
+    force = data.get('force') == True
+    
+    if not match_id or not home or not away:
+        return jsonify({'success': False, 'error': 'Missing match details (id, home_team, away_team)'})
+        
+    # 1. 读取 AI 配置
+    api_key = ""
+    api_base = "https://opencode.ai/zen/v1"
+    model_name = "minimax-m2.5-free"
+    system_prompt = ""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                api_key = cfg.get('api_key', '')
+                api_base = cfg.get('api_base', 'https://opencode.ai/zen/v1')
+                model_name = cfg.get('model_name', 'minimax-m2.5-free')
+                system_prompt = cfg.get('system_prompt', '')
+        except Exception:
+            pass
+            
+    if not system_prompt:
+        system_prompt = DEFAULT_SYSTEM_PROMPT
+            
+    if not api_key:
+        return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
+        
+    ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+    
+    # 2. 如果非强刷，优先命中缓存
+    if not force:
+        if os.path.exists(ai_cache_file):
+            try:
+                with open(ai_cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                
+                if 'reports' in cache_data:
+                    return jsonify({'success': True, 'status': 'completed', 'cached': True, 'reports': cache_data['reports']})
+                elif 'text' in cache_data:
+                    return jsonify({'success': True, 'status': 'completed', 'cached': True, 'reports': [cache_data['text'], '', '']})
+            except Exception:
+                pass
+        return jsonify({'success': True, 'status': 'idle', 'cached': False, 'reports': ['', '', '']})
+
+    # 3. 检查是否有任务正在跑
+    task = ai_tasks.get(match_id)
+    if task and task['status'] == 'processing':
+        return jsonify({'success': True, 'status': 'processing', 'message': '该比赛的 AI 预测报告正在后台异步生成中，请耐心等候...'})
+        
+    # 清理历史缓存以重新生成
+    if os.path.exists(ai_cache_file):
+        try:
+            os.remove(ai_cache_file)
+        except:
+            pass
+            
+    # 4. 获取最新的详情和盘口并构建上下文
+    success, err_msg, context_str = build_match_prompt_context(match_id, home, away)
+    if not success:
+        return jsonify({'success': False, 'error': err_msg})
+        
+    # 5. 后台拉起独立线程并发请求三个版本的 AI
+    ai_tasks[match_id] = {
+        'status': 'processing', 
+        'reports': ['', '', ''],
+        'status_list': ['processing', 'processing', 'processing']
+    }
     t = threading.Thread(
         target=run_ai_analysis_thread,
         args=(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file)
@@ -747,7 +837,7 @@ def match_ai_analysis():
     return jsonify({
         'success': True,
         'status': 'processing',
-        'message': 'AI后台异步托管成功！分析正在云端安静进行中。您此时可以随意锁屏、切后台或打开其他App，分析绝不会被中断。'
+        'message': 'AI后台异步托管成功！三版本分析正在云端并发进行中。'
     })
 
 @app.route('/api/ai_analysis_status', methods=['GET'])
@@ -764,7 +854,22 @@ def ai_analysis_status():
         try:
             with open(ai_cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
-            return jsonify({'success': True, 'status': 'completed', 'text': cache_data.get('text', '')})
+            
+            if 'reports' in cache_data:
+                return jsonify({
+                    'success': True, 
+                    'status': 'completed', 
+                    'reports': cache_data['reports'],
+                    'status_list': ['completed', 'completed', 'completed']
+                })
+            elif 'text' in cache_data:
+                # 兼容老版本单个文本缓存
+                return jsonify({
+                    'success': True,
+                    'status': 'completed',
+                    'reports': [cache_data['text'], '', ''],
+                    'status_list': ['completed', 'completed', 'completed']
+                })
         except Exception:
             pass
             
@@ -772,9 +877,216 @@ def ai_analysis_status():
     if task:
         if task['status'] == 'failed':
             return jsonify({'success': True, 'status': 'failed', 'error': task.get('error', '未知大模型异常')})
-        return jsonify({'success': True, 'status': 'processing'})
+        return jsonify({
+            'success': True, 
+            'status': task['status'], 
+            'reports': task.get('reports', ['', '', '']),
+            'status_list': task.get('status_list', ['processing', 'processing', 'processing'])
+        })
         
     return jsonify({'success': True, 'status': 'idle'})
+
+# 批量分析全局状态管理
+batch_manager = {
+    'active': False,
+    'total': 0,
+    'completed': 0,
+    'error_count': 0,
+    'current_match_id': None,
+    'queue': []
+}
+batch_lock = threading.Lock()
+
+def run_batch_analysis_loop(api_base, api_key, model_name, system_prompt):
+    global batch_manager, ai_tasks
+    
+    while True:
+        match_id = None
+        home = None
+        away = None
+        
+        with batch_lock:
+            if not batch_manager['queue']:
+                batch_manager['active'] = False
+                batch_manager['current_match_id'] = None
+                print("[Batch AI Engine] Completed batch queue!")
+                break
+            task_item = batch_manager['queue'].pop(0)
+            match_id = task_item['match_id']
+            home = task_item['home']
+            away = task_item['away']
+            batch_manager['current_match_id'] = match_id
+            
+        print(f"[Batch AI Engine] Processing match {match_id}: {home} vs {away}")
+        
+        ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+        
+        # 如果已经有完整的三版本缓存，跳过
+        has_valid_cache = False
+        if os.path.exists(ai_cache_file):
+            try:
+                with open(ai_cache_file, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+                if 'reports' in cache_data and len(cache_data['reports']) >= 3 and cache_data['reports'][0]:
+                    has_valid_cache = True
+            except:
+                pass
+        
+        if has_valid_cache:
+            with batch_lock:
+                batch_manager['completed'] += 1
+            continue
+            
+        success, err_msg, context_str = build_match_prompt_context(match_id, home, away)
+        if not success:
+            print(f"[Batch AI Engine] Skip match {match_id} due to context error: {err_msg}")
+            with batch_lock:
+                batch_manager['error_count'] += 1
+            continue
+            
+        try:
+            ai_tasks[str(match_id)] = {
+                'status': 'processing', 
+                'reports': ['', '', ''],
+                'status_list': ['processing', 'processing', 'processing']
+            }
+            
+            # 使用 ThreadPoolExecutor 并发生成 3 个版本
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                futures = {
+                    executor.submit(
+                        run_single_version, 
+                        i, match_id, api_base, api_key, model_name, system_prompt, context_str
+                    ): i for i in range(3)
+                }
+                
+                for future in concurrent.futures.as_completed(futures):
+                    idx = futures[future]
+                    try:
+                        future.result()
+                        ai_tasks[str(match_id)]['status_list'][idx] = 'completed'
+                    except Exception as sub_e:
+                        ai_tasks[str(match_id)]['status_list'][idx] = 'failed'
+                        ai_tasks[str(match_id)]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+                        
+            final_reports = ai_tasks[str(match_id)]['reports']
+            with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
+                json.dump({'reports': final_reports}, cache_f, ensure_ascii=False, indent=2)
+            ai_tasks[str(match_id)]['status'] = 'completed'
+            
+            with batch_lock:
+                batch_manager['completed'] += 1
+        except Exception as batch_e:
+            print(f"[Batch AI Engine] Match {match_id} failed: {batch_e}")
+            with batch_lock:
+                batch_manager['error_count'] += 1
+
+@app.route('/api/batch_ai_analysis', methods=['POST'])
+def batch_ai_analysis():
+    global batch_manager
+    
+    with batch_lock:
+        if batch_manager['active']:
+            return jsonify({
+                'success': False, 
+                'error': f"今日批量分析任务正在运行中，当前进度: {batch_manager['completed']} / {batch_manager['total']}"
+            })
+            
+    api_key = ""
+    api_base = "https://opencode.ai/zen/v1"
+    model_name = "minimax-m2.5-free"
+    system_prompt = ""
+    
+    CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'ai_config.json')
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+                api_key = cfg.get('api_key', '')
+                api_base = cfg.get('api_base', 'https://opencode.ai/zen/v1')
+                model_name = cfg.get('model_name', 'minimax-m2.5-free')
+                system_prompt = cfg.get('system_prompt', '')
+        except Exception:
+            pass
+            
+    if not system_prompt:
+        system_prompt = DEFAULT_SYSTEM_PROMPT
+            
+    if not api_key:
+        return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
+        
+    # 获取当天重点赛事
+    today_str = datetime.date.today().strftime('%m-%d')
+    matched_items = []
+    
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                all_matches = json.load(f)
+            for m in all_matches:
+                if m.get('date', '').startswith(today_str):
+                    has_intel = False
+                    match_id = str(m.get('id'))
+                    
+                    details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
+                    if os.path.exists(details_cache_file):
+                        try:
+                            with open(details_cache_file, 'r', encoding='utf-8') as df:
+                                details = json.load(df)
+                                swot = details.get('pros_cons', {})
+                                if (swot.get('home', {}).get('pros') or swot.get('home', {}).get('cons') or 
+                                    swot.get('away', {}).get('pros') or swot.get('away', {}).get('cons')):
+                                    has_intel = True
+                        except:
+                            pass
+                            
+                    if m.get('win_probability') or m.get('similar_trend'):
+                        has_intel = True
+                        
+                    if has_intel:
+                        matched_items.append({
+                            'match_id': match_id,
+                            'home': m.get('home_team'),
+                            'away': m.get('away_team')
+                        })
+        except Exception as scan_e:
+            return jsonify({'success': False, 'error': f"扫描赛事数据库出错: {str(scan_e)}"})
+            
+    if not matched_items:
+        return jsonify({'success': True, 'message': '今日暂无需要研判的重点/有情报赛事。', 'total': 0})
+        
+    with batch_lock:
+        batch_manager['active'] = True
+        batch_manager['total'] = len(matched_items)
+        batch_manager['completed'] = 0
+        batch_manager['error_count'] = 0
+        batch_manager['queue'] = matched_items
+        
+    t = threading.Thread(
+        target=run_batch_analysis_loop,
+        args=(api_base, api_key, model_name, system_prompt)
+    )
+    t.daemon = True
+    t.start()
+    
+    return jsonify({
+        'success': True,
+        'total': len(matched_items),
+        'message': f"已成功拉起今日全天批量研判跑批！共 {len(matched_items)} 场重点赛事压入队列。"
+    })
+
+@app.route('/api/batch_ai_status', methods=['GET'])
+def batch_ai_status():
+    global batch_manager
+    with batch_lock:
+        return jsonify({
+            'success': True,
+            'active': batch_manager['active'],
+            'total': batch_manager['total'],
+            'completed': batch_manager['completed'],
+            'error_count': batch_manager['error_count'],
+            'current_match_id': batch_manager['current_match_id']
+        })
 
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
