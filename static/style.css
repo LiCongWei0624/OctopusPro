@@ -2397,6 +2397,42 @@ body {
     transform: none !important;
 }
 
+.btn-ai-batch {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: rgba(99, 102, 241, 0.08) !important;
+    border: 1.5px solid rgba(99, 102, 241, 0.35) !important;
+    color: #6366f1 !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.5px;
+    padding: 0.85rem 1.75rem !important;
+    border-radius: 30px !important;
+    cursor: pointer !important;
+    transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    min-width: 140px !important;
+}
+
+.btn-ai-batch:hover:not(:disabled) {
+    transform: translateY(-2.5px);
+    background: rgba(99, 102, 241, 0.15) !important;
+    border-color: #6366f1 !important;
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.15) !important;
+}
+
+.btn-ai-batch:active:not(:disabled) {
+    transform: translateY(-0.5px);
+}
+
+.btn-ai-batch:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+    transform: none !important;
+}
+
 /* 4. AI 报告 Markdown 排版的美学升级 */
 #ai-report-content {
     padding: 1.5rem !important;
