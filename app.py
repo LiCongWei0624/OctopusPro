@@ -904,18 +904,22 @@ def debug_find_kst():
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
         
-        # 寻找所有的 <script> 标签内容
-        scripts = re.findall(r'<script[^>]*>([\s\S]*?)<\/script>', html)
+        # 匹配 17835 开头的 10 位数字，但我们要过滤掉 td 节点的干扰
+        num_matches = re.finditer(r'\b(17835\d{5})\b', html)
         previews = []
-        for i, s in enumerate(scripts):
-            s_clean = s.strip()
-            if len(s_clean) > 0:
-                previews.append(f"Script {i} (Length={len(s_clean)}): " + s_clean[:400] + "...")
+        for m in num_matches:
+            idx = m.start()
+            val = m.group(1)
+            context_str = html[max(0, idx-60): min(len(html), idx+60)]
+            # 过滤掉 key="17835..." 这种明细 td 属性
+            if 'key=' in context_str or 'class=' in context_str:
+                continue
+            previews.append(f"Val={val} Context: " + context_str.strip().replace('\n', ' '))
                 
         return jsonify({
             'success': True,
             'html_length': len(html),
-            'scripts_count': len(scripts),
+            'filtered_count': len(previews),
             'previews': previews
         })
     except Exception as e:
