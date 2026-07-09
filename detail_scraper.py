@@ -53,25 +53,42 @@ GLOBAL_ODDS_CJ = http.cookiejar.CookieJar()
 GLOBAL_ODDS_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(GLOBAL_ODDS_CJ))
 
 def solve_waf_via_node(html, url, user_agent):
+    """
+    <summary>
+    使用 Node.js 子进程对 WAF 的 acw_sc__v2 挑战进行解密求解。
+    已增加多重异常保护与 5 秒硬超时限制，绝不挂起 Web 服务线程。
+    </summary>
+    """
     script_path = os.path.join(os.path.dirname(__file__), 'waf_solver.js')
     
-    process = subprocess.Popen(
-        [NODE_PATH, script_path, url, user_agent],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding='utf-8'
-    )
-    stdout, stderr = process.communicate(input=html)
-    if process.returncode != 0:
-        return None
+    process = None
     try:
+        process = subprocess.Popen(
+            [NODE_PATH, script_path, url, user_agent],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8'
+        )
+        stdout, stderr = process.communicate(input=html, timeout=5)
+        if process.returncode != 0:
+            print(f"solve_waf_via_node: Node execution returned non-zero. Stderr: {stderr}")
+            return None
+        
         res = json.loads(stdout.strip())
         if res.get('success'):
             return res.get('cookie')
-    except Exception:
-        pass
+    except subprocess.TimeoutExpired:
+        print("solve_waf_via_node: Hard timeout expired running Node.js solver (5s), process terminated.")
+        if process:
+            try:
+                process.kill()
+                process.communicate()
+            except:
+                pass
+    except Exception as e_node:
+        print(f"solve_waf_via_node: Failed to execute or parse Node WAF solver: {e_node}")
     return None
 
 def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
@@ -1577,60 +1594,8 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
     except Exception as e_pure:
         print(f"Pure HTML Scraper exception: {e_pure}. Falling back to fast subprocess crawler...")
 
-    # 3. 降级兜底方案：调用进化后的极速 Playwright 子进程运行 auth_generator.py
-    print(f"Fast Subprocess Crawler: Fetching odds detail for match {match_id}, cid {cid}, type {type_val} ...")
-    import sys
-    import subprocess
-    cache_path = os.path.join(os.path.dirname(__file__), f"odds_detail_{match_id}_{cid}_{type_val}.json")
-    
-    # 若已存物理缓存（二次切换触发），直接读取返回
-    if os.path.exists(cache_path):
-        try:
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            return data
-        except Exception as e_read:
-            print("Failed to read existing local cache:", e_read)
-            
-    process = None
-    try:
-        script_path = os.path.join(os.path.dirname(__file__), 'auth_generator.py')
-        # 在 Windows 环境下采用 CREATE_NO_WINDOW 避免命令行黑色窗口闪烁
-        creation_flags = 0
-        if sys.platform == 'win32':
-            creation_flags = 0x08000000 # CREATE_NO_WINDOW
-            
-        process = subprocess.Popen(
-            [sys.executable, script_path, str(match_id), str(cid), str(type_val)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding='utf-8',
-            creationflags=creation_flags
-        )
-        
-        # 极速子进程只运行一次 WAF evaluate 即可，缩短超时至 12 秒
-        stdout, stderr = process.communicate(timeout=12)
-        if process.returncode == 0:
-            if os.path.exists(cache_path):
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                try:
-                    os.remove(cache_path)
-                except:
-                    pass
-                return data
-        else:
-            print(f"Subprocess returned non-zero code {process.returncode}. Stderr: {stderr}")
-    except Exception as e:
-        print(f"Fast Playwright subprocess failed: {e}")
-    finally:
-        if process:
-            try:
-                process.kill()
-                process.communicate()
-            except:
-                pass
+    # 3. 彻底停用极度耗费 CPU 的 Playwright 无头浏览器子进程降级，防止低配 Linux 云服务器雪崩卡死
+    print(f"Playwright Subprocess Crawler Disabled for match {match_id}, cid {cid}, type {type_val} to protect server resources.")
     return None
 
 if __name__ == '__main__':
