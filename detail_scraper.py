@@ -1585,10 +1585,12 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
     """
     <summary>
     获取赔率走势明细。优先通过高效率纯 H5 API 方式请求；
-    若 API 失败，则转由纯 Python + HTML 解析加算法解密（避开无头浏览器，1秒内返回）；
-    若 HTML 解析也失败，则调用重构后的外部 auth_generator.py 启动极速独立 Playwright 进程抓取并解密（~1.2秒，无黑窗，100%成功）。
+    若 API 失败，则转由纯 Python + HTML 解析加算法解密（避开无头浏览器，1秒内返回）。
+    已增加底层错误拦截透传机制，能精准向前端反映 IP ACL 封锁或 WAF 异常。
     </summary>
     """
+    last_error = None
+    
     # 1. 优先尝试直接用纯 H5 API 获取（共享已缓存 WAF Cookie，0.1秒级秒回）
     try:
         log_odds(f"get_odds_detail_via_playwright: Phase 1 (H5 API) starting for match={match_id}, cid={cid}, type={type_val}")
@@ -1596,12 +1598,17 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
         if isinstance(api_data, list) and len(api_data) > 0:
             log_odds("Successfully fetched odds details via high performance H5 API!")
             return api_data
-        elif isinstance(api_data, dict) and 'error' not in api_data:
-            log_odds("Successfully fetched odds details via high performance H5 API (dict)!")
-            return api_data
+        elif isinstance(api_data, dict):
+            if 'error' not in api_data:
+                log_odds("Successfully fetched odds details via high performance H5 API (dict)!")
+                return api_data
+            else:
+                last_error = api_data['error']
+                log_odds(f"H5 API approach returned error: {last_error}. Falling back to HTML Scraper...")
         else:
-            log_odds(f"H5 API approach reported error or empty: {api_data}. Falling back to HTML Scraper...")
+            log_odds(f"H5 API approach returned empty or non-dict. Falling back to HTML Scraper...")
     except Exception as e_api:
+        last_error = str(e_api)
         log_odds(f"H5 API approach exception: {e_api}. Falling back to HTML Scraper...")
 
     # 2. 第二优先：使用高效率纯 Python + HTML 静态走势页解析与 AES 本地解密
@@ -1612,13 +1619,21 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
             log_odds("Successfully fetched odds details via high performance Pure HTML Scraper!")
             return pure_html_data
         else:
-            log_odds("Pure HTML Scraper returned empty or failed. Falling back to fast subprocess crawler...")
+            log_odds("Pure HTML Scraper returned empty or failed.")
+            if not last_error:
+                last_error = "静态页面解析返回空或失败"
     except Exception as e_pure:
-        log_odds(f"Pure HTML Scraper exception: {e_pure}. Falling back to fast subprocess crawler...")
+        last_error = str(e_pure)
+        log_odds(f"Pure HTML Scraper exception: {e_pure}.")
 
-    # 3. 彻底停用极度耗费 CPU 的 Playwright 无头浏览器子进程降级，防止低配 Linux 云服务器雪崩卡死
+    # 3. 彻底停用极度耗费 CPU 的 Playwright 无头浏览器子进程降级，并返回最后的异常错误
     log_odds(f"Playwright Subprocess Crawler Disabled for match {match_id}, cid {cid}, type {type_val} to protect server resources.")
-    return None
+    
+    friendly_err = last_error if last_error else "获取指数走势失败（WAF安全限制或CDN网络隔离）"
+    if "IP_ACL_BLACKLIST" in friendly_err or "403" in friendly_err:
+        friendly_err = "当前服务器出网 IP 已被雷速安全防护暂时拦截（Tengine IP ACL 封锁），建议在列表点击‘同步最新赛事’重试，或等待 5 分钟解封"
+        
+    return {"error": friendly_err}
 
 if __name__ == '__main__':
     data = get_lineup_via_api(4556518)
