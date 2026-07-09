@@ -368,19 +368,11 @@ def get_match_details():
             
     cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
     
-    # 对已完场赛事，永久使用缓存；对未完场赛事，允许 180 秒内的临时缓存直接命中以防 IP 封锁
+    # 仅对已完场赛事使用和读取静态缓存
     cache_valid = False
     if os.path.exists(cache_file) and not force:
         if is_finished:
             cache_valid = True
-        else:
-            try:
-                import time
-                mtime = os.path.getmtime(cache_file)
-                if time.time() - mtime < 180:
-                    cache_valid = True
-            except:
-                pass
                 
     if cache_valid:
         try:
@@ -392,9 +384,10 @@ def get_match_details():
             
     try:
         details = get_complete_match_details(match_id, home, away)
-        # 抓取成功后无条件存入本地缓存，方便跑批与高频点击复用
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            json.dump(details, f, ensure_ascii=False, indent=2)
+        # 仅在比赛确认为已结束时，才写入本地静态缓存
+        if is_finished:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(details, f, ensure_ascii=False, indent=2)
         return jsonify({'success': True, 'data': details})
     except Exception as e:
         err_str = str(e)
@@ -898,226 +891,7 @@ def ai_analysis_status():
         
     return jsonify({'success': True, 'status': 'idle'})
 
-# 批量分析全局状态管理
-batch_manager = {
-    'active': False,
-    'total': 0,
-    'completed': 0,
-    'error_count': 0,
-    'current_match_id': None,
-    'queue': []
-}
-batch_lock = threading.Lock()
 
-def run_batch_analysis_loop(api_base, api_key, model_name, system_prompt):
-    global batch_manager, ai_tasks
-    
-    while True:
-        match_id = None
-        home = None
-        away = None
-        
-        with batch_lock:
-            if not batch_manager['queue']:
-                batch_manager['active'] = False
-                batch_manager['current_match_id'] = None
-                print("[Batch AI Engine] Completed batch queue!")
-                break
-            task_item = batch_manager['queue'].pop(0)
-            match_id = task_item['match_id']
-            home = task_item['home']
-            away = task_item['away']
-            batch_manager['current_match_id'] = match_id
-            
-        print(f"[Batch AI Engine] Processing match {match_id}: {home} vs {away}")
-        
-        ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
-        
-        # 如果已经有完整的三版本缓存，跳过
-        has_valid_cache = False
-        if os.path.exists(ai_cache_file):
-            try:
-                with open(ai_cache_file, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                if 'reports' in cache_data and len(cache_data['reports']) >= 3 and cache_data['reports'][0]:
-                    has_valid_cache = True
-            except:
-                pass
-        
-        if has_valid_cache:
-            with batch_lock:
-                batch_manager['completed'] += 1
-            continue
-            
-        success, err_msg, context_str = build_match_prompt_context(match_id, home, away)
-        if not success:
-            print(f"[Batch AI Engine] Skip match {match_id} due to context error: {err_msg}")
-            with batch_lock:
-                batch_manager['error_count'] += 1
-            continue
-            
-        try:
-            ai_tasks[str(match_id)] = {
-                'status': 'processing', 
-                'reports': ['', '', ''],
-                'status_list': ['processing', 'processing', 'processing']
-            }
-            
-            # 使用 ThreadPoolExecutor 并发生成 3 个版本
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = {
-                    executor.submit(
-                        run_single_version, 
-                        i, match_id, api_base, api_key, model_name, system_prompt, context_str
-                    ): i for i in range(3)
-                }
-                
-                for future in concurrent.futures.as_completed(futures):
-                    idx = futures[future]
-                    try:
-                        future.result()
-                        ai_tasks[str(match_id)]['status_list'][idx] = 'completed'
-                    except Exception as sub_e:
-                        ai_tasks[str(match_id)]['status_list'][idx] = 'failed'
-                        ai_tasks[str(match_id)]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
-                        
-            final_reports = ai_tasks[str(match_id)]['reports']
-            with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
-                json.dump({'reports': final_reports}, cache_f, ensure_ascii=False, indent=2)
-            ai_tasks[str(match_id)]['status'] = 'completed'
-            
-            with batch_lock:
-                batch_manager['completed'] += 1
-        except Exception as batch_e:
-            print(f"[Batch AI Engine] Match {match_id} failed: {batch_e}")
-            with batch_lock:
-                batch_manager['error_count'] += 1
-
-@app.route('/api/batch_ai_analysis', methods=['POST'])
-def batch_ai_analysis():
-    global batch_manager
-    
-    with batch_lock:
-        if batch_manager['active']:
-            return jsonify({
-                'success': False, 
-                'error': f"今日批量分析任务正在运行中，当前进度: {batch_manager['completed']} / {batch_manager['total']}"
-            })
-            
-    api_key = ""
-    api_base = "https://opencode.ai/zen/v1"
-    model_name = "minimax-m2.5-free"
-    system_prompt = ""
-    
-    CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'ai_config.json')
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
-                api_key = cfg.get('api_key', '')
-                api_base = cfg.get('api_base', 'https://opencode.ai/zen/v1')
-                model_name = cfg.get('model_name', 'minimax-m2.5-free')
-                system_prompt = cfg.get('system_prompt', '')
-        except Exception:
-            pass
-            
-    if not system_prompt:
-        system_prompt = DEFAULT_SYSTEM_PROMPT
-            
-    if not api_key:
-        return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
-        
-    # 获取当天重点赛事，并以 1.5 秒的安全限速对无本地缓存的赛事执行在线详情补全
-    import time
-    today_str = datetime.date.today().strftime('%m-%d')
-    matched_items = []
-    
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                all_matches = json.load(f)
-            for m in all_matches:
-                if m.get('date', '').startswith(today_str):
-                    has_intel = False
-                    match_id = str(m.get('id'))
-                    home = m.get('home_team')
-                    away = m.get('away_team')
-                    
-                    details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
-                    
-                    # 1. 物理详情不存在时，执行慢速在线补全
-                    if not os.path.exists(details_cache_file):
-                        try:
-                            print(f"[Batch AI Scout] Cache missing for {match_id} ({home} vs {away}). Fetching...")
-                            details = get_complete_match_details(match_id, home, away)
-                            with open(details_cache_file, 'w', encoding='utf-8') as df:
-                                json.dump(details, df, ensure_ascii=False, indent=2)
-                            # 抓取完后强制休眠 1.5 秒，绝对安全地防止 Tengine WAF 频次限流拦截
-                            time.sleep(1.5)
-                        except Exception as fetch_err:
-                            print(f"[Batch AI Scout] Failed to fetch details for {match_id}: {fetch_err}")
-                            # 失败则跳过该比赛的扫描，继续处理后面的比赛
-                            continue
-                    
-                    # 2. 读取已有的或刚刚获取的详情缓存，进行重点情报判定
-                    if os.path.exists(details_cache_file):
-                        try:
-                            with open(details_cache_file, 'r', encoding='utf-8') as df:
-                                details = json.load(df)
-                                swot = details.get('pros_cons', {})
-                                if (swot.get('home', {}).get('pros') or swot.get('home', {}).get('cons') or 
-                                    swot.get('away', {}).get('pros') or swot.get('away', {}).get('cons')):
-                                    has_intel = True
-                        except:
-                            pass
-                            
-                    if m.get('win_probability') or m.get('similar_trend'):
-                        has_intel = True
-                        
-                    if has_intel:
-                        matched_items.append({
-                            'match_id': match_id,
-                            'home': home,
-                            'away': away
-                        })
-        except Exception as scan_e:
-            return jsonify({'success': False, 'error': f"扫描赛事数据库出错: {str(scan_e)}"})
-            
-    if not matched_items:
-        return jsonify({'success': True, 'message': '今日暂无需要研判的重点/有情报赛事。', 'total': 0})
-        
-    with batch_lock:
-        batch_manager['active'] = True
-        batch_manager['total'] = len(matched_items)
-        batch_manager['completed'] = 0
-        batch_manager['error_count'] = 0
-        batch_manager['queue'] = matched_items
-        
-    t = threading.Thread(
-        target=run_batch_analysis_loop,
-        args=(api_base, api_key, model_name, system_prompt)
-    )
-    t.daemon = True
-    t.start()
-    
-    return jsonify({
-        'success': True,
-        'total': len(matched_items),
-        'message': f"已成功拉起今日全天批量研判跑批！共 {len(matched_items)} 场重点赛事压入队列。"
-    })
-
-@app.route('/api/batch_ai_status', methods=['GET'])
-def batch_ai_status():
-    global batch_manager
-    with batch_lock:
-        return jsonify({
-            'success': True,
-            'active': batch_manager['active'],
-            'total': batch_manager['total'],
-            'completed': batch_manager['completed'],
-            'error_count': batch_manager['error_count'],
-            'current_match_id': batch_manager['current_match_id']
-        })
 
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
