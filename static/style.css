@@ -1582,6 +1582,26 @@ body {
     color: rgba(255, 255, 255, 0.8);
     font-weight: 500;
 }
+.batch-progress-banner.finished {
+    background: linear-gradient(135deg, #10b981, #064e3b);
+    box-shadow: 0 10px 30px rgba(16, 185, 129, 0.3);
+}
+.batch-progress-close {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+    color: #ffffff;
+    line-height: 1;
+}
+.batch-progress-close:hover {
+    opacity: 1;
+}
+
 
 /* AI Markdown content area */
 .ai-markdown-report {

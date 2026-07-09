@@ -1095,18 +1095,20 @@ function checkBatchStatus() {
         .then(res => {
             if (res.success) {
                 if (res.active) {
-                    showBatchProgressBanner(res.completed, res.total, res.error_count);
+                    showBatchProgressBanner(res.completed, res.total, res.error_count, false);
                 } else {
                     if (batchPollingTimer) {
                         clearInterval(batchPollingTimer);
                         batchPollingTimer = null;
                     }
-                    hideBatchProgressBanner();
                     if (res.total > 0) {
-                        alert(`今日全天 AI 批量研判已完成！\n共跑批: ${res.total} 场 | 成功: ${res.completed - res.error_count} 场 | 失败: ${res.error_count} 场`);
+                        // 跑批结束，展示 100% 完成状态 Banner，拒绝突兀闪退
+                        showBatchProgressBanner(res.completed, res.total, res.error_count, true);
                         if (selectedMatch) {
                             checkAndLoadCachedReport(selectedMatch.id);
                         }
+                    } else {
+                        hideBatchProgressBanner();
                     }
                 }
             }
@@ -1114,31 +1116,57 @@ function checkBatchStatus() {
         .catch(err => console.error("轮询跑批状态失败:", err));
 }
 
-function showBatchProgressBanner(completed, total, errorCount) {
+function showBatchProgressBanner(completed, total, errorCount, isFinished = false) {
     let banner = document.getElementById('batch-progress-banner');
     if (!banner) {
         banner = document.createElement('div');
         banner.id = 'batch-progress-banner';
-        banner.className = 'batch-progress-banner';
         document.body.appendChild(banner);
+    }
+    
+    // 清除可能存在的旧自动淡出定时器
+    if (window.__batchBannerFadeTimeout) {
+        clearTimeout(window.__batchBannerFadeTimeout);
+        window.__batchBannerFadeTimeout = null;
+    }
+    
+    if (isFinished) {
+        banner.className = 'batch-progress-banner finished';
+    } else {
+        banner.className = 'batch-progress-banner';
     }
     
     const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
     const successCount = completed - errorCount;
     
+    const closeBtnHtml = isFinished ? `<span class="batch-progress-close" onclick="window.hideBatchProgressBanner()">×</span>` : '';
+    const titleText = isFinished ? '🎉 今日重点赛事 AI 批量跑批完成' : '⚡ 今日重点赛事 AI 批量跑批中';
+    const statusText = isFinished 
+        ? `共跑批: ${total} 场 | 成功: ${successCount} 场 | 失败: ${errorCount} 场`
+        : `当前进度 ${pct}% (成功: ${successCount} | 失败: ${errorCount})`;
+    
     banner.innerHTML = `
+        ${closeBtnHtml}
         <div class="batch-progress-title">
-            <span>⚡ 今日重点赛事 AI 批量跑批中</span>
+            <span>${titleText}</span>
             <span>${completed}/${total}</span>
         </div>
         <div class="batch-progress-bar-track">
-            <div class="batch-progress-bar-fill" style="width: ${pct}%"></div>
+            <div class="batch-progress-bar-fill" style="width: ${isFinished ? 100 : pct}%"></div>
         </div>
         <div class="batch-progress-status">
-            当前进度 ${pct}% (成功: ${successCount} | 失败: ${errorCount})
+            ${statusText}
         </div>
     `;
+    
+    // 如果跑批完成，设定 10 秒后自动淡出隐藏 Banner
+    if (isFinished) {
+        window.__batchBannerFadeTimeout = setTimeout(() => {
+            hideBatchProgressBanner();
+        }, 10000);
+    }
 }
+
 
 function hideBatchProgressBanner() {
     const banner = document.getElementById('batch-progress-banner');

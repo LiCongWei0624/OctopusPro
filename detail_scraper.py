@@ -733,18 +733,15 @@ function encrypt(text) {{
 }}
 console.log(encrypt('{payload_str}'));
 """
-            enc_script_path = os.path.join(os.path.dirname(__file__), 'temp_enc_payload.js')
-            with open(enc_script_path, 'w', encoding='utf-8') as f:
-                f.write(node_enc_script)
-                
-            process = subprocess.Popen([NODE_PATH, enc_script_path], stdout=subprocess.PIPE, text=True)
-            stdout, _ = process.communicate()
-            encrypted_payload = stdout.strip()
-            
+            # 通过 Node.js 免文件直接运行加密 payload，防止并发状态下的临时文件读写冲突
             try:
-                os.remove(enc_script_path)
-            except:
-                pass
+                process = subprocess.Popen([NODE_PATH, '-e', node_enc_script], stdout=subprocess.PIPE, text=True)
+                stdout, _ = process.communicate()
+                encrypted_payload = stdout.strip()
+            except Exception as node_err:
+                print(f"Node encryption execution failed: {node_err}")
+                encrypted_payload = ""
+
                 
             url_api = f"https://{host_name}{endpoint_path}"
             headers = HEADERS.copy()
