@@ -20,6 +20,38 @@ let calendarYear = new Date().getFullYear();
 let calendarMonth = new Date().getMonth();
 let isDateLoading = false;
 
+function checkAndLoadCachedReport(matchId) {
+    if (!selectedMatch) return;
+    
+    fetch('/api/match_ai_analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            match_id: matchId,
+            home_team: selectedMatch.home_team,
+            away_team: selectedMatch.away_team,
+            force: false
+        })
+    })
+    .then(res => res.json())
+    .then(res => {
+        const report = document.getElementById('ai-report-content');
+        if (res.success && (res.reports || res.text) && report) {
+            renderFullMarkdownReport(res.reports || res.text);
+        } else if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+        }
+    })
+    .catch(err => {
+        const report = document.getElementById('ai-report-content');
+        if (report) {
+            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+        }
+        console.log("本场赛事尚未生成 AI 预测缓存报告");
+    });
+}
+window.checkAndLoadCachedReport = checkAndLoadCachedReport;
+
 // Initial Load
 document.addEventListener('DOMContentLoaded', () => {
     autoFixHtmlCacheBug();
@@ -840,8 +872,9 @@ function saveGlobalAiConfigToServer() {
             statusSpan.textContent = '✗ 连接保存接口失败';
             statusSpan.style.display = 'inline';
             setTimeout(() => { statusSpan.style.display = 'none'; }, 3000);
-        } else {
-            console.error("连接保存配置接口失败:", err);
+        }
+    });
+}
 window.saveGlobalAiConfigToServer = saveGlobalAiConfigToServer;
 
 function generateAiReport(matchId, homeTeam, awayTeam) {
