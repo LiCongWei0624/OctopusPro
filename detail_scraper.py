@@ -44,8 +44,20 @@ def find_node_executable():
 
 NODE_PATH = find_node_executable()
 
+# 远程日志诊断容器
+ODDS_DEBUG_LOG = []
+def log_odds(msg):
+    global ODDS_DEBUG_LOG
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+    full_msg = f"[{timestamp}] {msg}"
+    print(full_msg)
+    ODDS_DEBUG_LOG.append(full_msg)
+    if len(ODDS_DEBUG_LOG) > 200:
+        ODDS_DEBUG_LOG.pop(0)
+
 # 全局共享 WAF CookieJar 容器，免除每次点击比赛重复求解 WAF 的耗时与偶发失败风险
 GLOBAL_CJ = http.cookiejar.CookieJar()
+
 GLOBAL_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(GLOBAL_CJ))
 
 # 赔率走势网页专属的 WAF CookieJar 容器，实现子域物理隔离，防止 WAF Cookie 冲突拦截
@@ -60,6 +72,7 @@ def solve_waf_via_node(html, url, user_agent):
     </summary>
     """
     script_path = os.path.join(os.path.dirname(__file__), 'waf_solver.js')
+    log_odds(f"solve_waf_via_node: Starting node solver for {url} (NODE_PATH={NODE_PATH})")
     
     process = None
     try:
@@ -73,14 +86,18 @@ def solve_waf_via_node(html, url, user_agent):
         )
         stdout, stderr = process.communicate(input=html, timeout=5)
         if process.returncode != 0:
-            print(f"solve_waf_via_node: Node execution returned non-zero. Stderr: {stderr}")
+            log_odds(f"solve_waf_via_node: Node execution returned non-zero code {process.returncode}. Stderr: {stderr}")
             return None
         
         res = json.loads(stdout.strip())
         if res.get('success'):
-            return res.get('cookie')
+            cookie_val = res.get('cookie')
+            log_odds(f"solve_waf_via_node: Successfully solved WAF! Cookie prefix: {cookie_val[:15]}...")
+            return cookie_val
+        else:
+            log_odds(f"solve_waf_via_node: Node solver returned success=false: {stdout.strip()}")
     except subprocess.TimeoutExpired:
-        print("solve_waf_via_node: Hard timeout expired running Node.js solver (5s), process terminated.")
+        log_odds("solve_waf_via_node: Hard timeout expired running Node.js solver (5s), process terminated.")
         if process:
             try:
                 process.kill()
@@ -88,7 +105,7 @@ def solve_waf_via_node(html, url, user_agent):
             except:
                 pass
     except Exception as e_node:
-        print(f"solve_waf_via_node: Failed to execute or parse Node WAF solver: {e_node}")
+        log_odds(f"solve_waf_via_node: Failed to execute or parse Node WAF solver: {e_node}")
     return None
 
 def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
@@ -198,6 +215,7 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
                 pass
             
             # 2. 内部重试时，强行把刚刚算出来的 Cookie 写入 Header，确保重试绝对携带 Cookie
+            log_odds(f"fetch_html_with_bypass: Retrying request to {real_url} with new acw_sc__v2 WAF cookie...")
             use_headers['Cookie'] = f"acw_sc__v2={cookie_val}"
             req2 = urllib.request.Request(real_url, headers=use_headers)
             with opener.open(req2, timeout=10) as response2:
@@ -205,6 +223,7 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
                 if response2.info().get('Content-Encoding') == 'gzip':
                     content_bytes2 = zlib.decompress(content_bytes2, 15 + 32)
                 html = content_bytes2.decode('utf-8')
+                log_odds(f"fetch_html_with_bypass: Retry successful! HTML length: {len(html)}")
                 
         return html
     except Exception as e:
@@ -214,10 +233,10 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
                 err_body = e.read().decode('utf-8', errors='ignore')
             except:
                 pass
+        log_odds(f"fetch_html_with_bypass error for {url}: {e} (HTTPError body: {err_body[:200]})")
         if "IP ACL" in err_body or "blacklist" in err_body or (isinstance(e, urllib.error.HTTPError) and e.code == 403):
-            print(f"CRITICAL: IP ACL Blocked by Tengine CDN for {url}!")
+            log_odds(f"CRITICAL: IP ACL Blocked by Tengine CDN for {url}!")
             raise Exception("IP_ACL_BLACKLIST")
-        print(f"Error fetching {url}: {e}")
         raise e
 
 def js_mod(a, b):
@@ -1445,9 +1464,10 @@ def get_odds_detail_via_api(match_id, cid, type_val):
             else:
                 return data_val
         else:
+            log_odds(f"get_odds_detail_via_api: Empty or missing data in res_json. Code={res_json.get('code')}")
             return {"error": f"API business error code {res_json.get('code')}: {res_json}"}
     except Exception as e:
-        print(f"Failed to fetch odds detail from API directly: {e}")
+        log_odds(f"Failed to fetch odds detail from API directly: {e}")
         return {"error": f"Fetch failed: {str(e)}"}
 
 def decrypt_rot(key_b64, kst_str):
@@ -1539,7 +1559,7 @@ def parse_trend_html_data(html, type_val):
                 'score': score_str,
                 'type': type_int
             })
-    print(f"parse_trend_html_data: Successfully parsed and decrypted {len(table_data)} trend items!")
+    log_odds(f"parse_trend_html_data: Successfully parsed and decrypted {len(table_data)} trend items!")
     return table_data
 
 def get_odds_detail_via_html_pure(match_id, cid, type_val):
@@ -1553,12 +1573,12 @@ def get_odds_detail_via_html_pure(match_id, cid, type_val):
     headers = HEADERS.copy()
     headers['Origin'] = 'https://odds.leisu.com'
     headers['Referer'] = 'https://odds.leisu.com/'
-    print(f"Pure HTML Scraper: Fetching trend HTML via bypass: {url_target} ...")
+    log_odds(f"Pure HTML Scraper: Fetching trend HTML via bypass: {url_target} ...")
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
         return parse_trend_html_data(html, type_val)
     except Exception as e:
-        print(f"Pure HTML Scraper Error: {e}")
+        log_odds(f"Pure HTML Scraper Error: {e}")
         return None
 
 def get_odds_detail_via_playwright(match_id, cid, type_val):
@@ -1569,33 +1589,35 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
     若 HTML 解析也失败，则调用重构后的外部 auth_generator.py 启动极速独立 Playwright 进程抓取并解密（~1.2秒，无黑窗，100%成功）。
     </summary>
     """
-    # 1. 优先尝试直接用纯 H5 API 获取（共享已缓存的 WAF Cookie，0.1秒级秒回）
+    # 1. 优先尝试直接用纯 H5 API 获取（共享已缓存 WAF Cookie，0.1秒级秒回）
     try:
+        log_odds(f"get_odds_detail_via_playwright: Phase 1 (H5 API) starting for match={match_id}, cid={cid}, type={type_val}")
         api_data = get_odds_detail_via_api(match_id, cid, type_val)
         if isinstance(api_data, list) and len(api_data) > 0:
-            print("Successfully fetched odds details via high performance H5 API!")
+            log_odds("Successfully fetched odds details via high performance H5 API!")
             return api_data
         elif isinstance(api_data, dict) and 'error' not in api_data:
-            print("Successfully fetched odds details via high performance H5 API (dict)!")
+            log_odds("Successfully fetched odds details via high performance H5 API (dict)!")
             return api_data
         else:
-            print(f"H5 API approach reported error or empty: {api_data}. Falling back to HTML Scraper...")
+            log_odds(f"H5 API approach reported error or empty: {api_data}. Falling back to HTML Scraper...")
     except Exception as e_api:
-        print(f"H5 API approach exception: {e_api}. Falling back to HTML Scraper...")
+        log_odds(f"H5 API approach exception: {e_api}. Falling back to HTML Scraper...")
 
     # 2. 第二优先：使用高效率纯 Python + HTML 静态走势页解析与 AES 本地解密
     try:
+        log_odds(f"get_odds_detail_via_playwright: Phase 2 (HTML Scraper) starting for match={match_id}, cid={cid}")
         pure_html_data = get_odds_detail_via_html_pure(match_id, cid, type_val)
         if isinstance(pure_html_data, list) and len(pure_html_data) > 0:
-            print("Successfully fetched odds details via high performance Pure HTML Scraper!")
+            log_odds("Successfully fetched odds details via high performance Pure HTML Scraper!")
             return pure_html_data
         else:
-            print("Pure HTML Scraper returned empty or failed. Falling back to fast subprocess crawler...")
+            log_odds("Pure HTML Scraper returned empty or failed. Falling back to fast subprocess crawler...")
     except Exception as e_pure:
-        print(f"Pure HTML Scraper exception: {e_pure}. Falling back to fast subprocess crawler...")
+        log_odds(f"Pure HTML Scraper exception: {e_pure}. Falling back to fast subprocess crawler...")
 
     # 3. 彻底停用极度耗费 CPU 的 Playwright 无头浏览器子进程降级，防止低配 Linux 云服务器雪崩卡死
-    print(f"Playwright Subprocess Crawler Disabled for match {match_id}, cid {cid}, type {type_val} to protect server resources.")
+    log_odds(f"Playwright Subprocess Crawler Disabled for match {match_id}, cid {cid}, type {type_val} to protect server resources.")
     return None
 
 if __name__ == '__main__':

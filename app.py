@@ -893,6 +893,14 @@ def ai_analysis_status():
 
 
 
+@app.route('/api/odds_debug')
+def get_odds_debug_log():
+    from detail_scraper import ODDS_DEBUG_LOG
+    return jsonify({
+        'success': True,
+        'logs': ODDS_DEBUG_LOG
+    })
+
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
     app.run(host='0.0.0.0', port=5000)
