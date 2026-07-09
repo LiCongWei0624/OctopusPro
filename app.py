@@ -368,8 +368,21 @@ def get_match_details():
             
     cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
     
-    # Only load from cache if the match is finished AND force is False
-    if not force and is_finished and os.path.exists(cache_file):
+    # 对已完场赛事，永久使用缓存；对未完场赛事，允许 180 秒内的临时缓存直接命中以防 IP 封锁
+    cache_valid = False
+    if os.path.exists(cache_file) and not force:
+        if is_finished:
+            cache_valid = True
+        else:
+            try:
+                import time
+                mtime = os.path.getmtime(cache_file)
+                if time.time() - mtime < 180:
+                    cache_valid = True
+            except:
+                pass
+                
+    if cache_valid:
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -379,10 +392,9 @@ def get_match_details():
             
     try:
         details = get_complete_match_details(match_id, home, away)
-        # Only write to cache if the match is finished
-        if is_finished:
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(details, f, ensure_ascii=False, indent=2)
+        # 抓取成功后无条件存入本地缓存，方便跑批与高频点击复用
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(details, f, ensure_ascii=False, indent=2)
         return jsonify({'success': True, 'data': details})
     except Exception as e:
         err_str = str(e)
@@ -1015,7 +1027,8 @@ def batch_ai_analysis():
     if not api_key:
         return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
         
-    # 获取当天重点赛事
+    # 获取当天重点赛事，并以 1.5 秒的安全限速对无本地缓存的赛事执行在线详情补全
+    import time
     today_str = datetime.date.today().strftime('%m-%d')
     matched_items = []
     
@@ -1027,8 +1040,26 @@ def batch_ai_analysis():
                 if m.get('date', '').startswith(today_str):
                     has_intel = False
                     match_id = str(m.get('id'))
+                    home = m.get('home_team')
+                    away = m.get('away_team')
                     
                     details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
+                    
+                    # 1. 物理详情不存在时，执行慢速在线补全
+                    if not os.path.exists(details_cache_file):
+                        try:
+                            print(f"[Batch AI Scout] Cache missing for {match_id} ({home} vs {away}). Fetching...")
+                            details = get_complete_match_details(match_id, home, away)
+                            with open(details_cache_file, 'w', encoding='utf-8') as df:
+                                json.dump(details, df, ensure_ascii=False, indent=2)
+                            # 抓取完后强制休眠 1.5 秒，绝对安全地防止 Tengine WAF 频次限流拦截
+                            time.sleep(1.5)
+                        except Exception as fetch_err:
+                            print(f"[Batch AI Scout] Failed to fetch details for {match_id}: {fetch_err}")
+                            # 失败则跳过该比赛的扫描，继续处理后面的比赛
+                            continue
+                    
+                    # 2. 读取已有的或刚刚获取的详情缓存，进行重点情报判定
                     if os.path.exists(details_cache_file):
                         try:
                             with open(details_cache_file, 'r', encoding='utf-8') as df:
@@ -1046,8 +1077,8 @@ def batch_ai_analysis():
                     if has_intel:
                         matched_items.append({
                             'match_id': match_id,
-                            'home': m.get('home_team'),
-                            'away': m.get('away_team')
+                            'home': home,
+                            'away': away
                         })
         except Exception as scan_e:
             return jsonify({'success': False, 'error': f"扫描赛事数据库出错: {str(scan_e)}"})
