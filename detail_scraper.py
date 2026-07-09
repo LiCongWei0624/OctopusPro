@@ -1509,7 +1509,7 @@ def parse_trend_html_data(html, type_val):
         kst_match = re.search(r'"KST"\s*:\s*"(\d+)"', html)
         
     if not kst_match:
-        print("parse_trend_html_data: Failed to locate KST in trend page HTML!")
+        log_odds(f"parse_trend_html_data: Failed to locate KST in HTML! Length={len(html)}. Preview: {html[:1200]}")
         return None
         
     kst_str = kst_match.group(1)
@@ -1518,7 +1518,7 @@ def parse_trend_html_data(html, type_val):
     
     type_int = int(type_val)
     if type_int - 1 >= len(tables):
-        print(f"parse_trend_html_data: Table index {type_int-1} out of range (Total tables: {len(tables)})")
+        log_odds(f"parse_trend_html_data: Table index {type_int-1} out of range (Total tables: {len(tables)}). HTML Preview: {html[:1200]}")
         return None
         
     table = tables[type_int - 1]
