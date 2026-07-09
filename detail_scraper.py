@@ -12,6 +12,7 @@ import hashlib
 import uuid
 import zlib
 import base64
+import urllib.parse
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
@@ -201,6 +202,171 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
             raise Exception("IP_ACL_BLACKLIST")
         print(f"Error fetching {url}: {e}")
         raise e
+
+def js_mod(a, b):
+    """
+    <summary>
+    模拟 JavaScript 的 % 余数运算符（负数保留负余数）。
+    </summary>
+    """
+    val = abs(a) % b
+    if a < 0:
+        return -val
+    return val
+
+def universal_decompress(data):
+    """
+    <summary>
+    尝试以 zlib、deflate 或 gzip 三种格式自适应解压数据包。
+    </summary>
+    """
+    try:
+        return zlib.decompress(data)
+    except Exception:
+        pass
+    try:
+        return zlib.decompress(data, -zlib.MAX_WBITS)
+    except Exception:
+        pass
+    try:
+        return zlib.decompress(data, zlib.MAX_WBITS | 16)
+    except Exception:
+        pass
+    raise Exception("All decompression methods failed")
+
+def decode_escape_string(s):
+    """
+    <summary>
+    还原 JavaScript 逸出格式的汉字 %uXXXX 编码为标准 Unicode 中文字符。
+    </summary>
+    """
+    if not s:
+        return ""
+    s = re.sub(r'%u([0-9a-fA-F]{4})', lambda m: chr(int(m.group(1), 16)), s)
+    return urllib.parse.unquote(s)
+
+def decrypt_shujufenxi_data(html_analysis, opener, cj):
+    """
+    <summary>
+    从 shujufenxi 网页 HTML 中定位外部 JS 数据文件，拉取并用 26 种 Caesar 偏置暴力解密出完整的战绩 JSON 数据。
+    </summary>
+    """
+    try:
+        soup = BeautifulSoup(html_analysis, 'html.parser')
+        js_url = None
+        for s in soup.find_all('script'):
+            src = s.get('src')
+            if src and '/shujufenxi/' in src:
+                js_url = src
+                break
+        if not js_url:
+            print("decrypt_shujufenxi_data: JS data URL not found in HTML.")
+            return None
+            
+        if js_url.startswith('//'):
+            js_url = 'https:' + js_url
+            
+        print(f"decrypt_shujufenxi_data: Fetching JS data from {js_url} ...")
+        js_content = fetch_html_with_bypass(js_url, 'live.leisu.com', opener, cj)
+        if not js_content:
+            return None
+            
+        # 提取密文变量值
+        match_val = re.search(r"=['\"]([A-Za-z0-9+/=]+)['\"]", js_content)
+        if not match_val:
+            match_val = re.search(r"=['\"]([A-Za-z0-9+/=\s]+)['\"]", js_content)
+        if not match_val:
+            print("decrypt_shujufenxi_data: Ciphertext not found in JS content.")
+            return None
+            
+        ciphertext = match_val.group(1).strip()
+        
+        # 暴力尝试 26 个 Caesar 偏置值
+        decrypted_json = None
+        for c in range(26):
+            try:
+                res_caesar = ""
+                for char_c in ciphertext:
+                    code = ord(char_c)
+                    x = code
+                    if 65 <= code <= 90:
+                        x = js_mod(code - 65 - 1 * c + 26, 26) + 65
+                    elif 97 <= code <= 122:
+                        x = js_mod(code - 97 - 1 * c + 26, 26) + 97
+                    res_caesar += chr(x)
+                
+                # 补全 base64 等号填充
+                missing_padding = len(res_caesar) % 4
+                if missing_padding:
+                    res_caesar += '=' * (4 - missing_padding)
+                    
+                decoded = base64.b64decode(res_caesar)
+                decompressed = universal_decompress(decoded)
+                
+                plain_text = urllib.parse.unquote(decompressed.decode('utf-8'))
+                decrypted_json = json.loads(plain_text)
+                print(f"decrypt_shujufenxi_data: Successfully decrypted ciphertext with offset {c}!")
+                break
+            except Exception:
+                pass
+                
+        return decrypted_json
+    except Exception as e:
+        print(f"decrypt_shujufenxi_data: Error decrypting shujufenxi JS data: {e}")
+        return None
+
+def parse_decrypted_history_match(item, teams, match_events, target_team_name):
+    """
+    <summary>
+    将解密后的单个战绩/交锋数组转换为前端统一格式字典，并计算出胜平负结果。
+    </summary>
+    """
+    try:
+        match_id = item[0]
+        event_id = item[1]
+        status = item[2]
+        m_time = item[3]
+        home_info = item[4]
+        away_info = item[5]
+        
+        comp_raw = match_events.get(str(event_id), {}).get('name_zh', '未知赛事')
+        comp_name = decode_escape_string(comp_raw)
+        
+        date_str = time.strftime('%Y-%m-%d', time.localtime(m_time))
+        
+        home_raw = teams.get(str(home_info[0]), {}).get('name_zh', '未知球队')
+        home_name = decode_escape_string(home_raw)
+        
+        away_raw = teams.get(str(away_info[0]), {}).get('name_zh', '未知球队')
+        away_name = decode_escape_string(away_raw)
+        
+        home_score = home_info[2]
+        away_score = away_info[2]
+        score_str = f"{home_score}:{away_score}"
+        
+        target_clean = clean_team_name(target_team_name)
+        home_clean = clean_team_name(home_name)
+        away_clean = clean_team_name(away_name)
+        
+        result = "平"
+        if target_clean in home_clean or home_clean in target_clean:
+            if home_score > away_score: result = "胜"
+            elif home_score < away_score: result = "负"
+        elif target_clean in away_clean or away_clean in target_clean:
+            if away_score > home_score: result = "胜"
+            elif away_score < home_score: result = "负"
+            
+        return {
+            'competition': comp_name,
+            'date': date_str,
+            'home': home_name,
+            'away': away_name,
+            'score': score_str,
+            'result': result
+        }
+    except Exception as e:
+        print(f"parse_decrypted_history_match error: {e}")
+        return None
 
 def clean_team_name(name):
     name = re.sub(r'[\(（].*?[\)）]', '', name)
@@ -1026,6 +1192,48 @@ def get_complete_match_details(match_id, home_name, away_name):
             injury_data['home']['suspensions'] = html_injuries['home'].get('suspensions', [])
             injury_data['away']['injuries'] = html_injuries['away'].get('injuries', [])
             injury_data['away']['suspensions'] = html_injuries['away'].get('suspensions', [])
+        # 优先使用 shujufenxi 静态外部加密 JS 破密提取 (100% 准确率)
+        try:
+            print(f"Attempting to decrypt shujufenxi JS data package for match {match_id} ...")
+            decrypted_json = decrypt_shujufenxi_data(html_analysis, opener, cj)
+            if decrypted_json and 'history' in decrypted_json:
+                print("Successfully decrypted shujufenxi JS data!")
+                history_data = decrypted_json['history']
+                teams = decrypted_json.get('teams', {})
+                match_events = decrypted_json.get('match_events', {})
+                
+                # 1. 解析历史交锋 H2H
+                h2h_matches = []
+                for item in history_data.get('vs', {}).get('all', []):
+                    m = parse_decrypted_history_match(item, teams, match_events, home_name_clean)
+                    if m:
+                        h2h_matches.append(m)
+                h2h_data = {
+                    'has_history': len(h2h_matches) > 0,
+                    'matches': h2h_matches
+                }
+                
+                # 2. 解析近期战绩 (主队 & 客队)
+                recent_home = []
+                for item in history_data.get('home', {}).get('all', []):
+                    m = parse_decrypted_history_match(item, teams, match_events, home_name_clean)
+                    if m:
+                        recent_home.append(m)
+                
+                recent_away = []
+                for item in history_data.get('away', {}).get('all', []):
+                    m = parse_decrypted_history_match(item, teams, match_events, away_name_clean)
+                    if m:
+                        recent_away.append(m)
+                        
+                recent_data = {
+                    'home': recent_home,
+                    'away': recent_away
+                }
+            else:
+                print("Failed to decrypt shujufenxi JS data, fallback to BeautifulSoup parser.")
+        except Exception as e_dec:
+            print(f"Error during shujufenxi JS decryption, fallback to BeautifulSoup parser: {e_dec}")
             
         trend_data = parse_trends(soup_analysis)
         
