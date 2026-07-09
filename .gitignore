@@ -57,3 +57,11 @@ session_cookies.json
 
 # 敏感配置文件 (避免 API Key 泄露)
 ai_config.json
+
+# 开发过程临时脚本与数据 (归集到此目录，不再纳入版本控制)
+dev_scratch/
+
+# 接口测试数据快照
+odds_detail_*.json
+scratch_*.json
+scratch_*.html
