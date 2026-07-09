@@ -1476,23 +1476,36 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         log_odds(f"Failed to fetch odds detail from API directly: {e}")
         return {"error": f"Fetch failed: {str(e)}"}
 
-def decrypt_rot(key_b64, kst_str):
-    salt = "uHhANonwd4UdpzOdsUqUsnl5PjurM877"
-    key_seed = (kst_str + salt)[:16]
-    key_bytes = key_seed.encode('utf-8')
+def decrypt_rot(canvas_key, kst_str=13):
+    """
+    <summary>
+    对 canvas 的 key 属性进行完整解密。
+    雷速体育已将加密算法简化为偏移量固定为 13 的 ROT 位移加密，加 Base64，最后 Zlib 压缩。
+    </summary>
+    """
+    if not canvas_key:
+        return ""
     try:
-        enc_data = base64.b64decode(key_b64)
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        from cryptography.hazmat.backends import default_backend
-        cipher = Cipher(algorithms.AES(key_bytes), modes.ECB(), backend=default_backend())
-        decryptor = cipher.decryptor()
-        dec_data = decryptor.update(enc_data) + decryptor.finalize()
-        pad_len = dec_data[-1]
-        if 1 <= pad_len <= 16:
-            dec_data = dec_data[:-pad_len]
-        return dec_data.decode('utf-8')
+        # 1. ROT 移位还原
+        c = 13
+        result = []
+        for char in canvas_key:
+            i = ord(char)
+            x = i
+            if 65 <= i <= 90:
+                x = (i - 65 - c + 26) % 26 + 65
+            elif 97 <= i <= 122:
+                x = (i - 97 - c + 26) % 26 + 97
+            result.append(chr(x))
+        base64_str = "".join(result)
+        
+        # 2. Base64 解码
+        compressed_bytes = base64.b64decode(base64_str)
+        # 3. Zlib 解压缩并解码为 UTF-8
+        decompressed_bytes = zlib.decompress(compressed_bytes)
+        return decompressed_bytes.decode('utf-8')
     except Exception as e:
-        print(f"Decrypt error for key {key_b64} with KST {kst_str}: {e}")
+        log_odds(f"decrypt_rot failed for key {canvas_key}: {e}")
         return ""
 
 def parse_trend_html_data(html, type_val):
@@ -1504,15 +1517,8 @@ def parse_trend_html_data(html, type_val):
     if not html:
         return None
         
-    kst_match = re.search(r'KST\s*:\s*["\'](\d+)["\']', html)
-    if not kst_match:
-        kst_match = re.search(r'"KST"\s*:\s*"(\d+)"', html)
-        
-    if not kst_match:
-        log_odds(f"parse_trend_html_data: Failed to locate KST in HTML! Length={len(html)}. Preview: {html[:1200]}")
-        return None
-        
-    kst_str = kst_match.group(1)
+    kst_str = 13  # 雷速体育已将解密密钥退化为固定常量 13
+    
     soup = BeautifulSoup(html, 'html.parser')
     tables = soup.find_all('table', class_='explain-table')
     
