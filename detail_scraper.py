@@ -1363,15 +1363,17 @@ def get_odds_detail_via_api(match_id, cid, type_val):
     # 1. 获取服务器时间
     url_time = 'https://api-gateway.leisu.com/v1/web/public/time'
     req_time = urllib.request.Request(url_time, headers=HEADERS)
+    t0 = time.time()
     server_time = None
     try:
         with urllib.request.urlopen(req_time, timeout=5) as resp:
             server_time = json.loads(resp.read().decode('utf-8'))['data']
     except Exception as e:
-        print(f"Failed to get time for H5 odds detail: {e}")
+        log_odds(f"Failed to get time for H5 odds detail: {e}")
         server_time = int(time.time())
         
-    r = server_time + 10
+    dt = time.time() - t0
+    r = server_time + 10 + int(dt)
     c_val = uuid.uuid4().hex
     
     auth_path = "/v1/web/match/common/odds_detail"
