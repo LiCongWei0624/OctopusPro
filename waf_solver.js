@@ -101,7 +101,7 @@ function solveWaf(html) {
     };
 
     try {
-        vm.runInNewContext(obfuscatedJS, sandbox);
+        vm.runInNewContext(obfuscatedJS, sandbox, { timeout: 1000 });
         return cookieValue;
     } catch (e) {
         console.error("VM Execution Error:", e);
