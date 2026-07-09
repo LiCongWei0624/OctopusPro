@@ -59,152 +59,181 @@ def decrypt_data(encrypted_data, code_val):
     return json.loads(decompressed.decode('utf-8'))
 
 def solve_waf_via_node(html, url, user_agent):
+    """
+    <summary>
+    使用 Node.js 子进程对 WAF 的 acw_sc__v2 挑战进行解密求解。
+    已增加多重异常保护与 5 秒硬超时限制，防止多线程并发请求卡死。
+    </summary>
+    """
     script_path = os.path.join(os.path.dirname(__file__), 'waf_solver.js')
-    process = subprocess.Popen(
-        [NODE_PATH, script_path, url, user_agent],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding='utf-8'
-    )
-    stdout, stderr = process.communicate(input=html)
-    if process.returncode != 0:
-        return None
+    
+    process = None
     try:
+        process = subprocess.Popen(
+            [NODE_PATH, script_path, url, user_agent],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8'
+        )
+        stdout, stderr = process.communicate(input=html, timeout=5)
+        if process.returncode != 0:
+            print(f"leisu_crawler solve_waf_via_node: Node returned non-zero. Stderr: {stderr}")
+            return None
+        
         res = json.loads(stdout.strip())
         if res.get('success'):
             return res.get('cookie')
-    except Exception:
-        pass
+    except subprocess.TimeoutExpired:
+        print("leisu_crawler solve_waf_via_node: Hard timeout expired running Node.js solver (5s), process terminated.")
+        if process:
+            try:
+                process.kill()
+                process.communicate()
+            except:
+                pass
+    except Exception as e_node:
+        print(f"leisu_crawler solve_waf_via_node: Failed to execute or parse Node WAF solver: {e_node}")
     return None
 
 def fetch_matches_for_tier(date_str, n_val, cj=None):
-    host_name = 'api-gateway.leisu.com'
-    source_val = 'm_leisu'
-    
-    # 1. Fetch server time
-    url_time = f'https://{host_name}/v1/web/public/time'
-    req_time = urllib.request.Request(url_time, headers=HEADERS)
-    t0 = time.time()
+    """
+    <summary>
+    从 api-gateway 拉取指定层级的赛事列表。
+    已增加全局异常防护罩，任何底层 JSON 解析或 WAF 异常将被拦截并静默降级返回 None，确保列表永不挂起。
+    </summary>
+    """
     try:
-        with urllib.request.urlopen(req_time) as resp:
-            server_time = json.loads(resp.read().decode('utf-8'))['data']
-    except Exception as e:
-        print(f"Error fetching server time: {e}")
-        return None
+        host_name = 'api-gateway.leisu.com'
+        source_val = 'm_leisu'
         
-    dt = time.time() - t0
-    r = server_time + 10 + int(dt)
-    
-    c_val = uuid.uuid4().hex
-    i = "/v1/web/match/football/match_list"
-    
-    l = f"{i}-{r}-{c_val}-0-{SALT}"
-    u = md5(l)
-    auth_data = f"{r}-{c_val}-0-{u}"
-    
-    payload = {
-        "auth_data": auth_data,
-        "source": source_val
-    }
-    payload_str = json.dumps(payload, separators=(',', ':'))
-    
-    # Run Node to encrypt payload
-    node_enc_script = f"""
-const crypto = require('crypto');
-function encrypt(text) {{
-    const key = Buffer.from('kw@h*8gCIn$8X#df', 'utf8');
-    const cipher = crypto.createCipheriv('aes-128-ecb', key, null);
-    let encrypted = cipher.update(text, 'utf8', 'base64');
-    encrypted += cipher.final('base64');
-    return encrypted.replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=/g, '');
-}}
-console.log(encrypt('{payload_str}'));
-"""
-    with open('encrypt_payload.js', 'w', encoding='utf-8') as f:
-        f.write(node_enc_script)
+        # 1. Fetch server time
+        url_time = f'https://{host_name}/v1/web/public/time'
+        req_time = urllib.request.Request(url_time, headers=HEADERS)
+        t0 = time.time()
+        try:
+            with urllib.request.urlopen(req_time, timeout=5) as resp:
+                server_time = json.loads(resp.read().decode('utf-8'))['data']
+        except Exception as e:
+            print(f"Error fetching server time: {e}")
+            return None
+            
+        dt = time.time() - t0
+        r = server_time + 10 + int(dt)
         
-    process = subprocess.Popen(
-        [NODE_PATH, 'encrypt_payload.js'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding='utf-8'
-    )
-    stdout, _ = process.communicate()
-    encrypted_payload = stdout.strip()
-    
-    url_api = f"https://{host_name}/v1/web/match/football/match_list?date={date_str}&n={n_val}"
-    
-    if cj is None:
-        cj = http.cookiejar.CookieJar()
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
-    
-    headers = HEADERS.copy()
-    headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
-    headers['Origin'] = 'https://m.leisu.com'
-    headers['Referer'] = 'https://m.leisu.com/'
-    headers['source'] = source_val
-    
-    req_api = urllib.request.Request(url_api, headers=headers)
-    
-    try:
-        with opener.open(req_api) as resp:
-            headers_resp = resp.info()
-            content_bytes = resp.read()
+        c_val = uuid.uuid4().hex
+        i = "/v1/web/match/football/match_list"
+        
+        l = f"{i}-{r}-{c_val}-0-{SALT}"
+        u = md5(l)
+        auth_data = f"{r}-{c_val}-0-{u}"
+        
+        payload = {
+            "auth_data": auth_data,
+            "source": source_val
+        }
+        payload_str = json.dumps(payload, separators=(',', ':'))
+        
+        # 对 payload 进行 AES-128-ECB 纯 Python 加密 (免除并发 JS 写入冲突和 Node 子进程启动开销，100% 绝对稳定)
+        encrypted_payload = None
+        try:
+            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+            from cryptography.hazmat.backends import default_backend
+            key = b'kw@h*8gCIn$8X#df'
+            pad_len = 16 - (len(payload_str) % 16)
+            padded = payload_str + chr(pad_len) * pad_len
+            
+            cipher = Cipher(algorithms.AES(key), modes.ECB(), backend=default_backend())
+            encryptor = cipher.encryptor()
+            ct = encryptor.update(padded.encode('utf-8')) + encryptor.finalize()
+            res_b64 = base64.b64encode(ct).decode('utf-8')
+            encrypted_payload = res_b64.replace('+', '-').replace('/', '_').replace('=', '')
+        except Exception as e_crypto:
+            print(f"cryptography encrypt failed for leisu_crawler: {e_crypto}")
+            return None
+        
+        url_api = f"https://{host_name}/v1/web/match/football/match_list?date={date_str}&n={n_val}"
+        
+        if cj is None:
+            cj = http.cookiejar.CookieJar()
+        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+        
+        headers = HEADERS.copy()
+        headers['Accept'] = f"application/json, text/plain, */*;;{encrypted_payload}"
+        headers['Origin'] = 'https://m.leisu.com'
+        headers['Referer'] = 'https://m.leisu.com/'
+        headers['source'] = source_val
+        
+        req_api = urllib.request.Request(url_api, headers=headers)
+        
+        try:
+            with opener.open(req_api, timeout=10) as resp:
+                headers_resp = resp.info()
+                content_bytes = resp.read()
+                if headers_resp.get('Content-Encoding') == 'gzip':
+                    content_bytes = zlib.decompress(content_bytes, 15 + 32)
+                html = content_bytes.decode('utf-8')
+                real_url = resp.geturl()
+                real_domain = urlparse(real_url).netloc
+        except urllib.error.HTTPError as e:
+            headers_resp = e.info()
+            content_bytes = e.read()
             if headers_resp.get('Content-Encoding') == 'gzip':
                 content_bytes = zlib.decompress(content_bytes, 15 + 32)
-            html = content_bytes.decode('utf-8')
-            real_url = resp.geturl()
-            real_domain = urlparse(real_url).netloc
-    except urllib.error.HTTPError as e:
-        headers_resp = e.info()
-        content_bytes = e.read()
-        if headers_resp.get('Content-Encoding') == 'gzip':
-            content_bytes = zlib.decompress(content_bytes, 15 + 32)
-        html = content_bytes.decode('utf-8') if e.code in [400, 403, 500] else ""
-        real_url = url_api
-        real_domain = 'api-gateway.leisu.com'
-        
-    if 'renderData' in html:
-        user_agent = headers.get('User-Agent', '')
-        cookie_val = solve_waf_via_node(html, real_url, user_agent)
-        if cookie_val:
-            # 重试前清空 cj 脏数据，防范过期 Cookie 重写覆盖
-            cj.clear()
+            html = content_bytes.decode('utf-8') if e.code in [400, 403, 500] else ""
+            real_url = url_api
+            real_domain = 'api-gateway.leisu.com'
             
-            waf_cookie = http.cookiejar.Cookie(
-                version=0, name='acw_sc__v2', value=cookie_val,
-                port=None, port_specified=False,
-                domain=real_domain, domain_specified=True, domain_initial_dot=real_domain.startswith('.'),
-                path='/', path_specified=True,
-                secure=False, expires=None, discard=True, comment=None, comment_url=None, rest={}, rfc2109=False
-            )
-            cj.set_cookie(waf_cookie)
-            
-            req_api2 = urllib.request.Request(real_url, headers=headers)
-            try:
-                with opener.open(req_api2) as resp2:
-                    headers_resp2 = resp2.info()
-                    content_bytes2 = resp2.read()
-                    if headers_resp2.get('Content-Encoding') == 'gzip':
-                        content_bytes2 = zlib.decompress(content_bytes2, 15 + 32)
-                    content = content_bytes2.decode('utf-8')
-                    if '<textarea id="renderData"' not in content:
-                        res_json = json.loads(content)
-                        if 100 <= res_json.get('code', 0) <= 130:
-                            return decrypt_data(res_json['data'], res_json['code'])
-                        return res_json
-            except Exception as e2:
-                print(f"Error on second WAF request: {e2}")
-    else:
-        if html.strip():
-            res_json = json.loads(html)
-            if 100 <= res_json.get('code', 0) <= 130:
-                return decrypt_data(res_json['data'], res_json['code'])
-            return res_json
+        if 'renderData' in html:
+            user_agent = headers.get('User-Agent', '')
+            cookie_val = solve_waf_via_node(html, real_url, user_agent)
+            if cookie_val:
+                # 重试前清空 cj 脏数据，防范过期 Cookie 重写覆盖
+                cj.clear()
+                
+                waf_cookie = http.cookiejar.Cookie(
+                    version=0, name='acw_sc__v2', value=cookie_val,
+                    port=None, port_specified=False,
+                    domain=real_domain, domain_specified=True, domain_initial_dot=real_domain.startswith('.'),
+                    path='/', path_specified=True,
+                    secure=False, expires=None, discard=True, comment=None, comment_url=None, rest={}, rfc2109=False
+                )
+                cj.set_cookie(waf_cookie)
+                
+                req_api2 = urllib.request.Request(real_url, headers=headers)
+                try:
+                    with opener.open(req_api2, timeout=10) as resp2:
+                        headers_resp2 = resp2.info()
+                        content_bytes2 = resp2.read()
+                        if headers_resp2.get('Content-Encoding') == 'gzip':
+                            content_bytes2 = zlib.decompress(content_bytes2, 15 + 32)
+                        content = content_bytes2.decode('utf-8')
+                        if '<textarea id="renderData"' not in content:
+                            try:
+                                res_json = json.loads(content)
+                            except Exception as e_json:
+                                print(f"fetch_matches_for_tier: JSONDecodeError on content! Prefix: {content[:500]}")
+                                return None
+                            if 100 <= res_json.get('code', 0) <= 130:
+                                return decrypt_data(res_json['data'], res_json['code'])
+                            return res_json
+                except Exception as e2:
+                    print(f"Error on second WAF request: {e2}")
+        else:
+            if html.strip():
+                try:
+                    res_json = json.loads(html)
+                except Exception as e_json:
+                    print(f"fetch_matches_for_tier: JSONDecodeError on html! Prefix: {html[:500]}")
+                    return None
+                if 100 <= res_json.get('code', 0) <= 130:
+                    return decrypt_data(res_json['data'], res_json['code'])
+                return res_json
+    except Exception as e_global:
+        print(f"fetch_matches_for_tier global error for date {date_str}, n {n_val}: {e_global}")
     return None
+
 
 def fetch_matches(date_str, n_values=[1, 2, 3, 4, 5, 7]):
     """
