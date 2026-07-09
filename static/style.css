@@ -1486,13 +1486,17 @@ body {
 
 /* --- AI 多版本切换子页签 --- */
 .ai-version-tabs {
+    position: sticky;
+    top: -1.5rem; /* 抵消 .details-body 的 padding-top */
+    z-index: 100;
     display: flex;
     gap: 0.35rem;
     margin-bottom: 0.85rem;
     background-color: var(--bg-body-secondary);
-    padding: 0.2rem;
+    padding: 0.25rem;
     border-radius: var(--border-radius-sm);
     border: 1px solid var(--border-color);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08); /* 悬浮层加阴影防止重叠文字穿透 */
 }
 .ai-version-tab {
     flex: 1;
