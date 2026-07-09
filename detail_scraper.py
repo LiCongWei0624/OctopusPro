@@ -586,7 +586,7 @@ def parse_odds_json_to_list(decrypted_json):
                 elif init_raw_line_val < 0.0:
                     init_line_str = f"-{abs(init_raw_line_val)}"
                 else:
-                    init_line_str = f"+{abs(init_raw_line_val)}"
+                    init_line_str = f"{abs(init_raw_line_val)}"
                     
                 # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
                 use_r = 'r' in asia_item and isinstance(asia_item['r'], list) and len(asia_item['r']) >= 2 and len(asia_item['r'][0]) >= 3
@@ -599,7 +599,7 @@ def parse_odds_json_to_list(decrypted_json):
                 elif inst_raw_line_val < 0.0:
                     inst_line_str = f"-{abs(inst_raw_line_val)}"
                 else:
-                    inst_line_str = f"+{abs(inst_raw_line_val)}"
+                    inst_line_str = f"{abs(inst_raw_line_val)}"
                     
                 handicap_data = {
                     "initial_line": init_line_str,

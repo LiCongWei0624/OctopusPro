@@ -1610,6 +1610,15 @@ function renderSquadTab(match, details) {
     return tabHtml;
 }
 
+function cleanHandicap(line) {
+    if (!line) return '';
+    let lineStr = String(line).trim();
+    if (lineStr.startsWith('+')) {
+        return lineStr.substring(1);
+    }
+    return lineStr;
+}
+
 function renderOddsTab(match, details) {
     const indexData = details.odds_index || [];
     if (indexData.length === 0) {
@@ -1653,14 +1662,14 @@ function renderOddsTab(match, details) {
                 <td>
                     <div class="odds-cell-group">
                         <span class="odds-num">${homeInit}</span>
-                        <span class="odds-line">${h.initial_line || h.line || '0'}</span>
+                        <span class="odds-line">${cleanHandicap(h.initial_line || h.line || '0')}</span>
                         <span class="odds-num">${awayInit}</span>
                     </div>
                 </td>
                 <td>
                     <div class="odds-cell-group">
                         <span class="odds-num ${classHome}">${homeInst}</span>
-                        <span class="odds-line">${h.instant_line || h.line || '0'}</span>
+                        <span class="odds-line">${cleanHandicap(h.instant_line || h.line || '0')}</span>
                         <span class="odds-num ${classAway}">${awayInst}</span>
                     </div>
                 </td>
@@ -1766,14 +1775,14 @@ function renderOddsTab(match, details) {
                 <td>
                     <div class="odds-cell-group">
                         <span class="odds-num">${overInit}</span>
-                        <span class="odds-line">${ou.initial_line || ou.line || '0'}</span>
+                        <span class="odds-line">${cleanHandicap(ou.initial_line || ou.line || '0')}</span>
                         <span class="odds-num">${underInit}</span>
                     </div>
                 </td>
                 <td>
                     <div class="odds-cell-group">
                         <span class="odds-num ${classOver}">${overInst}</span>
-                        <span class="odds-line">${ou.instant_line || ou.line || '0'}</span>
+                        <span class="odds-line">${cleanHandicap(ou.instant_line || ou.line || '0')}</span>
                         <span class="odds-num ${classUnder}">${underInst}</span>
                     </div>
                 </td>
@@ -2523,7 +2532,7 @@ function renderTrendDetails(container, trendData, type) {
     
     // 最新的变盘放在最上面展示
     trendData.forEach(item => {
-        let lineVal = item.line_zh || item.line || '';
+        let lineVal = cleanHandicap(item.line_zh || item.line || '');
         let oddsVal = '';
         if (type === 1 || type === 3) {
             oddsVal = `${parseFloat(item.home).toFixed(2)} | ${parseFloat(item.away).toFixed(2)}`;
