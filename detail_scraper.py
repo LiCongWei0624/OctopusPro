@@ -472,7 +472,7 @@ def parse_h2h(soup, home_name):
         'matches': matches
     }
 
-def parse_recent_results(soup):
+def parse_recent_results(soup, home_name=None, away_name=None):
     recent_box = None
     for title in soup.find_all('div', class_='box-title'):
         if "近期战绩" in title.text:
@@ -484,21 +484,58 @@ def parse_recent_results(soup):
         return res
         
     panels = recent_box.find_all('div', class_='box-panel')
-    # Panel 0 is home, Panel 1 is away
-    for idx, key in enumerate(['home', 'away']):
-        if idx < len(panels):
-            panel = panels[idx]
-            team_el = panel.find('div', class_='name')
-            team_name = team_el.text.strip() if team_el else ""
+    
+    # 自动识别 Panel 0 和 Panel 1 对应的是谁
+    panel_home = None
+    panel_away = None
+    
+    if len(panels) >= 2 and home_name and away_name:
+        name0 = clean_team_name(panels[0].find('div', class_='name').text.strip()) if panels[0].find('div', class_='name') else ""
+        name1 = clean_team_name(panels[1].find('div', class_='name').text.strip()) if panels[1].find('div', class_='name') else ""
+        
+        home_clean = clean_team_name(home_name)
+        away_clean = clean_team_name(away_name)
+        
+        # 判断 panel 0 是不是客队，panel 1 是不是主队
+        # 如果 panel 0 包含 away_clean，或者 panel 1 包含 home_clean，说明顺序反了
+        if (away_clean in name0 or name0 in away_clean) or (home_clean in name1 or name1 in home_clean):
+            panel_home = panels[1]
+            panel_away = panels[0]
+            print(f"[BeautifulSoup Match] Detected reversed home/away panel orders! panel0={name0}, panel1={name1}. Swapping panels...")
             
-            table = panel.find('table')
-            if table:
-                tbody = table.find('tbody')
-                target = tbody if tbody else table
-                for tr in target.find_all('tr'):
-                    m = parse_match_row(tr, team_name)
-                    if m:
-                        res[key].append(m)
+    if panel_home is None:
+        panel_home = panels[0] if len(panels) > 0 else None
+    if panel_away is None:
+        panel_away = panels[1] if len(panels) > 1 else None
+        
+    # 解析主队 panel
+    if panel_home:
+        team_name = panel_home.find('div', class_='name').text.strip() if panel_home.find('div', class_='name') else ""
+        if not team_name and home_name:
+            team_name = home_name
+        table = panel_home.find('table')
+        if table:
+            tbody = table.find('tbody')
+            target = tbody if tbody else table
+            for tr in target.find_all('tr'):
+                m = parse_match_row(tr, team_name)
+                if m:
+                    res['home'].append(m)
+                    
+    # 解析客队 panel
+    if panel_away:
+        team_name = panel_away.find('div', class_='name').text.strip() if panel_away.find('div', class_='name') else ""
+        if not team_name and away_name:
+            team_name = away_name
+        table = panel_away.find('table')
+        if table:
+            tbody = table.find('tbody')
+            target = tbody if tbody else table
+            for tr in target.find_all('tr'):
+                m = parse_match_row(tr, team_name)
+                if m:
+                    res['away'].append(m)
+                    
     return res
 
 def parse_injuries_panel(panel):
@@ -1249,18 +1286,53 @@ def get_complete_match_details(match_id, home_name, away_name):
                     'matches': h2h_matches
                 }
                 
-                # 2. 解析近期战绩 (主队 & 客队)
-                recent_home = []
-                for item in history_data.get('home', {}).get('all', []):
-                    m = parse_decrypted_history_match(item, teams, match_events, home_name_clean)
-                    if m:
-                        recent_home.append(m)
+                # 2. 解析近期战绩 (主队 & 客队) - 自适应纠正主客队顺序
+                swap_teams = False
+                home_matches_raw = history_data.get('home', {}).get('all', [])
+                if home_matches_raw:
+                    home_match_count = 0
+                    away_match_count = 0
+                    for item in home_matches_raw[:5]:
+                        try:
+                            h_id = str(item[4][0])
+                            a_id = str(item[5][0])
+                            h_raw = teams.get(h_id, {}).get('name_zh', '')
+                            a_raw = teams.get(a_id, {}).get('name_zh', '')
+                            h_name = clean_team_name(decode_escape_string(h_raw))
+                            a_name = clean_team_name(decode_escape_string(a_raw))
+                            
+                            if home_name_clean in h_name or h_name in home_name_clean or home_name_clean in a_name or a_name in home_name_clean:
+                                home_match_count += 1
+                            if away_name_clean in h_name or h_name in away_name_clean or away_name_clean in a_name or a_name in away_name_clean:
+                                away_match_count += 1
+                        except Exception:
+                            pass
+                    
+                    if away_match_count > home_match_count:
+                        swap_teams = True
+                        print(f"[JS Match] Detected reversed home/away recent records for match_id {match_id}. Swapping...")
                 
+                recent_home = []
                 recent_away = []
-                for item in history_data.get('away', {}).get('all', []):
-                    m = parse_decrypted_history_match(item, teams, match_events, away_name_clean)
-                    if m:
-                        recent_away.append(m)
+                
+                if swap_teams:
+                    for item in history_data.get('home', {}).get('all', []):
+                        m = parse_decrypted_history_match(item, teams, match_events, away_name_clean)
+                        if m:
+                            recent_away.append(m)
+                    for item in history_data.get('away', {}).get('all', []):
+                        m = parse_decrypted_history_match(item, teams, match_events, home_name_clean)
+                        if m:
+                            recent_home.append(m)
+                else:
+                    for item in history_data.get('home', {}).get('all', []):
+                        m = parse_decrypted_history_match(item, teams, match_events, home_name_clean)
+                        if m:
+                            recent_home.append(m)
+                    for item in history_data.get('away', {}).get('all', []):
+                        m = parse_decrypted_history_match(item, teams, match_events, away_name_clean)
+                        if m:
+                            recent_away.append(m)
                         
                 recent_data = {
                     'home': recent_home,
@@ -1279,7 +1351,7 @@ def get_complete_match_details(match_id, home_name, away_name):
             h2h_data = parse_h2h(soup_analysis, home_name_clean)
         if recent_data is None:
             print("Fallback: parse recent results via BeautifulSoup")
-            recent_data = parse_recent_results(soup_analysis)
+            recent_data = parse_recent_results(soup_analysis, home_name_clean, away_name_clean)
             
     except Exception as e:
         print(f"Failed to scrape analysis HTML page {match_id}: {e}")
