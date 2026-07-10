@@ -1159,8 +1159,20 @@ def get_complete_match_details(match_id, home_name, away_name):
 
     # 2. 爬取静态 HTML 页面 (用作伤停/走势抓取，以及 H2H/战绩的兜底)
     print(f"Scraping analysis page (HTML): {url_analysis}")
+    html_analysis = ""
     try:
-        html_analysis = fetch_html_with_bypass(url_analysis, 'live.leisu.com', opener, cj)
+        # 进行至多 3 次尝试，解决雷速 WAF 软拦截 (只下发 23KB 占位 HTML，缺少加密 JS 数据链接的情况)
+        for attempt in range(3):
+            html_analysis = fetch_html_with_bypass(url_analysis, 'live.leisu.com', opener, cj)
+            if len(html_analysis) > 35000:
+                break
+            print(f"HTML length is only {len(html_analysis)} (WAF soft block). Attempt {attempt+1} failed. Re-solving WAF...")
+            try:
+                solve_waf_via_node(url_analysis, opener, cj)
+            except Exception as e_solve:
+                print(f"Error solving WAF in loop: {e_solve}")
+            time.sleep(0.5)
+            
         soup_analysis = BeautifulSoup(html_analysis, 'html.parser')
         
         # 优先使用纯接口拉取伤停与阵容数据
