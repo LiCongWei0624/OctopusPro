@@ -842,16 +842,57 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             {"role": "user", "content": f"请立刻对以下3份报告进行风险敞口审计，并输出最终执行执行单：\n\n{combined_reports}"}
         ],
         "temperature": 0.1,
-        "stream": False  # 使用非流式以确保稳定性
+        "stream": True
     }
     import requests
-    r = requests.post(url, headers=headers, json=payload, timeout=90)
+    r = requests.post(url, headers=headers, json=payload, timeout=90, stream=True)
     if r.status_code != 200:
-        raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {r.text}")
-    
-    res_data = r.json()
-    message = res_data['choices'][0]['message']
-    ai_output = message.get('content', '')
+        err_text = ""
+        try:
+            for line in r.iter_lines():
+                if line:
+                    err_text += line.decode('utf-8')
+        except:
+            pass
+        raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
+        
+    ai_output = ""
+    in_reasoning = False
+    for line in r.iter_lines():
+        if not line:
+            continue
+        line_str = line.decode('utf-8').strip()
+        if line_str.startswith("data:"):
+            data_content = line_str[5:].strip()
+            if data_content == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_content)
+                delta = chunk['choices'][0]['delta']
+                
+                reasoning = delta.get('reasoning_content', '')
+                content = delta.get('content', '')
+                
+                if reasoning:
+                    if not in_reasoning:
+                        ai_output += "<think>\n"
+                        in_reasoning = True
+                    ai_output += reasoning
+                else:
+                    if in_reasoning:
+                        ai_output += "\n</think>\n"
+                        in_reasoning = False
+                    if content:
+                        ai_output += content
+                        
+                ai_tasks[str(match_id)]['final_ticket'] = ai_output
+            except Exception:
+                pass
+                
+    if in_reasoning:
+        ai_output += "\n</think>\n"
+        ai_tasks[str(match_id)]['final_ticket'] = ai_output
+        
     return ai_output
 
 def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file):

@@ -2740,4 +2740,25 @@ body {
     50% { border-color: rgba(239, 68, 68, 0.6); }
 }
 
+/* ==============================================================================
+   ⚖️ CRO Final Ticket Loading Skeleton
+   ============================================================================== */
+.cro-loading-card {
+    border: 1.5px dashed var(--color-primary-light) !important;
+    background: rgba(79, 70, 229, 0.02) !important;
+    box-shadow: none !important;
+}
+.cro-skeleton-pulse {
+    height: 14px;
+    background: linear-gradient(90deg, var(--border-color) 25%, var(--bg-hover) 50%, var(--border-color) 75%);
+    background-size: 200% 100%;
+    animation: croPulse 1.6s infinite cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 4px;
+    margin-bottom: 0.85rem;
+}
+@keyframes croPulse {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
 

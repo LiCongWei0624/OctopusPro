@@ -993,13 +993,32 @@ function renderReportContent(isStreaming = false) {
     const status = latestStatusList[activeReportVersion] || 'idle';
     
     let ticketHtml = '';
-    if (latestFinalTicket && latestFinalTicket.trim() !== '') {
-        let parsedTicket = parseSimpleMarkdown(latestFinalTicket, false);
+    const allEsCompleted = latestStatusList.every(s => s === 'completed');
+    
+    if (status === 'processing' && allEsCompleted && (!latestFinalTicket || latestFinalTicket.trim() === '')) {
+        // 精算师报告生成完成，但CRO风控聚合处于长考中：显示流光骨架屏
+        ticketHtml = `
+            <div class="cro-ticket-card cro-loading-card">
+                <div class="cro-ticket-header">
+                    <span class="cro-ticket-title">⚖️ 基金风控中心·终极决策单收敛中</span>
+                    <span class="cro-ticket-badge">CRO 联审审计中...</span>
+                </div>
+                <div class="cro-ticket-body" style="padding: 1.25rem 1rem;">
+                    <div class="cro-skeleton-pulse"></div>
+                    <div class="cro-skeleton-pulse" style="width: 80%;"></div>
+                    <p style="color:var(--text-muted); font-size: 0.85rem; font-style:italic; margin-top: 1rem; display: flex; align-items: center; gap: 6px; margin-bottom: 0;">
+                        <span class="pulse-beacon" style="display:inline-block; width:8px; height:8px; background-color: var(--color-primary); box-shadow: 0 0 6px var(--color-primary);"></span>
+                        🧠 首席风险官正在提取 3 份研判的共识、评估趋势动能溢价并触发三道反诱盘过滤器审计，请耐心等候最后裁决...
+                    </p>
+                </div>
+            </div>
+        `;
+    } else if (latestFinalTicket && latestFinalTicket.trim() !== '') {
+        // CRO 已开始输出：流式打字机渲染
+        let parsedTicket = parseSimpleMarkdown(latestFinalTicket, isStreaming && status === 'processing');
         
-        // 替换 🤝 【达成绝对共识的玩法】或【达成绝对共识的玩法】反哺归纳
         parsedTicket = parsedTicket.replace(/🤝\s*【达成绝对共识的玩法】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-consensus">🤝 核心共识</span>');
-        // 替换 ⚡ 【触发熔断放弃的玩法】或【触发熔断放弃的玩法】冲突拦截
-        parsedTicket = parsedTicket.replace(/⚡\s*【触发熔断放弃的玩法】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-melt">⚡ 触发熔断</span>');
+        parsedTicket = parsedTicket.replace(/⚡\s*【冲突重塑与(?:降档收敛|诱盘拦截)报告】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-melt">⚡ 冲突重塑</span>');
         
         // 判断是否全面熔断：检查执行主单里有没有有效的投资项目（比如是否有“无”或者是否包含全面熔断的字样）
         const hasNoConsensus = latestFinalTicket.includes("投资项目：无") || 
@@ -1024,7 +1043,7 @@ function renderReportContent(isStreaming = false) {
             <div class="cro-ticket-card">
                 <div class="cro-ticket-header">
                     <span class="cro-ticket-title">⚖️ 基金风控中心·终极决策执行单</span>
-                    <span class="cro-ticket-badge">CRO 终审签发</span>
+                    <span class="cro-ticket-badge">${status === 'processing' ? 'CRO 终审签署中...' : 'CRO 终审签发'}</span>
                 </div>
                 ${warnBanner}
                 <div class="cro-ticket-body">
