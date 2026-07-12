@@ -1440,6 +1440,7 @@ def get_complete_match_details(match_id, home_name, away_name):
         
     # 后处理替换今天这场比赛在 H2H 和近期战绩里的滞后比分
     current_score = None
+    match_date_str = None
     data_file_path = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
     if os.path.exists(data_file_path):
         try:
@@ -1450,30 +1451,41 @@ def get_complete_match_details(match_id, home_name, away_name):
                     raw_score = am.get('score', '')
                     if '-' in raw_score:
                         current_score = raw_score.replace('-', ':')
+                    else:
+                        current_score = raw_score
+                        
+                    raw_date = am.get('date', '')
+                    if raw_date:
+                        md = raw_date.split(' ')[0] # 提取 "MM-DD"
+                        if '-' in md and len(md) == 5:
+                            curr_year = time.strftime('%Y')
+                            match_date_str = f"{curr_year}-{md}" # 拼装成 "YYYY-MM-DD"
                     break
         except Exception:
             pass
             
-    if current_score:
+    if current_score and match_date_str:
         # 替换 H2H 中的今天比分
         if h2h_data and 'matches' in h2h_data:
             for m in h2h_data['matches']:
-                if (clean_team_name(m.get('home')) == home_name_clean and 
-                    clean_team_name(m.get('away')) == away_name_clean) or \
-                   (clean_team_name(m.get('home')) == away_name_clean and 
-                    clean_team_name(m.get('away')) == home_name_clean):
-                    m['score'] = current_score
+                if m.get('date') == match_date_str:
+                    if (clean_team_name(m.get('home')) == home_name_clean and 
+                        clean_team_name(m.get('away')) == away_name_clean) or \
+                       (clean_team_name(m.get('home')) == away_name_clean and 
+                        clean_team_name(m.get('away')) == home_name_clean):
+                        m['score'] = current_score
                     
         # 替换近期战绩中的今天比分
         if recent_data:
             for key in ['home', 'away']:
                 if key in recent_data:
                     for m in recent_data[key]:
-                        if (clean_team_name(m.get('home')) == home_name_clean and 
-                            clean_team_name(m.get('away')) == away_name_clean) or \
-                           (clean_team_name(m.get('home')) == away_name_clean and 
-                            clean_team_name(m.get('away')) == home_name_clean):
-                            m['score'] = current_score
+                        if m.get('date') == match_date_str:
+                            if (clean_team_name(m.get('home')) == home_name_clean and 
+                                clean_team_name(m.get('away')) == away_name_clean) or \
+                               (clean_team_name(m.get('home')) == away_name_clean and 
+                                clean_team_name(m.get('away')) == home_name_clean):
+                                m['score'] = current_score
 
     odds_index = get_real_odds(match_id)
     
