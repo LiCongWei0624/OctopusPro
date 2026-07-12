@@ -1337,6 +1337,12 @@ def get_complete_match_details(match_id, home_name, away_name):
                     'matches': h2h_matches
                 }
                 
+                # 审计 H2H 比分质量，若有交锋且比分全为 0:0，判定数据源缺失，强制 Fallback 到 BeautifulSoup
+                if h2h_data and len(h2h_matches) > 0:
+                    if all(m.get('score') == "0:0" for m in h2h_matches):
+                        print("H2H data audit failed (all scores are 0:0), forcing Fallback to BeautifulSoup.")
+                        h2h_data = None
+                
                 # 2. 解析近期战绩 (主队 & 客队) - 自适应纠正主客队顺序
                 swap_teams = False
                 home_matches_raw = history_data.get('home', {}).get('all', [])
@@ -1389,6 +1395,14 @@ def get_complete_match_details(match_id, home_name, away_name):
                     'home': recent_home,
                     'away': recent_away
                 }
+                
+                # 审计近期战绩比分质量，若某队的战绩非空且比分全为 0:0，强制 Fallback 到 BeautifulSoup
+                if recent_data:
+                    home_all_zero = len(recent_home) > 0 and all(m.get('score') == "0:0" for m in recent_home)
+                    away_all_zero = len(recent_away) > 0 and all(m.get('score') == "0:0" for m in recent_away)
+                    if home_all_zero or away_all_zero:
+                        print("Recent results data audit failed (all scores are 0:0 for one team), forcing Fallback to BeautifulSoup.")
+                        recent_data = None
             else:
                 print("Failed to decrypt shujufenxi JS data, fallback to BeautifulSoup parser.")
         except Exception as e_dec:
