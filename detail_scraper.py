@@ -385,10 +385,28 @@ def parse_decrypted_history_match(item, teams, match_events, target_team_name):
         away_clean = clean_team_name(away_name)
         
         result = "平"
+        is_home = False
+        is_away = False
         if target_clean in home_clean or home_clean in target_clean:
+            is_home = True
+        elif target_clean in away_clean or away_clean in target_clean:
+            is_away = True
+        else:
+            # 容错：计算字符交集，识别主客队别名差异（如 济州联 vs 济州SKFC）
+            home_chars = set(home_clean)
+            away_chars = set(away_clean)
+            target_chars = set(target_clean)
+            home_intersect = len(home_chars.intersection(target_chars))
+            away_intersect = len(away_chars.intersection(target_chars))
+            if home_intersect >= away_intersect and home_intersect > 0:
+                is_home = True
+            elif away_intersect > home_intersect and away_intersect > 0:
+                is_away = True
+
+        if is_home:
             if home_score > away_score: result = "胜"
             elif home_score < away_score: result = "负"
-        elif target_clean in away_clean or away_clean in target_clean:
+        elif is_away:
             if away_score > home_score: result = "胜"
             elif away_score < home_score: result = "负"
             
@@ -405,7 +423,10 @@ def parse_decrypted_history_match(item, teams, match_events, target_team_name):
         return None
 
 def clean_team_name(name):
+    if not name:
+        return ""
     name = re.sub(r'[\(（].*?[\)）]', '', name)
+    name = re.sub(r'\s+', '', name)
     return name.strip()
 
 def parse_match_row(tr, team_name):
@@ -427,10 +448,28 @@ def parse_match_row(tr, team_name):
     if ":" in score:
         try:
             home_goals, away_goals = map(int, score.split(':'))
+            is_home = False
+            is_away = False
             if team_name_clean in home_clean or home_clean in team_name_clean:
+                is_home = True
+            elif team_name_clean in away_clean or away_clean in team_name_clean:
+                is_away = True
+            else:
+                # 容错：计算字符交集，识别主客队别名差异（如 济州联 vs 济州SKFC）
+                home_chars = set(home_clean)
+                away_chars = set(away_clean)
+                target_chars = set(team_name_clean)
+                home_intersect = len(home_chars.intersection(target_chars))
+                away_intersect = len(away_chars.intersection(target_chars))
+                if home_intersect >= away_intersect and home_intersect > 0:
+                    is_home = True
+                elif away_intersect > home_intersect and away_intersect > 0:
+                    is_away = True
+
+            if is_home:
                 if home_goals > away_goals: result = "胜"
                 elif home_goals < away_goals: result = "负"
-            elif team_name_clean in away_clean or away_clean in team_name_clean:
+            elif is_away:
                 if away_goals > home_goals: result = "胜"
                 elif away_goals < home_goals: result = "负"
         except Exception:
