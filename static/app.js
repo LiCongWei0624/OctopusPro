@@ -10,6 +10,7 @@ let searchQuery = '';
 let activeReportVersion = 0;
 let latestReports = ['', '', ''];
 let latestStatusList = ['processing', 'processing', 'processing'];
+let latestFinalTicket = '';
 
 let aiPollingTimer = null;
 
@@ -37,6 +38,7 @@ function checkAndLoadCachedReport(matchId) {
     .then(res => {
         const report = document.getElementById('ai-report-content');
         if (res.success && (res.reports || res.text) && report) {
+            latestFinalTicket = res.final_ticket || '';
             renderFullMarkdownReport(res.reports || res.text);
         } else if (report) {
             report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
@@ -890,6 +892,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
     // 初始化三版本状态与展示
     latestReports = ['', '', ''];
     latestStatusList = ['processing', 'processing', 'processing'];
+    latestFinalTicket = '';
     activeReportVersion = 0; 
     
     if (skeleton && report) {
@@ -943,6 +946,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                                 const runText = runBtn.querySelector('span');
                                 if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                             }
+                            latestFinalTicket = stRes.final_ticket || '';
                             renderFullMarkdownReport(stRes.reports);
                         } else if (stRes.status === 'failed') {
                             clearInterval(aiPollingTimer);
@@ -958,6 +962,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                             }
                         } else if (stRes.status === 'processing') {
                             // 正在并发处理中，流式刷新三版本结果
+                            latestFinalTicket = stRes.final_ticket || '';
                             renderStreamingMarkdown(stRes.reports, stRes.status_list);
                         }
                     }
@@ -986,6 +991,48 @@ function renderReportContent(isStreaming = false) {
     
     const text = latestReports[activeReportVersion] || '';
     const status = latestStatusList[activeReportVersion] || 'idle';
+    
+    let ticketHtml = '';
+    if (latestFinalTicket && latestFinalTicket.trim() !== '') {
+        let parsedTicket = parseSimpleMarkdown(latestFinalTicket, false);
+        
+        // 替换 🤝 【达成绝对共识的玩法】或【达成绝对共识的玩法】反哺归纳
+        parsedTicket = parsedTicket.replace(/🤝\s*【达成绝对共识的玩法】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-consensus">🤝 核心共识</span>');
+        // 替换 ⚡ 【触发熔断放弃的玩法】或【触发熔断放弃的玩法】冲突拦截
+        parsedTicket = parsedTicket.replace(/⚡\s*【触发熔断放弃的玩法】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-melt">⚡ 触发熔断</span>');
+        
+        // 判断是否全面熔断：检查执行主单里有没有有效的投资项目（比如是否有“无”或者是否包含全面熔断的字样）
+        const hasNoConsensus = latestFinalTicket.includes("投资项目：无") || 
+                              latestFinalTicket.includes("核心共识项】\n- 无") ||
+                              latestFinalTicket.includes("核心共识项】\n- **投资项目**：无") ||
+                              latestFinalTicket.includes("全部玩法触发熔断") ||
+                              latestFinalTicket.includes("触发全面熔断");
+        
+        let warnBanner = '';
+        if (hasNoConsensus) {
+            warnBanner = `
+                <div class="cro-warn-banner">
+                    <div class="cro-warn-icon">🚨</div>
+                    <div class="cro-warn-text">
+                        <strong>风控警告：本场两头受压，模型触发全面熔断，精算师建议放弃本场，请锁定下一场共识赛事。</strong>
+                    </div>
+                </div>
+            `;
+        }
+        
+        ticketHtml = `
+            <div class="cro-ticket-card">
+                <div class="cro-ticket-header">
+                    <span class="cro-ticket-title">⚖️ 基金风控中心·终极决策执行单</span>
+                    <span class="cro-ticket-badge">CRO 终审签发</span>
+                </div>
+                ${warnBanner}
+                <div class="cro-ticket-body">
+                    ${parsedTicket}
+                </div>
+            </div>
+        `;
+    }
     
     let tabsHtml = '';
     // 只要有任意一个版本有文字，或者正在处理中，就显示版本页签
@@ -1016,7 +1063,7 @@ function renderReportContent(isStreaming = false) {
         }
     }
     
-    reportContainer.innerHTML = tabsHtml + textHtml;
+    reportContainer.innerHTML = ticketHtml + tabsHtml + textHtml;
 }
 
 function switchReportVersion(verIdx) {

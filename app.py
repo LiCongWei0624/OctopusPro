@@ -13,7 +13,120 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
 
-DEFAULT_SYSTEM_PROMPT = "你是一位资深的足球数据分析大师与博彩盘口操盘专家。你的任务是根据用户提供的比赛基础信息、独家 SWOT 有利/不利情报、两队近 10 场历史交锋比分、两队近期战绩、伤停名单以及主流公司（如皇*、36*）的让球与总进球（大小球）初始/即时变盘水位数据，进行深度且符合逻辑的比赛研判。\n\n请严格根据以下维度进行分析，并输出 Markdown 格式的中文报告：\n1. **技战术与状态剖析**：分析两队攻防近况、主客战力及战意。\n2. **伤停影响对冲**：研判阵中核心球员缺席对各自战术体系带来的实质性变化。\n3. **博彩机构意图洞察**：对比让球盘口与大小球盘口从初始盘口到即时盘口的水位与盘口线变化（例如从2.5球升盘至2.75球），研判机构是在正向防范大球，还是通过水位拉力进行诱盘或阻盘。\n4. **综合推荐结论**：\n   - **胜平负方向预测**：给出明确胜平负结论与信心指数；\n   - **让球方向推荐**：给出临场赢盘方向；\n   - **大小球（总进球数）推荐**：明确指出是大球 Over 还是小球 Under，并给出临场进球盘口建议（例如大 2.5）；\n   - **精准比分预测**：提供 2-3 个最可能的完场比分；\n   - **同初盘/同走势历史赛果概率对比**：结合给出的历史相似初盘概率数据进行分析；若提供的数据中该项为空，你必须基于自身强大的历史足球赛事及指数大数据库，匹配出 2-3 场历史中初盘盘口与临场变盘走势（如一球退半球高水）完全相同的真实已完场比赛，列出具体球队对阵和比分，统计并列出在该相同走势下踢出来的胜、平、负真实比例，最终对比指出买哪边（主队还是客队，上盘还是下盘）胜率和投注期望更高。"
+DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风险控制专家
+
+## Profile:
+你拥有多年国际顶级博彩机构风控中心（Risk Management）核心数据分析经验。放弃传统的“庄家阴谋论”，完全基于数学期望值（Expected Value）、隐含概率（Implied Probability）、机构风险敞口控制（Risk Exposure）以及基本面量化权重来评估比赛。核心任务是找出市场赔率与真实概率之间的“价值偏差（Value）”。
+
+## ⚠️ 核心防幻觉与数据校验铁律（最高准则）：
+1. **输入数据审慎评估（首要步骤）**：收到数据后，客观提取核心基本面标签。若情报文本中出现代词模糊、数据口径不一（如特定时间段战绩与赛季总战绩混淆），必须优先以【四、历史交锋与两队近期战绩】中列出的真实明细战绩列表为最终定量基准。严禁仅凭字面断句强行判定矛盾或进行主观“脑补式”修正。
+2. **严禁凭空捏造**：没有内置的全球历史赛事数据库，严禁编造任何历史同盘的场次、具体比分和胜负百分比。必须使用欧指转换公式计算基础隐含概率：基础隐含概率 = (1 / 赔率) * 100%。还原纯市场预期概率时，必须使用比例归一化法消除抽水：纯隐含概率 = 某项基础隐含概率 / (胜+平+负三项基础隐含概率之和)。
+3. **独立价值解耦**：亚洲让球盘、大小球（总进球）作为两个独立的风险投资组合进行单独评估，不强行进行串关式绝对绑定，允许各自寻找最优风险收益比。
+
+---
+
+## 执行方法论：三维量化分析法
+
+### Step 1: 基本面多维特征加权（总分 100%）
+对以下四个核心维度进行客观评估并给出定性评分：
+1. 近 3-5 轮攻防效率与竞技状态 (权重 30%)
+2. 主客场环境差异与硬实力底盘 (权重 30%)
+3. 伤停、红牌与战术克制 (权重 20%)
+4. 战意与赛程密集度 (权重 20%)
+
+### Step 2: 赔率隐含概率与资金流向审计
+1. **还原抽水（Margin）**：计算初盘与即时盘的返还率，剔除博彩公司的利润抽水，还原两队的纯市场隐含概率。
+2. **核心机构属性审计矩阵**：
+   - **欧洲传统巨头（威***、立*）**：作为欧洲赔率锚点，其变盘代表基本面的真实位移。
+   - **亚洲风控墙（澳*、皇*）**：亚洲让球盘核心。特别是【澳*】，作风保守，若全盘升盘而【澳*】挂高水死守低盘口，说明上盘大热，倾向走下盘。
+   - **筹码抽水机（36*、韦*）**：反映散户、大众注码的冷热流向与市场普遍心理。
+   - **市场敏感雷达（盈*、利*、12*、18**、易**、Inter*）**：对职业资金和银团注码反应最快。若其临场出现集体退盘或降水，判定为职业资金的真实风控动作，权重调至最高。
+3. **变盘意图判定（二选一）**：
+   - **正向风控（对冲调整）**：变盘方向与基本面核心变量一致，机构在真实降低赔付风险。
+   - **资金驱动（注码平衡）**：基本面无重大变化，但因某队自带大众热度导致注码失衡，机构被迫调整水位以平衡风险敞口。
+
+### Step 3: 标准盘口数学模型退化推演
+若盘口出现分歧（如部分升盘、部分降盘），从资金对冲和机构利润最大化（亏损最小化）的角度，推演即时盘口下哪个赛果区间对博彩公司最安全。
+
+---
+
+## 输出格式（结构化精细报告）
+
+### 📑 赛事全维度量化精算审计报告
+
+#### ⚠️ 【输入数据一致性审计】
+[结论：数据提取完毕。核心事实以明细战绩列表为准校验，确保定量基准客观准确。]
+
+#### 一、 基本面骨架与核心变量加权
+- **特征加权评分**：状态( /30) | 主客场( /30) | 伤停克制( /20) | 战意赛程( /20)
+- **核心量化拉力点**：[描述关键基本面变量]
+
+#### 二、 盘口语言解码：隐含概率与风控审计
+- **隐含概率转换**：初盘隐含概率（胜% / 平% / 负%） ➡️ 即时隐含概率（胜% / 平% / 负%）
+- **变盘意图判定**：[分析变盘性质与数学依据]
+- **大小球动态风险**：[分析大小球门槛与偏差]
+
+#### 三、 筹码风险敞口与数学期望推演
+- **机构安全阀赛果区间**：[博彩公司赔付压力最小的1-2个赛果区间]
+- **价值洼地（Value Betting）识别**：[指出存在溢价的更高风险收益比方向]
+
+#### 四、 📊 操盘手终极研判结论（量化期望值排序）
+
+##### 1. 胜平负方向（按投资回报期望值从高到低排序）
+- **【核心首选】**：[选项] | **隐含概率**：[即时概率] | **期望值逻辑**：[理由]
+- **【防守对冲】**：[选项] | **隐含概率**：[即时概率] | **期望值逻辑**：[理由]
+
+##### 2. 亚洲让球盘推荐
+- **【最佳价值切入】**：[具体临场盘口与方向] | **预期回报形态**：[赢全/赢半/走水] | **风控逻辑**：[理由]
+
+##### 3. 总进球数（大小球）推荐
+- **【最佳价值切入】**：[大球或小球 + 临场盘口] | **风控逻辑**：[理由]
+- **【高频进球区间】**：[进球数区间]
+
+##### 4. 精准波胆（比分）概率排序
+- [高频比分1] | 沙盘推演：[局势定格模拟]
+- [高频比分2] | 沙盘推演：[局势定格模拟]
+
+---
+
+### 🎯 操盘长官终极裁决：全盘最具数学价值（Value）三大独立选项
+[按风险收益比由高到低进行1、2、3位排序的独立投资选项]"""
+
+CRO_SYSTEM_PROMPT = """# Role: 量化基金首席风险官（CRO）& 终极决策共识审计长
+
+## Profile:
+你负责管理博彩量化精算团队。你的任务是审核下属三个精算师小组（严谨组、均衡组、探索组）提交的3份独立赛事研判报告。你需要剔除冲突噪音、提炼核心共识、计算数学期望交集，最终输出一张没有任何歧义、绝对可以直接执行的“终极下注流水平衡单”，解决前端决策过载问题。
+
+## ⚠️ 终极聚合审计法则（最高准则）：
+1. **共识归纳（交集提取）**：深度比对3份报告中的所有推荐选项。如果某个玩法方向（如：客队让球不败、全场小球）在2份或3份报告中同时作为核心推荐出现，直接判定为【核心共识项】。
+2. **冲突熔断机制**：如果3份报告在同一个玩法上出现了方向性对立（例如：报告1强推让球主胜，报告3强推让球客胜），判定为临场筹码两头受压、模型发生严重分歧。你必须启动【熔断机制】，直接宣告该玩法“本场放弃下注”，坚决不允许任何对立盘口污染最终执行单。
+3. **资金下注指引（Staking Plan）**：必须使用2%固定均注防线模型。以1个标准单位（Unit）为基准，根据共识深度，给出精确的资金分配比例，拒绝情绪化下注。
+
+---
+
+## 输出格式（必须是精简的一页纸下注执行单）
+
+### 📊 基金风控中心·终极下注执行单
+
+#### 一、 3次量化研判·冲突与共识审计
+- 🤝 【达成绝对共识的玩法】反哺归纳：[清晰归纳在哪些玩法和方向上出现了2次或3次的重叠共识，并点出重叠原因]
+- ⚡ 【触发熔断放弃的玩法】冲突拦截：[清晰列出哪些玩法因方向完全对立而被你强行拦截熔断，写明“本场放弃该玩法”]
+
+#### 二、 🎯 终极执行买入方案（精简过滤版，最多保留 2 个选项）
+
+##### 【执行主单·核心共识项】
+- **投资项目**：[具体盘口与方向，例如：安样FC +0.25]
+- **注码权重**：[精确到单位，例如：1.0 标准单位（Unit）]
+- **首席CRO聚合逻辑**：[阐述为什么该选项是多线程发散后的最强交集]
+
+##### 【对冲子单·风控防御项】（若各版本无第二共识则写“无”）
+- **投资项目**：[具体盘口与方向，例如：全场小球 2.25]
+- **注码权重**：[精确到单位，例如：0.5 标准单位（Unit）]
+- **首席CRO聚合逻辑**：[解释其对主单 of 保护逻辑或独立高价值原因]
+
+#### 三、 📉 资金分配与风险边际铁律
+- **单场总头寸控制**：本次策略总计消耗 [X] 个标准单位（单场最高绝不超过 1.5 个单位）。
+- **执行纪律提示**：[明确指出，若无绝对共识或触发全面熔断，单场下注额必须为 0 单元，坚决空仓闭盘]"""
 
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
@@ -514,6 +627,7 @@ def build_match_prompt_context(match_id, home, away):
 
     similar_trend_data = {}
     win_probability_data = {}
+    comp_name = ""
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
@@ -522,35 +636,27 @@ def build_match_prompt_context(match_id, home, away):
                 if str(m.get('id')) == str(match_id):
                     similar_trend_data = m.get('similar_trend', {})
                     win_probability_data = m.get('win_probability', {})
+                    comp_name = m.get('competition', '')
                     break
         except Exception as e_db:
             print("Failed to load match meta from parsed_matches:", e_db)
 
     # 拼装 Prompt 上下文
     context_lines = []
-    context_lines.append(f"【比赛信息】")
-    context_lines.append(f"赛事竞争：{details.get('competition', '') or '未知赛事'}")
-    context_lines.append(f"对阵双方：主队 {home} vs 客队 {away}")
+    context_lines.append(f"【一、 比赛基本信息】")
+    context_lines.append(f"- 赛事性质：{details.get('competition', '') or comp_name or '未知赛事'}")
+    context_lines.append(f"- 对阵双方：主队 {home} vs 客队 {away}")
     
-    if similar_trend_data and similar_trend_data.get('stats'):
-        context_lines.append(f"\n【历史相似初盘走势与胜平负比例统计】")
-        context_lines.append(f"描述：{similar_trend_data.get('description', '')}")
-        for stat in similar_trend_data.get('stats', []):
-            context_lines.append(f"- 结果: {stat.get('outcome', '')} | 概率/比例: {stat.get('percentage', '')}")
-            
-    if win_probability_data:
-        context_lines.append(f"\n【智能 AI 胜率预测概率】")
-        context_lines.append(f"- 主胜概率: {win_probability_data.get('home', '未知')}")
-        context_lines.append(f"- 客胜概率: {win_probability_data.get('away', '未知')}")
-
+    context_lines.append(f"\n【二、 独家情报与基本面标签 (SWOT)】")
     swot = details.get('pros_cons', {})
-    context_lines.append(f"\n【独家 SWOT 有利/不利情报】")
+    context_lines.append(f"主队有利/不利：")
     context_lines.append(f"主队有利情报：")
     for item in swot.get('home', {}).get('pros', []):
         context_lines.append(f"- {item}")
     context_lines.append(f"主队不利情报：")
     for item in swot.get('home', {}).get('cons', []):
         context_lines.append(f"- {item}")
+    context_lines.append(f"\n客队有利/不利：")
     context_lines.append(f"客队有利情报：")
     for item in swot.get('away', {}).get('pros', []):
         context_lines.append(f"- {item}")
@@ -558,37 +664,43 @@ def build_match_prompt_context(match_id, home, away):
     for item in swot.get('away', {}).get('cons', []):
         context_lines.append(f"- {item}")
         
-    h2h_data = details.get('h2h', {})
-    h2h_matches = h2h_data.get('matches', []) if isinstance(h2h_data, dict) else []
-    context_lines.append(f"\n【历史对决交锋战绩 (近10场)】")
-    for idx, match in enumerate(h2h_matches[:10]):
-        context_lines.append(f"{idx+1}. {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
-        
-    recent = details.get('recent_results', {})
-    recent_home = recent.get('home', []) if isinstance(recent, dict) else []
-    recent_away = recent.get('away', []) if isinstance(recent, dict) else []
-    context_lines.append(f"\n【两队近期战绩】")
-    context_lines.append(f"主队 {home} 近期战绩：")
-    for idx, match in enumerate(recent_home[:10]):
-        context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
-    context_lines.append(f"客队 {away} 近期战绩：")
-    for idx, match in enumerate(recent_away[:10]):
-        context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
-
+    context_lines.append(f"\n【三、 伤停与阵容名单】")
     injuries = details.get('injuries', {})
     injuries_home = injuries.get('home', {}) if isinstance(injuries, dict) else {}
     injuries_away = injuries.get('away', {}) if isinstance(injuries, dict) else {}
-    context_lines.append(f"\n【伤停与缺阵名单】")
     context_lines.append(f"主队伤停：")
     for p in injuries_home.get('injuries', []):
         context_lines.append(f"- 伤病: {p.get('name', '')} ({p.get('position', '')}) - 原因: {p.get('reason', '')} - 状态: {p.get('status', '')}")
     for p in injuries_home.get('suspensions', []):
         context_lines.append(f"- 停赛: {p.get('name', '')} ({p.get('position', '')}) - 原因: {p.get('reason', '')} - 状态: {p.get('status', '')}")
+    if not injuries_home.get('injuries', []) and not injuries_home.get('suspensions', []):
+        context_lines.append(f"- 暂无核心伤病与停赛")
     context_lines.append(f"客队伤停：")
     for p in injuries_away.get('injuries', []):
         context_lines.append(f"- 伤病: {p.get('name', '')} ({p.get('position', '')}) - 原因: {p.get('reason', '')} - 状态: {p.get('status', '')}")
     for p in injuries_away.get('suspensions', []):
         context_lines.append(f"- 停赛: {p.get('name', '')} ({p.get('position', '')}) - 原因: {p.get('reason', '')} - 状态: {p.get('status', '')}")
+    if not injuries_away.get('injuries', []) and not injuries_away.get('suspensions', []):
+        context_lines.append(f"- 暂无核心伤病与停赛")
+        
+    context_lines.append(f"\n【四、 历史交锋与两队近期战绩】")
+    h2h_data = details.get('h2h', {})
+    h2h_matches = h2h_data.get('matches', []) if isinstance(h2h_data, dict) else []
+    context_lines.append(f"历史对决交锋：")
+    for idx, match in enumerate(h2h_matches[:10]):
+        context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
+    if not h2h_matches:
+        context_lines.append(f"- 暂无历史交锋数据")
+        
+    recent = details.get('recent_results', {})
+    recent_home = recent.get('home', []) if isinstance(recent, dict) else []
+    recent_away = recent.get('away', []) if isinstance(recent, dict) else []
+    context_lines.append(f"主队近期战绩：")
+    for idx, match in enumerate(recent_home[:10]):
+        context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
+    context_lines.append(f"客队近期战绩：")
+    for idx, match in enumerate(recent_away[:10]):
+        context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
 
     odds_index = details.get('odds_index', [])
     context_lines.append(f"\n【赔率指数初始与即时变盘水位数据】")
@@ -656,7 +768,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         "model": model_name,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"请针对以下赛事数据进行深度研判。特别是要根据这场的盘口走势，去匹配历史已踢完的相同盘口的比赛，仔细比对其中的【历史相似初盘走势与胜平负比例统计】数据，列出踢出来的胜、平、负真实比例。通过对比同样的盘口与走势变化下胜率的概率学分布，研判得出买哪边赢盘或赢球的胜率期望更高，并在新增的“同初盘/同走势历史赛果概率对比”结论中给出明确倾向推荐。这是第 {version_idx+1} 次研判，请提供独特的分析切入点与结论：\n\n{context_str}"}
+            {"role": "user", "content": f"请针对以下赛事数据进行深度量化研判。请计算重点机构欧指的隐含概率变化，并通过基本面多维特征与临场盘水交叉审计，找出本场最具数学期望值（Value）的投资方向。这是第 {version_idx+1} 次研判，请提供独特的分析切入点与结论：\n\n{context_str}"}
         ],
         "temperature": 0.3 + (version_idx * 0.15),
         "stream": True
@@ -714,13 +826,40 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         
     return ai_output
 
+def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports):
+    global ai_tasks
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    url = f"{api_base}/chat/completions"
+    payload = {
+        "model": model_name,
+        "messages": [
+            {"role": "system", "content": CRO_SYSTEM_PROMPT},
+            {"role": "user", "content": f"请立刻对以下3份报告进行风险敞口审计，并输出最终执行执行单：\n\n{combined_reports}"}
+        ],
+        "temperature": 0.1,
+        "stream": False  # 使用非流式以确保稳定性
+    }
+    import requests
+    r = requests.post(url, headers=headers, json=payload, timeout=90)
+    if r.status_code != 200:
+        raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {r.text}")
+    
+    res_data = r.json()
+    message = res_data['choices'][0]['message']
+    ai_output = message.get('content', '')
+    return ai_output
+
 def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file):
     global ai_tasks
     try:
         ai_tasks[str(match_id)] = {
             'status': 'processing', 
             'reports': ['', '', ''],
-            'status_list': ['processing', 'processing', 'processing']
+            'status_list': ['processing', 'processing', 'processing'],
+            'final_ticket': ''
         }
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -746,9 +885,20 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
         if all(s == 'failed' for s in st_list):
             raise Exception("三个版本的 AI 研判全部请求失败。")
             
+        # 并发执行完毕，开始构建聚合上下文
+        reports_list = [ai_tasks[str(match_id)]['reports'][i] for i in range(3)]
+        combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
+        
+        # 串行调用大模型进行收敛层聚合
+        final_ticket = run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports)
+        ai_tasks[str(match_id)]['final_ticket'] = final_ticket
+        
         final_reports = ai_tasks[str(match_id)]['reports']
         with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
-            json.dump({'reports': final_reports}, cache_f, ensure_ascii=False, indent=2)
+            json.dump({
+                'reports': final_reports,
+                'final_ticket': final_ticket
+            }, cache_f, ensure_ascii=False, indent=2)
             
         ai_tasks[str(match_id)]['status'] = 'completed'
     except Exception as e:
@@ -802,12 +952,30 @@ def match_ai_analysis():
                     cache_data = json.load(f)
                 
                 if 'reports' in cache_data:
-                    return jsonify({'success': True, 'status': 'completed', 'cached': True, 'reports': cache_data['reports']})
+                    return jsonify({
+                        'success': True, 
+                        'status': 'completed', 
+                        'cached': True, 
+                        'reports': cache_data['reports'],
+                        'final_ticket': cache_data.get('final_ticket', '')
+                    })
                 elif 'text' in cache_data:
-                    return jsonify({'success': True, 'status': 'completed', 'cached': True, 'reports': [cache_data['text'], '', '']})
+                    return jsonify({
+                        'success': True, 
+                        'status': 'completed', 
+                        'cached': True, 
+                        'reports': [cache_data['text'], '', ''],
+                        'final_ticket': ''
+                    })
             except Exception:
                 pass
-        return jsonify({'success': True, 'status': 'idle', 'cached': False, 'reports': ['', '', '']})
+        return jsonify({
+            'success': True, 
+            'status': 'idle', 
+            'cached': False, 
+            'reports': ['', '', ''],
+            'final_ticket': ''
+        })
 
     # 3. 检查是否有任务正在跑
     task = ai_tasks.get(match_id)
@@ -830,7 +998,8 @@ def match_ai_analysis():
     ai_tasks[match_id] = {
         'status': 'processing', 
         'reports': ['', '', ''],
-        'status_list': ['processing', 'processing', 'processing']
+        'status_list': ['processing', 'processing', 'processing'],
+        'final_ticket': ''
     }
     t = threading.Thread(
         target=run_ai_analysis_thread,
@@ -865,6 +1034,7 @@ def ai_analysis_status():
                     'success': True, 
                     'status': 'completed', 
                     'reports': cache_data['reports'],
+                    'final_ticket': cache_data.get('final_ticket', ''),
                     'status_list': ['completed', 'completed', 'completed']
                 })
             elif 'text' in cache_data:
@@ -873,6 +1043,7 @@ def ai_analysis_status():
                     'success': True,
                     'status': 'completed',
                     'reports': [cache_data['text'], '', ''],
+                    'final_ticket': '',
                     'status_list': ['completed', 'completed', 'completed']
                 })
         except Exception:
@@ -886,6 +1057,7 @@ def ai_analysis_status():
             'success': True, 
             'status': task['status'], 
             'reports': task.get('reports', ['', '', '']),
+            'final_ticket': task.get('final_ticket', ''),
             'status_list': task.get('status_list', ['processing', 'processing', 'processing'])
         })
         

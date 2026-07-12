@@ -2625,4 +2625,119 @@ body {
     pointer-events: none !important;
 }
 
+/* ==============================================================================
+   ⚖️ CRO 终极决策执行单 Premium 卡片样式
+   ============================================================================== */
+.cro-ticket-card {
+    background: linear-gradient(135deg, var(--bg-panel) 0%, var(--bg-body-secondary) 100%);
+    border: 2px solid var(--border-color);
+    border-radius: var(--border-radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow-soft), 0 8px 30px rgba(0, 0, 0, 0.04);
+    position: relative;
+    overflow: hidden;
+}
+
+.cro-ticket-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.85rem;
+    margin-bottom: 1.15rem;
+}
+
+.cro-ticket-title {
+    font-size: 1.08rem;
+    font-weight: 850;
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    letter-spacing: 0.25px;
+}
+
+.cro-ticket-badge {
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: var(--color-primary);
+    background-color: var(--color-primary-glow);
+    padding: 0.25rem 0.6rem;
+    border-radius: var(--border-radius-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.cro-ticket-body {
+    font-size: 0.88rem;
+    line-height: 1.75;
+    color: var(--text-secondary);
+}
+
+.cro-ticket-body h5 {
+    border-left: 3px solid var(--color-primary) !important;
+    padding-left: 0.5rem;
+    margin-top: 1.25rem !important;
+}
+
+/* 🤝 共识与 ⚡ 熔断彩色高亮 Tag 标签 */
+.cro-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem 0.65rem;
+    border-radius: 4px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    vertical-align: middle;
+    margin-right: 0.35rem;
+    border: 1.5px solid transparent;
+}
+
+.cro-tag-consensus {
+    background-color: rgba(217, 119, 6, 0.1);
+    color: #d97706;
+    border-color: rgba(217, 119, 6, 0.2);
+}
+
+.cro-tag-melt {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border-color: rgba(239, 68, 68, 0.2);
+}
+
+/* 🚨 触发全面熔断警告横幅 (Warn Banner) */
+.cro-warn-banner {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.07) 0%, rgba(239, 68, 68, 0.03) 100%);
+    border: 1.5px dashed rgba(239, 68, 68, 0.35);
+    border-radius: var(--border-radius-md);
+    padding: 0.95rem 1.15rem;
+    margin-bottom: 1.25rem;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.03);
+    animation: pulse-border 2.5s infinite ease-in-out;
+}
+
+.cro-warn-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.cro-warn-text {
+    font-size: 0.82rem;
+    color: #ef4444;
+    line-height: 1.6;
+}
+
+.cro-warn-text strong {
+    font-weight: 800;
+}
+
+@keyframes pulse-border {
+    0%, 100% { border-color: rgba(239, 68, 68, 0.35); }
+    50% { border-color: rgba(239, 68, 68, 0.6); }
+}
+
 
