@@ -14,8 +14,12 @@ let latestFinalTicket = '';
 
 let aiPollingTimer = null;
 
-function isPrematchFixture(match) {
-    return match && [1, 13].includes(Number(match.status));
+function isAnalyzableFixture(match) {
+    return match && [1, 2, 3, 4, 5, 7, 10, 13].includes(Number(match.status));
+}
+
+function isLiveFixture(match) {
+    return match && [2, 3, 4, 5, 7, 10].includes(Number(match.status));
 }
 
 // Sliding date range options & Custom Datepicker states
@@ -27,7 +31,7 @@ let isDateLoading = false;
 
 function checkAndLoadCachedReport(matchId) {
     if (!selectedMatch) return;
-    if (!isPrematchFixture(selectedMatch)) return;
+    if (!isAnalyzableFixture(selectedMatch)) return;
     
     fetch('/api/match_ai_analysis', {
         method: 'POST',
@@ -885,8 +889,8 @@ function saveGlobalAiConfigToServer() {
 window.saveGlobalAiConfigToServer = saveGlobalAiConfigToServer;
 
 function generateAiReport(matchId, homeTeam, awayTeam) {
-    if (!isPrematchFixture(selectedMatch)) {
-        alert("赛前 AI 预测仅支持未开赛或待定赛事。进行中和已结束比赛请勿使用赛前预测。");
+    if (!isAnalyzableFixture(selectedMatch)) {
+        alert("仅支持未开赛、待定或进行中的赛事分析；已结束、取消或推迟赛事不能生成新报告。");
         return;
     }
     if (!matchDetailsCache[matchId]) {
@@ -1191,7 +1195,8 @@ function parseSimpleMarkdown(md, isStreaming = false) {
 }
 
 function renderAiTab(match, details) {
-    const isPrematch = isPrematchFixture(match);
+    const isAnalyzable = isAnalyzableFixture(match);
+    const isLive = isLiveFixture(match);
     if (!currentAiConfig) {
         loadAiConfigFromServer(() => {
             if (activeDetailTab === 'ai') {
@@ -1207,9 +1212,9 @@ function renderAiTab(match, details) {
     return `
         <div class="ai-prediction-container">
             <!-- 一键生成研判报告按钮 -->
-            <button id="btn-run-ai-analysis" class="btn-ai-run" style="width: 100%; margin-bottom: 0.85rem;" ${isPrematch ? '' : 'disabled title="仅支持未开赛或待定赛事"'} onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
+            <button id="btn-run-ai-analysis" class="btn-ai-run" style="width: 100%; margin-bottom: 0.85rem;" ${isAnalyzable ? '' : 'disabled title="仅支持未开赛或进行中的赛事"'} onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                <span>${isPrematch ? '一键生成 AI 深度研判报告' : '仅支持未开赛赛事的赛前预测'}</span>
+                <span>${isLive ? '一键生成 AI 滚球分析（实时盘口）' : (isAnalyzable ? '一键生成 AI 赛前研判报告' : '仅支持未开赛或进行中赛事')}</span>
             </button>
 
             <!-- 下方 AI 分析生成骨架屏与报告区域 -->

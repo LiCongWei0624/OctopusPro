@@ -23,6 +23,7 @@ def init_database(db_path):
                 home_team TEXT NOT NULL,
                 away_team TEXT NOT NULL,
                 kickoff TEXT,
+                analysis_mode TEXT NOT NULL DEFAULT 'prematch',
                 created_at TEXT NOT NULL,
                 model_name TEXT NOT NULL,
                 prompt_hash TEXT NOT NULL,
@@ -33,6 +34,9 @@ def init_database(db_path):
                 result_json TEXT
             )
         ''')
+        columns = {row[1] for row in conn.execute('PRAGMA table_info(predictions)')}
+        if 'analysis_mode' not in columns:
+            conn.execute("ALTER TABLE predictions ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'prematch'")
 
 
 def _prediction_record_from_text(report):
@@ -85,12 +89,12 @@ def record_prediction(db_path, metadata, model_name, system_prompt, context, fin
     with sqlite3.connect(db_path) as conn:
         conn.execute('''
             INSERT INTO predictions (
-                match_id, home_team, away_team, kickoff, created_at, model_name,
+                match_id, home_team, away_team, kickoff, analysis_mode, created_at, model_name,
                 prompt_hash, context_hash, prediction_json, final_report
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(metadata['match_id']), metadata.get('home_team', ''), metadata.get('away_team', ''),
-            metadata.get('kickoff', ''), _now(), model_name, _hash(system_prompt), _hash(context),
+            metadata.get('kickoff', ''), metadata.get('analysis_mode', 'prematch'), _now(), model_name, _hash(system_prompt), _hash(context),
             json.dumps(record, ensure_ascii=False) if record else None, final_report,
         ))
     return record is not None
@@ -178,16 +182,16 @@ def summary(db_path, limit=100):
     recent = []
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute('''
-            SELECT id, match_id, home_team, away_team, kickoff, created_at,
+            SELECT id, match_id, home_team, away_team, kickoff, analysis_mode, created_at,
                    prediction_json, result_json
             FROM predictions ORDER BY id DESC LIMIT ?
         ''', (limit,)).fetchall()
     for row in rows:
-        prediction = json.loads(row[6]) if row[6] else None
-        result = json.loads(row[7]) if row[7] else None
+        prediction = json.loads(row[7]) if row[7] else None
+        result = json.loads(row[8]) if row[8] else None
         recent.append({
             'id': row[0], 'match_id': row[1], 'home_team': row[2], 'away_team': row[3],
-            'kickoff': row[4], 'created_at': row[5], 'prediction': prediction, 'result': result,
+            'kickoff': row[4], 'analysis_mode': row[5], 'created_at': row[6], 'prediction': prediction, 'result': result,
         })
         if result:
             for market in markets:
