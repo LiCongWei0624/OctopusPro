@@ -816,7 +816,7 @@ def get_odds_via_playwright(match_id):
         print(f"Playwright fallback failed for {match_id}: {e}")
         return None
 
-def parse_odds_json_to_list(decrypted_json):
+def parse_odds_json_to_list(decrypted_json, is_live=False):
     if not decrypted_json:
         return []
         
@@ -882,8 +882,9 @@ def parse_odds_json_to_list(decrypted_json):
                 else:
                     init_line_str = f"{abs(init_raw_line_val)}"
                     
-                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
-                use_r = 'r' in asia_item and isinstance(asia_item['r'], list) and len(asia_item['r']) >= 2 and len(asia_item['r'][0]) >= 3
+                # A pre-match report must never consume the in-play ``r``
+                # quote.  It is only valid for a dedicated live flow.
+                use_r = is_live and 'r' in asia_item and isinstance(asia_item['r'], list) and len(asia_item['r']) >= 2 and len(asia_item['r'][0]) >= 3
                 target_array = asia_item['r'] if use_r else asia_item['n']
                 
                 # 即时/走地盘口
@@ -912,8 +913,7 @@ def parse_odds_json_to_list(decrypted_json):
         }
         if eu_item:
             try:
-                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
-                use_r = 'r' in eu_item and isinstance(eu_item['r'], list) and len(eu_item['r']) >= 2 and len(eu_item['r'][0]) >= 3
+                use_r = is_live and 'r' in eu_item and isinstance(eu_item['r'], list) and len(eu_item['r']) >= 2 and len(eu_item['r'][0]) >= 3
                 target_array = eu_item['r'] if use_r else eu_item['n']
                 
                 europe_data = {
@@ -939,8 +939,7 @@ def parse_odds_json_to_list(decrypted_json):
                 if init_line_str.endswith(".0"):
                     init_line_str = init_line_str[:-2]
                     
-                # 优先提取走地赔率 'r'，其次是赛前即时赔率 'n'
-                use_r = 'r' in bs_item and isinstance(bs_item['r'], list) and len(bs_item['r']) >= 2 and len(bs_item['r'][0]) >= 3
+                use_r = is_live and 'r' in bs_item and isinstance(bs_item['r'], list) and len(bs_item['r']) >= 2 and len(bs_item['r'][0]) >= 3
                 target_array = bs_item['r'] if use_r else bs_item['n']
                 
                 # 即时/走地盘口
@@ -1077,7 +1076,8 @@ console.log(encrypt('{payload_str}'));
                         decompressed = zlib.decompress(decoded_bytes, 15 + 32)
                         decrypted_json = json.loads(decompressed.decode('utf-8'))
                         
-                        odds_data = parse_odds_json_to_list(decrypted_json)
+                        is_live = status in {2, 3, 4, 5, 7, 10}
+                        odds_data = parse_odds_json_to_list(decrypted_json, is_live=is_live)
             except Exception as e:
                 print("Failed to get real odds from API:", e)
 
