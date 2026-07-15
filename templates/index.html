@@ -25,6 +25,12 @@
                 <div class="sync-status">
                     <span id="sync-time">数据未同步</span>
                 </div>
+                <button id="prediction-backtest-btn" class="btn-secondary" onclick="openPredictionBacktestModal()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                        <path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3-3 3 2 4-5"></path>
+                    </svg>
+                    <span>预测回测</span>
+                </button>
                 <button id="ai-config-btn" class="btn-secondary" onclick="openAiConfigModal()" style="margin-right: 0.5rem;">
                     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
                         <circle cx="12" cy="12" r="3"></circle>
@@ -95,17 +101,20 @@
         <div class="workspace">
             <!-- Col 1: Match List (Shuffled to the Left) -->
             <section class="panel-matches">
-                <div class="panel-title-bar">
-                    <h3>赛事日程</h3>
-                    <span id="match-count-badge" class="count-badge">0 场</span>
+                <div class="matches-toolbar">
+                    <div class="panel-title-bar">
+                        <h3>赛事日程</h3>
+                        <span id="match-count-badge" class="count-badge">0 场</span>
+                    </div>
+                    <div id="league-filter-bar" class="league-filter-bar"></div>
                 </div>
-                
-                <div id="league-filter-bar" class="league-filter-bar"></div>
-                <div id="matches-container" class="matches-grid">
-                    <!-- Dynamic Match Cards -->
-                    <div class="loading-shimmer">
-                        <div class="card-shimmer"></div>
-                        <div class="card-shimmer"></div>
+                <div class="matches-scroll">
+                    <div id="matches-container" class="matches-grid">
+                        <!-- Dynamic Match Cards -->
+                        <div class="loading-shimmer">
+                            <div class="card-shimmer"></div>
+                            <div class="card-shimmer"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -201,6 +210,23 @@
                 <span id="global-ai-save-status" style="margin-right: auto; align-self: center; font-size: 0.82rem; font-weight: 700; color: var(--color-success); display: none;">✓ 配置已成功存入本地数据库</span>
                 <button class="btn-ai-cancel" onclick="closeAiConfigModal()">取消</button>
                 <button class="btn-ai-save" onclick="saveGlobalAiConfigToServer()" style="margin-left: 0.5rem;">保存配置</button>
+            </div>
+        </div>
+    </div>
+    <div id="prediction-backtest-modal" class="modal-backdrop" style="display: none;" onclick="closePredictionBacktestOnBackdrop(event)">
+        <div class="modal-container backtest-modal">
+            <div class="modal-header">
+                <div>
+                    <h3>预测回测</h3>
+                    <p class="modal-subtitle">最近 100 份独立预测的自动结算结果</p>
+                </div>
+                <button class="modal-close-btn" onclick="closePredictionBacktestModal()" aria-label="关闭">×</button>
+            </div>
+            <div id="prediction-backtest-content" class="modal-body backtest-body">
+                <p class="backtest-loading">正在读取预测记录...</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-ai-cancel" onclick="closePredictionBacktestModal()">关闭</button>
             </div>
         </div>
     </div>

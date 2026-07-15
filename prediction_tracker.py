@@ -4,6 +4,7 @@ import datetime
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 
 
 def _now():
@@ -15,7 +16,7 @@ def _hash(value):
 
 
 def init_database(db_path):
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS predictions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,6 +38,7 @@ def init_database(db_path):
         columns = {row[1] for row in conn.execute('PRAGMA table_info(predictions)')}
         if 'analysis_mode' not in columns:
             conn.execute("ALTER TABLE predictions ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'prematch'")
+        conn.commit()
 
 
 def _prediction_record_from_text(report):
@@ -86,7 +88,17 @@ def _normalise_prediction(record):
 
 def record_prediction(db_path, metadata, model_name, system_prompt, context, final_report):
     record = _normalise_prediction(_prediction_record_from_text(final_report))
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
+        # A backtest sample represents one fixture at one decision point. Re-running
+        # the same report must not inflate its apparent accuracy.
+        if record:
+            existing = conn.execute('''
+                SELECT id FROM predictions
+                WHERE match_id = ? AND analysis_mode = ? AND prediction_json IS NOT NULL
+                LIMIT 1
+            ''', (str(metadata['match_id']), metadata.get('analysis_mode', 'prematch'))).fetchone()
+            if existing:
+                return False
         conn.execute('''
             INSERT INTO predictions (
                 match_id, home_team, away_team, kickoff, analysis_mode, created_at, model_name,
@@ -97,6 +109,7 @@ def record_prediction(db_path, metadata, model_name, system_prompt, context, fin
             metadata.get('kickoff', ''), metadata.get('analysis_mode', 'prematch'), _now(), model_name, _hash(system_prompt), _hash(context),
             json.dumps(record, ensure_ascii=False) if record else None, final_report,
         ))
+        conn.commit()
     return record is not None
 
 
@@ -156,7 +169,7 @@ def _settle_prediction(prediction, home_goals, away_goals):
 def settle_finished_predictions(db_path, matches):
     by_id = {str(match.get('id')): match for match in matches}
     settled = 0
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         pending = conn.execute('''
             SELECT id, match_id, prediction_json FROM predictions
             WHERE result_json IS NULL AND prediction_json IS NOT NULL
@@ -174,13 +187,14 @@ def settle_finished_predictions(db_path, matches):
                 (_now(), json.dumps(result, ensure_ascii=False), prediction_id),
             )
             settled += 1
+        conn.commit()
     return settled
 
 
 def summary(db_path, limit=100):
     markets = {'one_x_two': [], 'asian_handicap': [], 'over_under': []}
     recent = []
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         rows = conn.execute('''
             SELECT id, match_id, home_team, away_team, kickoff, analysis_mode, created_at,
                    prediction_json, result_json
@@ -197,6 +211,21 @@ def summary(db_path, limit=100):
             for market in markets:
                 markets[market].append(result[market])
 
+    overview = {
+        'window_size': len(rows),
+        'tracked': sum(row[7] is not None for row in rows),
+        'settled': sum(row[8] is not None for row in rows),
+        'pending': sum(row[7] is not None and row[8] is None for row in rows),
+        'untracked': sum(row[7] is None for row in rows),
+    }
+    by_mode = {}
+    for row in rows:
+        mode = row[5] or 'prematch'
+        bucket = by_mode.setdefault(mode, {'total': 0, 'tracked': 0, 'settled': 0})
+        bucket['total'] += 1
+        bucket['tracked'] += row[7] is not None
+        bucket['settled'] += row[8] is not None
+
     metrics = {}
     hit_points = {'win': 1.0, 'half_win': 0.5, 'push': 0.0, 'half_loss': 0.0, 'loss': 0.0}
     for market, outcomes in markets.items():
@@ -212,4 +241,4 @@ def summary(db_path, limit=100):
             'hit_rate': round(points / len(outcomes), 4) if outcomes else None,
             'settlement_units': round(units, 2),
         }
-    return {'metrics': metrics, 'recent': recent}
+    return {'overview': overview, 'by_mode': by_mode, 'metrics': metrics, 'recent': recent}

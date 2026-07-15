@@ -11,8 +11,19 @@ let activeReportVersion = 0;
 let latestReports = ['', '', ''];
 let latestStatusList = ['processing', 'processing', 'processing'];
 let latestFinalTicket = '';
+let searchRenderTimer = null;
+const MAX_MATCH_DETAILS_CACHE = 24;
 
 let aiPollingTimer = null;
+
+function cacheMatchDetails(matchId, details) {
+    delete matchDetailsCache[matchId];
+    matchDetailsCache[matchId] = details;
+    const cachedIds = Object.keys(matchDetailsCache);
+    while (cachedIds.length > MAX_MATCH_DETAILS_CACHE) {
+        delete matchDetailsCache[cachedIds.shift()];
+    }
+}
 
 function isAnalyzableFixture(match) {
     return match && [1, 2, 3, 4, 5, 7, 10, 13].includes(Number(match.status));
@@ -85,7 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Auto-refresh today's matches every 5 minutes
+    // Keep the visible day aligned with the server-side 10-minute refresh.
     setInterval(() => {
         const todayStr = getTodayDateString();
         const todayYYYYMMDD = convertToYYYYMMDD(todayStr);
@@ -104,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             })
             .catch(err => console.error("Auto-refresh error:", err));
-    }, 5 * 60 * 1000);
+    }, 10 * 60 * 1000);
 });
 
 // Fetch Matches list
@@ -419,7 +430,8 @@ function filterMatchesBySearch() {
     const searchInput = document.getElementById('match-search-input');
     if (searchInput) {
         searchQuery = searchInput.value;
-        filterAndRenderMatches();
+        clearTimeout(searchRenderTimer);
+        searchRenderTimer = setTimeout(filterAndRenderMatches, 120);
     }
 }
 
@@ -454,6 +466,7 @@ function renderMatchCards(matches) {
         return;
     }
     
+    const fragment = document.createDocumentFragment();
     matches.forEach(m => {
         const status = Number(m.status || 1);
         const isLive = (status >= 2 && status <= 7);
@@ -561,8 +574,9 @@ function renderMatchCards(matches) {
                 ` : ''}
             </div>
         `;
-        container.appendChild(card);
+        fragment.appendChild(card);
     });
+    container.appendChild(fragment);
 }
 
 // Select a Match
@@ -631,7 +645,7 @@ function loadMatchDetails(match) {
         .then(res => res.json())
         .then(res => {
             if (res.success) {
-                matchDetailsCache[match.id] = res.data;
+                cacheMatchDetails(match.id, res.data);
                 renderMatchDetails(match, res.data);
             } else {
                 renderDetailsError(res.error || "获取比赛详情失败。");
@@ -758,7 +772,7 @@ function forceRefreshCurrentMatch() {
         .then(res => {
             if (res.success) {
                 // Update memory cache
-                matchDetailsCache[selectedMatch.id] = res.data;
+                cacheMatchDetails(selectedMatch.id, res.data);
                 // Re-render
                 renderMatchDetails(selectedMatch, res.data);
             } else {
@@ -887,6 +901,73 @@ function saveGlobalAiConfigToServer() {
     });
 }
 window.saveGlobalAiConfigToServer = saveGlobalAiConfigToServer;
+
+function formatBacktestRate(value) {
+    return typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '--';
+}
+
+function closePredictionBacktestModal() {
+    const modal = document.getElementById('prediction-backtest-modal');
+    if (modal) modal.style.display = 'none';
+}
+window.closePredictionBacktestModal = closePredictionBacktestModal;
+
+function closePredictionBacktestOnBackdrop(event) {
+    if (event.target.id === 'prediction-backtest-modal') closePredictionBacktestModal();
+}
+window.closePredictionBacktestOnBackdrop = closePredictionBacktestOnBackdrop;
+
+function renderPredictionBacktest(data) {
+    const container = document.getElementById('prediction-backtest-content');
+    if (!container) return;
+
+    const overview = data.overview || {};
+    const metrics = data.metrics || {};
+    const cards = [
+        ['独立样本', `${overview.tracked || 0} / ${overview.window_size || 0}`, '已写入可结算结构化预测'],
+        ['已结算', `${overview.settled || 0}`, '具备最终比分的样本'],
+        ['待结算', `${overview.pending || 0}`, '比赛尚未结束或未同步结果'],
+        ['未追踪', `${overview.untracked || 0}`, '报告未返回有效 prediction_record'],
+    ];
+
+    const marketCards = [
+        ['胜平负', metrics.one_x_two, '命中率'],
+        ['让球', metrics.asian_handicap, '结算得分率'],
+        ['大小球', metrics.over_under, '结算得分率'],
+    ];
+
+    container.innerHTML = `
+        <section class="backtest-summary-grid">
+            ${cards.map(([label, value, hint]) => `<article class="backtest-stat"><span>${label}</span><strong>${value}</strong><small>${hint}</small></article>`).join('')}
+        </section>
+        <section class="backtest-section">
+            <div class="backtest-section-heading"><h4>市场表现</h4><span>仅统计已结算样本</span></div>
+            <div class="backtest-market-grid">
+                ${marketCards.map(([label, metric, rateLabel]) => `<article class="backtest-market"><span>${label}</span><strong>${formatBacktestRate(metric && metric.hit_rate)}</strong><small>${rateLabel} · ${metric ? metric.settled : 0} 场</small>${metric && metric.settlement_units !== undefined ? `<em>净结算单位 ${metric.settlement_units > 0 ? '+' : ''}${metric.settlement_units}</em>` : ''}</article>`).join('')}
+            </div>
+        </section>
+        ${overview.tracked ? '' : '<p class="backtest-empty">当前还没有可结算预测。生成首份赛前分析后，系统会自动记录；每场仅保留一份赛前预测，避免重复生成影响样本正确率。</p>'}
+    `;
+}
+
+function openPredictionBacktestModal() {
+    const modal = document.getElementById('prediction-backtest-modal');
+    const container = document.getElementById('prediction-backtest-content');
+    if (!modal || !container) return;
+
+    modal.style.display = 'flex';
+    container.innerHTML = '<p class="backtest-loading">正在同步已完场比赛并计算回测...</p>';
+    fetch('/api/prediction_backtest')
+        .then(res => res.json())
+        .then(res => {
+            if (res.success) renderPredictionBacktest(res.data);
+            else container.innerHTML = `<p class="backtest-empty">回测暂不可用：${res.error || '未知错误'}</p>`;
+        })
+        .catch(() => {
+            container.innerHTML = '<p class="backtest-empty">无法读取回测数据，请稍后重试。</p>';
+        });
+}
+window.openPredictionBacktestModal = openPredictionBacktestModal;
 
 function generateAiReport(matchId, homeTeam, awayTeam) {
     if (!isAnalyzableFixture(selectedMatch)) {
@@ -1165,10 +1246,14 @@ function parseSimpleMarkdown(md, isStreaming = false) {
     // 2. 处理 <think> 标签的推理过程折叠框替换
     if (html.includes('<think>')) {
         if (html.includes('</think>')) {
-            // 已闭合（思考完成），默认折叠收起
-            html = html.replace(/<think>([\s\S]*?)<\/think>/g, (match, p1) => {
-                return `<details class="ai-think-details"><summary>🧠 AI 思考推理过程（已完成，点击展开/折叠）</summary>${p1}</details>`;
-            });
+            // Model reasoning can quote nested <think> tags from an input report.
+            // The stream wrapper closes last, so only that final boundary is valid.
+            const startIndex = html.indexOf('<think>');
+            const closeIndex = html.lastIndexOf('</think>');
+            const before = html.substring(0, startIndex);
+            const reasoning = html.substring(startIndex + 7, closeIndex);
+            const answer = html.substring(closeIndex + 8);
+            html = `${before}<details class="ai-think-details"><summary>🧠 AI 思考推理过程（已完成，点击展开/折叠）</summary>${reasoning}</details>${answer}`;
             if (isStreaming) {
                 html += '<span class="ai-cursor"></span>';
             }
@@ -2730,9 +2815,10 @@ function triggerOddsBackgroundFetch(matchId, details) {
     currentOddsFetchMatchId = matchId;
     oddsFetchQueue = [];
     
-    // 如果有正在运行的队列轮询器，先强行掐死释放资源
+    // Stop scheduling the previous match. An in-flight request may finish, but
+    // it cannot schedule another request once the selected match has changed.
     if (oddsFetchIntervalId) {
-        clearInterval(oddsFetchIntervalId);
+        clearTimeout(oddsFetchIntervalId);
         oddsFetchIntervalId = null;
     }
     
@@ -2753,50 +2839,43 @@ function triggerOddsBackgroundFetch(matchId, details) {
     
     if (oddsFetchQueue.length === 0) return;
     
-    // 置灰并挂载“指数获取中”提示，阻止切入 AI 分析页签
+    // The full instant odds snapshot is already available in match details.
+    // This queue warms the heavier handicap-trend history before AI analysis.
     if (aiTab) {
         aiTab.classList.add('tab-disabled');
-        aiTab.setAttribute('title', '正在获取全量指数数据，请稍候...');
+        aiTab.setAttribute('title', '正在同步重点公司的让球走势，请稍候...');
         const fText = aiTab.querySelector('.tab-text-full');
         const sText = aiTab.querySelector('.tab-text-short');
-        if (fText) fText.textContent = 'AI 预测分析 (获取指数中...)';
+        if (fText) fText.textContent = 'AI 预测分析 (同步走势中...)';
         if (sText) sText.textContent = 'AI (同步中)';
     }
     
     console.log(`[Background Fetcher] Queue initialized with ${oddsFetchQueue.length} companies to cache.`);
-    
-    // 开启 1500ms 慢速、安全的青蛙式排队静默轮询，完全杜绝 WAF 封号
-    oddsFetchIntervalId = setInterval(() => {
+
+    const fetchNextTrend = () => {
+        if (matchId !== currentOddsFetchMatchId) return;
         if (oddsFetchQueue.length === 0) {
-            clearInterval(oddsFetchIntervalId);
             oddsFetchIntervalId = null;
             resetAiTabUI();
             console.log(`[Background Fetcher] All odds trends successfully cached for match ${matchId}!`);
             return;
         }
-        
-        // 取出排在首位的任务并请求
+
         const task = oddsFetchQueue.shift();
-        if (task.matchId === currentOddsFetchMatchId) {
-            console.log(`[Background Fetcher] Fetching trend for match ${task.matchId}, company ${task.cid}...`);
-            fetch(`/api/match_odds_detail?match_id=${task.matchId}&cid=${task.cid}&type=${task.type}`)
-                .then(res => res.json())
-                .then(res => {
-                    if (res.success) {
-                        console.log(`[Background Fetcher] Cached trend for company ${task.cid} (all 3 subtabs written)`);
-                    } else {
-                        console.warn(`[Background Fetcher] Skip/Fail for company ${task.cid}:`, res.error);
-                    }
-                })
-                .catch(err => {
-                    console.error(`[Background Fetcher] Error:`, err);
-                })
-                .finally(() => {
-                    // 当队列拉完的瞬间释放 UI 按钮
-                    if (oddsFetchQueue.length === 0 && task.matchId === currentOddsFetchMatchId) {
-                        resetAiTabUI();
-                    }
-                });
-        }
-    }, 1500);
+        console.log(`[Background Fetcher] Fetching trend for match ${task.matchId}, company ${task.cid}...`);
+        fetch(`/api/match_odds_detail?match_id=${task.matchId}&cid=${task.cid}&type=${task.type}`)
+            .then(res => res.json())
+            .then(res => {
+                if (res.success) console.log(`[Background Fetcher] Cached trend for company ${task.cid}.`);
+                else console.warn(`[Background Fetcher] Skip/Fail for company ${task.cid}:`, res.error);
+            })
+            .catch(err => console.error(`[Background Fetcher] Error:`, err))
+            .finally(() => {
+                if (matchId === currentOddsFetchMatchId) {
+                    oddsFetchIntervalId = setTimeout(fetchNextTrend, 350);
+                }
+            });
+    };
+
+    fetchNextTrend();
 }

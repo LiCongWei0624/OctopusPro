@@ -1,8 +1,12 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import json
 import os
 import datetime
+import re
+import tempfile
+import threading
+import time
 from leisu_crawler import fetch_matches
 from detail_scraper import get_complete_match_details, get_odds_detail_via_playwright
 from scraper import scrape_desktop_matches
@@ -19,6 +23,14 @@ LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
 TERMINAL_STATUSES = {8, 9, 11, 12}
 PREDICTION_DB_FILE = os.path.join(os.path.dirname(__file__), 'prediction_history.sqlite3')
+LIVE_DETAILS_CACHE_TTL_SECONDS = 90
+
+# The browser can issue overlapping refreshes. Keep the shared fixture file
+# coherent and avoid repeatedly decoding several megabytes for every request.
+_match_store_lock = threading.RLock()
+_match_store_cache = {'mtime_ns': None, 'matches': [], 'by_id': {}}
+_refresh_lock = threading.Lock()
+_refresh_scheduler_started = False
 
 DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风险控制专家
 
@@ -145,6 +157,11 @@ PREDICTION_POLICY = """这是足球预测链路。输入会明确标记为“赛
 3. 情报、伤停、交锋或赔率缺失时，明确标记缺失并降低置信度，但仍按产品要求给出方向。
 4. 不得编造资金流、庄家意图、EV 百分比、xG 或历史统计。让球和大小球必须使用输入中存在的具体盘口。"""
 
+ANALYST_OUTPUT_LIMIT = """输出应是可执行的分析摘要，而非逐项复述原始数据：
+1. 只保留影响结论的证据、反方证据、三个市场结论和风险条件；避免重复解释相同盘口。
+2. 使用简洁的 Markdown，全文不超过 1,200 个汉字或等量内容。
+3. 不得输出思维链、内部推演过程或与结论无关的泛泛说明。"""
+
 TRACKING_OUTPUT_CONTRACT = """报告最后必须附上唯一一个 JSON 代码块，供赛后自动结算，格式严格如下：
 ```json
 {"prediction_record":{"one_x_two":"home|draw|away","asian_handicap":{"team":"home|away","line":-0.25},"over_under":{"side":"over|under","line":2.5},"confidence":"high|medium|low"}}
@@ -195,21 +212,81 @@ def cleanup_old_caches():
 cleanup_old_caches()
 init_database(PREDICTION_DB_FILE)
 
+
+def load_match_store():
+    if not os.path.exists(DATA_FILE):
+        return [], {}
+
+    try:
+        mtime_ns = os.stat(DATA_FILE).st_mtime_ns
+    except OSError:
+        return [], {}
+
+    with _match_store_lock:
+        if _match_store_cache['mtime_ns'] == mtime_ns:
+            return _match_store_cache['matches'], _match_store_cache['by_id']
+        try:
+            with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                matches = json.load(f)
+            if not isinstance(matches, list):
+                raise ValueError('parsed_matches.json must contain a list')
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f'Failed to load match store: {exc}')
+            return [], {}
+
+        _match_store_cache.update({
+            'mtime_ns': mtime_ns,
+            'matches': matches,
+            'by_id': {str(match.get('id')): match for match in matches},
+        })
+        return _match_store_cache['matches'], _match_store_cache['by_id']
+
+
+def save_match_store(matches):
+    directory = os.path.dirname(DATA_FILE)
+    with _match_store_lock:
+        fd, temp_path = tempfile.mkstemp(prefix='parsed_matches_', suffix='.json', dir=directory)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(matches, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, DATA_FILE)
+            mtime_ns = os.stat(DATA_FILE).st_mtime_ns
+            _match_store_cache.update({
+                'mtime_ns': mtime_ns,
+                'matches': matches,
+                'by_id': {str(match.get('id')): match for match in matches},
+            })
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
 def get_weekday_cn(date_obj):
     weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
     return weekdays[date_obj.weekday()]
+
+
+def _normalise_status(value, default=1):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _merged_status(previous, incoming):
+    """Keep a confirmed terminal score from regressing during a stale refresh."""
+    old_status = _normalise_status(previous)
+    new_status = _normalise_status(incoming)
+    if old_status in TERMINAL_STATUSES and new_status not in TERMINAL_STATUSES:
+        return old_status
+    return new_status
 
 def merge_date_matches(date_str, mobile_matches, desktop_matches):
     d = datetime.datetime.strptime(date_str, "%Y%m%d").date()
     target_date_formatted = f"{d.strftime('%m-%d')} {get_weekday_cn(d)}"
     
-    existing_matches = []
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                existing_matches = json.load(f)
-        except Exception:
-            pass
+    existing_matches, _ = load_match_store()
             
     # Extract existing matches for target date by ID to do incremental merge
     existing_date_matches = {str(m['id']): m for m in existing_matches if m.get('date') == target_date_formatted}
@@ -229,7 +306,7 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
             item['score'] = f"{m['home_score']}-{m['away_score']}" if m.get('status', 1) in [2, 3, 4, 5, 7, 8] else ""
             item['half_score'] = m.get('half_score', '')
             item['penalty_score'] = m.get('penalty_score', '')
-            item['status'] = m.get('status', 1)
+            item['status'] = _merged_status(item.get('status'), m.get('status', 1))
             formatted_new_matches.append(item)
         else:
             # 直接根据比赛本身的 match_time 计算出精确格式化日期，防止被接口日期参数污染导致错位
@@ -267,8 +344,7 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
         if existing_item:
             # 优先采用 PC 网页端更实时的比赛状态进行覆盖更新
             dm_status = dm.get('status', 1)
-            if dm_status in [2, 3, 4, 5, 7, 8]:
-                existing_item['status'] = dm_status
+            existing_item['status'] = _merged_status(existing_item.get('status'), dm_status)
                 
             # 绝对不能用空的或者无意义的比分去覆盖原有的有效比分！
             dm_score = dm.get('score', '')
@@ -288,7 +364,7 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
             seen_ids.add(match_id)
             if match_id in existing_date_matches:
                 item = existing_date_matches[match_id].copy()
-                item['status'] = dm.get('status', 1)
+                item['status'] = _merged_status(item.get('status'), dm.get('status', 1))
                 
                 # 只有在 PC 网页端有有效比分时才更新，否则保留数据库里的比分
                 dm_score = dm.get('score', '')
@@ -350,8 +426,7 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
     except Exception:
         pass
         
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
-        json.dump(other_date_matches, f, ensure_ascii=False, indent=2)
+    save_match_store(other_date_matches)
         
     return formatted_new_matches
     
@@ -416,6 +491,37 @@ def save_ai_config():
 def index():
     return render_template('index.html')
 
+
+def refresh_match_data(date_str):
+    """Refresh one fixture date while serialising crawler and file updates."""
+    with _refresh_lock:
+        today_str = datetime.date.today().strftime('%Y%m%d')
+        if date_str == today_str:
+            desktop_matches = scrape_desktop_matches(date_str)
+            return merge_date_matches(date_str, [], desktop_matches)
+        new_matches = fetch_matches(date_str, n_values=[1, 2, 3, 4, 5, 7])
+        return merge_date_matches(date_str, new_matches, [])
+
+
+def _scheduled_today_refresh():
+    while True:
+        time.sleep(10 * 60)
+        try:
+            today_str = datetime.date.today().strftime('%Y%m%d')
+            refreshed = refresh_match_data(today_str)
+            print(f'Automatic fixture refresh completed: {len(refreshed)} matches for {today_str}')
+        except Exception as exc:
+            print(f'Automatic fixture refresh failed: {exc}')
+
+
+def start_refresh_scheduler():
+    global _refresh_scheduler_started
+    if _refresh_scheduler_started:
+        return
+    _refresh_scheduler_started = True
+    threading.Thread(target=_scheduled_today_refresh, name='fixture-refresh', daemon=True).start()
+
+
 @app.route('/api/matches')
 def get_matches():
     today_str = request.args.get('today')
@@ -423,31 +529,21 @@ def get_matches():
         today_str = datetime.date.today().strftime('%Y%m%d')
         
     has_today = False
-    data = []
-    if os.path.exists(DATA_FILE):
+    data, _ = load_match_store()
+    if data:
         try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
             d = datetime.datetime.strptime(today_str, "%Y%m%d").date()
             target_date_formatted = f"{d.strftime('%m-%d')} {get_weekday_cn(d)}"
             for m in data:
                 if m.get('date') == target_date_formatted:
                     has_today = True
                     break
-        except Exception:
+        except (TypeError, ValueError):
             pass
             
     if not has_today:
         try:
-            d_today = datetime.date.today().strftime('%Y%m%d')
-            if today_str == d_today:
-                # 针对今天赛事，直接使用 alifInfo.js 一键解密，0.3 秒内获取 900+ 场全量赛事
-                desktop_matches = scrape_desktop_matches(today_str)
-                data = merge_date_matches(today_str, [], desktop_matches)
-            else:
-                # 针对历史/未来赛事，使用多线程 API 极速并发拉取
-                new_matches = fetch_matches(today_str, n_values=[1, 2, 3, 4, 5, 7])
-                data = merge_date_matches(today_str, new_matches, [])
+            data = refresh_match_data(today_str)
         except Exception as e:
             if not data:
                 err_str = str(e)
@@ -475,15 +571,7 @@ def refresh_matches():
         date_str = datetime.date.today().strftime('%Y%m%d')
         
     try:
-        d_today = datetime.date.today().strftime('%Y%m%d')
-        if date_str == d_today:
-            # 针对今天实时比分刷新，直接一键解密 alifInfo.js，毫秒级响应
-            desktop_matches = scrape_desktop_matches(date_str)
-            updated_list = merge_date_matches(date_str, [], desktop_matches)
-        else:
-            # 针对历史/未来比分刷新，使用多线程并发 API 拉取
-            new_matches = fetch_matches(date_str, n_values=[1, 2, 3, 4, 5, 7])
-            updated_list = merge_date_matches(date_str, new_matches, [])
+        updated_list = refresh_match_data(date_str)
         return jsonify({'success': True, 'data': updated_list})
     except Exception as e:
         err_str = str(e)
@@ -505,16 +593,12 @@ def get_match_details():
         
     # Check if the match is finished by looking it up in parsed_matches.json
     is_finished = False
-    if os.path.exists(DATA_FILE):
+    _, matches_by_id = load_match_store()
+    match_meta = matches_by_id.get(str(match_id))
+    if match_meta:
         try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                matches = json.load(f)
-            for m in matches:
-                if str(m.get('id')) == str(match_id):
-                    if int(m.get('status', 1)) in TERMINAL_STATUSES:
-                        is_finished = True
-                    break
-        except Exception:
+            is_finished = int(match_meta.get('status', 1)) in TERMINAL_STATUSES
+        except (TypeError, ValueError):
             pass
             
     if force:
@@ -532,6 +616,11 @@ def get_match_details():
     if os.path.exists(cache_file) and not force:
         if is_finished:
             cache_valid = True
+        else:
+            try:
+                cache_valid = time.time() - os.path.getmtime(cache_file) < LIVE_DETAILS_CACHE_TTL_SECONDS
+            except OSError:
+                pass
                 
     if cache_valid:
         try:
@@ -543,10 +632,8 @@ def get_match_details():
             
     try:
         details = get_complete_match_details(match_id, home, away)
-        # 仅在比赛确认为已结束时，才写入本地静态缓存
-        if is_finished:
-            with open(cache_file, 'w', encoding='utf-8') as f:
-                json.dump(details, f, ensure_ascii=False, indent=2)
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(details, f, ensure_ascii=False, indent=2)
         return jsonify({'success': True, 'data': details})
     except Exception as e:
         err_str = str(e)
@@ -567,18 +654,10 @@ def get_odds_detail():
         
     # Check if the match is finished by looking it up in parsed_matches.json
     is_finished = False
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                matches = json.load(f)
-            for m in matches:
-                if str(m.get('id')) == str(match_id):
-                    # Check if status code is 8 (finished)
-                    if m.get('status') == 8 or m.get('status') == '8':
-                        is_finished = True
-                    break
-        except Exception:
-            pass
+    _, matches_by_id = load_match_store()
+    match_meta = matches_by_id.get(str(match_id))
+    if match_meta:
+        is_finished = str(match_meta.get('status')) == '8'
             
     cache_file = os.path.join(CACHE_DIR, f'odds_detail_{match_id}_{cid}_{type_val}.json')
     cache_valid = False
@@ -650,7 +729,39 @@ def get_cached_odds_detail(match_id, cid):
         all_tables.append([])
     return all_tables if has_cache else None
 
-import threading
+
+def has_final_output(text):
+    """A completed reasoning stream must contain content after its <think> block."""
+    if not isinstance(text, str):
+        return False
+    stripped = text.lstrip()
+    if not stripped.startswith('<think>'):
+        return bool(stripped)
+    closing_index = stripped.rfind('</think>')
+    visible = stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
+    return bool(visible)
+
+
+def extract_final_output(text):
+    """Return only the report body; reasoning is retained for the UI, not re-sent to CRO."""
+    if not isinstance(text, str):
+        return ''
+    stripped = text.lstrip()
+    if not stripped.startswith('<think>'):
+        return stripped
+    closing_index = stripped.rfind('</think>')
+    return stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
+
+
+def is_complete_analysis_cache(cache_data):
+    reports = cache_data.get('reports') if isinstance(cache_data, dict) else None
+    return (
+        isinstance(reports, list)
+        and len(reports) == 3
+        and all(has_final_output(report) for report in reports)
+        and has_final_output(cache_data.get('final_ticket', ''))
+    )
+
 ai_tasks = {}
 
 import concurrent.futures
@@ -675,19 +786,12 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch'):
     win_probability_data = {}
     comp_name = ""
     match_meta = {}
-    if os.path.exists(DATA_FILE):
-        try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                all_matches = json.load(f)
-            for m in all_matches:
-                if str(m.get('id')) == str(match_id):
-                    similar_trend_data = m.get('similar_trend', {})
-                    win_probability_data = m.get('win_probability', {})
-                    comp_name = m.get('competition', '')
-                    match_meta = m
-                    break
-        except Exception as e_db:
-            print("Failed to load match meta from parsed_matches:", e_db)
+    _, matches_by_id = load_match_store()
+    match_meta = matches_by_id.get(str(match_id), {})
+    if match_meta:
+        similar_trend_data = match_meta.get('similar_trend', {})
+        win_probability_data = match_meta.get('win_probability', {})
+        comp_name = match_meta.get('competition', '')
 
     # 拼装 Prompt 上下文
     context_lines = []
@@ -765,14 +869,14 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch'):
         init = eu.get('initial', [1.0, 1.0, 1.0])
         inst = eu.get('instant', [1.0, 1.0, 1.0])
         context_lines.append(f"- 公司: {company} | 初始赔率: 主胜 {init[0]} 平局 {init[1]} 客胜 {init[2]} | 即时赔率: 主胜 {inst[0]} 平局 {inst[1]} 客胜 {inst[2]}")
-        
+
     for item in odds_index:
         company = item.get('company')
         h = item.get('handicap', {})
         init = h.get('initial', [1.0, 1.0])
         inst = h.get('instant', [1.0, 1.0])
         context_lines.append(f"- 公司: {company} | 初始盘口: {h.get('initial_line', '')} (主水 {init[0]} / 客水 {init[1]}) | 即时盘口: {h.get('instant_line', '')} (主水 {inst[0]} / 客水 {inst[1]})")
-        
+
     for item in odds_index:
         company = item.get('company')
         ou = item.get('over_under', {})
@@ -824,6 +928,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "system", "content": PREDICTION_POLICY},
+            {"role": "system", "content": ANALYST_OUTPUT_LIMIT},
             {"role": "user", "content": f"请针对以下赛事数据进行深度量化研判。请计算重点机构欧指的隐含概率变化，并通过基本面多维特征与临场盘水交叉审计，找出本场最具数学期望值（Value）的投资方向：\n\n(注意：这是第 {version_idx+1} 次研判，请提供独特的分析切入点与结论)\n\n{context_str}"}
         ],
         "temperature": 0.3 + (version_idx * 0.15),
@@ -895,6 +1000,7 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             {"role": "system", "content": CRO_SYSTEM_PROMPT},
             {"role": "system", "content": PREDICTION_POLICY},
             {"role": "system", "content": TRACKING_OUTPUT_CONTRACT},
+            {"role": "system", "content": "最终执行单只保留共识、两项以内的建议、风险条件和 prediction_record；全文不超过 800 个汉字或等量内容。"},
             {"role": "user", "content": f"请立刻对以下3份报告进行风险敞口审计，并输出最终执行执行单：\n\n{combined_reports}"}
         ],
         "temperature": 0.1,
@@ -968,7 +1074,7 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                     i, match_id, api_base, api_key, model_name, system_prompt, context_str
                 ): i for i in range(3)
             }
-            
+            sub_errors = []
             for future in concurrent.futures.as_completed(futures):
                 idx = futures[future]
                 try:
@@ -976,20 +1082,31 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                     ai_tasks[str(match_id)]['status_list'][idx] = 'completed'
                 except Exception as sub_e:
                     print(f"Sub-thread {idx} failed for match {match_id}: {sub_e}")
+                    sub_errors.append(str(sub_e))
                     ai_tasks[str(match_id)]['status_list'][idx] = 'failed'
                     ai_tasks[str(match_id)]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
         
         # 判断是否全都失败
         st_list = ai_tasks[str(match_id)]['status_list']
         if all(s == 'failed' for s in st_list):
-            raise Exception("三个版本的 AI 研判全部请求失败。")
+            detail = sub_errors[0] if sub_errors else '未返回可用错误信息'
+            raise Exception(f"三个版本的 AI 研判全部请求失败：{detail}")
+
+        incomplete_reports = [idx + 1 for idx, report in enumerate(ai_tasks[str(match_id)]['reports']) if not has_final_output(report)]
+        if incomplete_reports:
+            raise Exception(f"第 {', '.join(map(str, incomplete_reports))} 份研判只返回了思考过程，未生成正文。请重新生成。")
             
         # 并发执行完毕，开始构建聚合上下文
-        reports_list = [ai_tasks[str(match_id)]['reports'][i] for i in range(3)]
+        # The CRO judges each analyst's conclusion, not its raw reasoning trace.
+        # Keeping traces out of this prompt cuts a large redundant model input while
+        # preserving them unchanged in the UI and analysis cache.
+        reports_list = [extract_final_output(ai_tasks[str(match_id)]['reports'][i]) for i in range(3)]
         combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
         
         # 串行调用大模型进行收敛层聚合
         final_ticket = run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports)
+        if not has_final_output(final_ticket):
+            raise Exception("CRO 只返回了思考过程，未生成最终执行单。请重新生成。")
         ai_tasks[str(match_id)]['final_ticket'] = final_ticket
         
         final_reports = ai_tasks[str(match_id)]['reports']
@@ -1035,16 +1152,13 @@ def match_ai_analysis():
     # different data semantics, while terminal fixtures remain ineligible.
     match_status = None
     match_metadata = None
-    if os.path.exists(DATA_FILE):
+    _, matches_by_id = load_match_store()
+    match_metadata = matches_by_id.get(match_id)
+    if match_metadata:
         try:
-            with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                for match in json.load(f):
-                    if str(match.get('id')) == match_id:
-                        match_status = int(match.get('status', 1))
-                        match_metadata = match
-                        break
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'无法校验比赛状态，已拒绝生成赛前预测: {str(e)}'})
+            match_status = int(match_metadata.get('status', 1))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': '比赛状态格式异常，请先同步最新赛事。'})
     if match_status is None:
         return jsonify({'success': False, 'error': '未在当前赛事列表中找到该比赛。请先同步最新赛事。'})
     if match_status not in ANALYSIS_STATUSES:
@@ -1082,7 +1196,7 @@ def match_ai_analysis():
                 with open(ai_cache_file, 'r', encoding='utf-8') as f:
                     cache_data = json.load(f)
                 
-                if analysis_mode == 'prematch' and cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and 'reports' in cache_data:
+                if analysis_mode == 'prematch' and cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
                     return jsonify({
                         'success': True, 
                         'status': 'completed', 
@@ -1090,6 +1204,8 @@ def match_ai_analysis():
                         'reports': cache_data['reports'],
                         'final_ticket': cache_data.get('final_ticket', '')
                     })
+                if not is_complete_analysis_cache(cache_data):
+                    os.remove(ai_cache_file)
             except Exception:
                 pass
         return jsonify({
@@ -1162,7 +1278,7 @@ def ai_analysis_status():
             with open(ai_cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
-            if cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and 'reports' in cache_data:
+            if cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
                 return jsonify({
                     'success': True, 
                     'status': 'completed', 
@@ -1170,6 +1286,8 @@ def ai_analysis_status():
                     'final_ticket': cache_data.get('final_ticket', ''),
                     'status_list': ['completed', 'completed', 'completed']
                 })
+            if not is_complete_analysis_cache(cache_data):
+                os.remove(ai_cache_file)
         except Exception:
             pass
             
@@ -1192,8 +1310,7 @@ def ai_analysis_status():
 def prediction_backtest():
     """Settle completed tracked predictions and return transparent aggregate metrics."""
     try:
-        with open(DATA_FILE, 'r', encoding='utf-8') as f:
-            matches = json.load(f)
+        matches, _ = load_match_store()
         settled = settle_finished_predictions(PREDICTION_DB_FILE, matches)
         data = prediction_summary(PREDICTION_DB_FILE)
         return jsonify({'success': True, 'newly_settled': settled, 'data': data})
@@ -1204,4 +1321,5 @@ def prediction_backtest():
 
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
+    start_refresh_scheduler()
     app.run(host='0.0.0.0', port=5000)
