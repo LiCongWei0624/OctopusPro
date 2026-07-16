@@ -2917,11 +2917,123 @@ body {
     .backtest-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .backtest-market-grid { grid-template-columns: 1fr; }
     .backtest-modal { width: 100vw; max-width: none; max-height: 100vh; height: 100vh; border-radius: 0; }
-    .backtest-body { padding: 0.9rem; }
+    .backtest-body { 
+        padding: 0.9rem; 
+        flex: 1 1 auto;
+        max-height: none;
+    }
     .backtest-sample-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .backtest-filter-search { grid-column: span 2; }
     .backtest-filter-reset { grid-column: 2; grid-row: 2; justify-self: end; }
-    .backtest-sample-table { min-width: 820px; }
+    
+    .backtest-sample-table-wrap {
+        border: none;
+        overflow-x: visible;
+    }
+    .backtest-sample-table {
+        min-width: 0 !important;
+        width: 100%;
+        display: block;
+    }
+    .backtest-sample-table thead {
+        display: none;
+    }
+    .backtest-sample-table tbody {
+        display: block;
+        width: 100%;
+    }
+    .backtest-sample-table tr {
+        display: flex;
+        flex-wrap: wrap;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-color);
+        border-radius: var(--border-radius-md);
+        margin-bottom: 0.8rem;
+        padding: 0.8rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    .backtest-sample-table tr.is-expanded {
+        border-bottom: none;
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+        margin-bottom: 0;
+    }
+    .backtest-sample-table tr.backtest-expanded-row {
+        display: block;
+        border-top: none;
+        border-top-left-radius: 0;
+        border-top-right-radius: 0;
+        background: var(--bg-body-secondary);
+        margin-top: 0;
+        padding: 0.4rem 0.8rem 0.8rem !important;
+    }
+    .backtest-sample-table tr.backtest-expanded-row > td {
+        padding: 0 !important;
+    }
+    .backtest-sample-table td {
+        display: block;
+        padding: 0.4rem 0 !important;
+        border-bottom: none !important;
+        text-align: left;
+    }
+    .backtest-sample-table td:nth-child(1) {
+        width: 100% !important;
+        border-bottom: 1px dashed var(--border-color) !important;
+        padding-bottom: 0.6rem !important;
+        margin-bottom: 0.4rem;
+    }
+    .backtest-sample-table td:nth-child(2) {
+        width: 50% !important;
+        padding-right: 0.5rem !important;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+    .backtest-sample-table td:nth-child(2)::before {
+        content: "预测：";
+        font-weight: 700;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+    }
+    .backtest-sample-table td:nth-child(3) {
+        width: 50% !important;
+        padding-left: 0.6rem !important;
+        box-sizing: border-box;
+        border-left: 1px dashed var(--border-color) !important;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+    }
+    .backtest-sample-table td:nth-child(3)::before {
+        content: "赛果：";
+        font-weight: 700;
+        color: var(--text-muted);
+        font-size: 0.72rem;
+    }
+    .backtest-sample-table td:nth-child(4) {
+        width: 100% !important;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-top: 1px dashed var(--border-color) !important;
+        margin-top: 0.4rem;
+        padding-top: 0.6rem !important;
+    }
+    .backtest-sample-table td:nth-child(4) .backtest-fixture-state {
+        margin-top: 0;
+    }
+    .backtest-sample-table td:nth-child(5) {
+        width: 100% !important;
+        padding-top: 0.6rem !important;
+    }
+    .backtest-sample-table td:nth-child(5) .backtest-detail-button {
+        width: 100%;
+        text-align: center;
+        padding: 0.5rem;
+        font-size: 0.75rem;
+    }
+    
     .backtest-detail-grid { grid-template-columns: 1fr; }
     .cro-structured-picks > div { grid-template-columns: 1fr; }
     .cro-structured-picks span { border-right: 0; border-bottom: 1px solid var(--border-color); }
