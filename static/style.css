@@ -2818,8 +2818,8 @@ body {
     font-weight: 500;
 }
 
-.backtest-modal { max-width: 760px; }
-.backtest-body { gap: 1.25rem; }
+.backtest-modal { width: min(980px, calc(100vw - 2rem)); max-width: 980px; max-height: calc(100vh - 2rem); }
+.backtest-body { gap: 1.25rem; overflow-y: auto; }
 .backtest-summary-grid, .backtest-market-grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2853,11 +2853,56 @@ body {
 .backtest-section-heading h4 { font-size: 0.88rem; color: var(--text-primary); }
 .backtest-section-heading span { font-size: 0.72rem; color: var(--text-muted); }
 .backtest-loading, .backtest-empty { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.65; }
+.backtest-sample-filters { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)) minmax(150px, 1.2fr) 32px; gap: 0.55rem; align-items: end; }
+.backtest-filter-control { min-width: 0; display: flex; flex-direction: column; gap: 0.28rem; color: var(--text-muted); font-size: 0.68rem; font-weight: 700; }
+.backtest-filter-control select, .backtest-filter-control input { width: 100%; min-width: 0; height: 32px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-app); color: var(--text-primary); padding: 0 0.55rem; font: inherit; font-size: 0.75rem; outline: none; }
+.backtest-filter-control select:focus, .backtest-filter-control input:focus { border-color: var(--color-primary); }
+.backtest-filter-reset { width: 32px; height: 32px; border: 1px solid var(--border-color); border-radius: 3px; background: var(--bg-app); color: var(--text-secondary); cursor: pointer; font-size: 1.1rem; line-height: 1; }
+.backtest-filter-reset:hover { color: var(--color-primary); border-color: var(--color-primary); }
+.backtest-sample-list-heading { display: flex; justify-content: flex-end; color: var(--text-muted); font-size: 0.7rem; margin-top: -0.15rem; }
+.backtest-sample-table-wrap { overflow-x: auto; border: 1px solid var(--border-color); }
+.backtest-sample-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 0.78rem; }
+.backtest-sample-table th { color: var(--text-muted); font-size: 0.7rem; font-weight: 700; text-align: left; background: var(--bg-app); }
+.backtest-sample-table th, .backtest-sample-table td { padding: 0.7rem 0.75rem; border-bottom: 1px solid var(--border-color); vertical-align: middle; }
+.backtest-sample-table tbody tr:last-child td { border-bottom: 0; }
+.backtest-sample-table td strong { display: block; color: var(--text-primary); font-size: 0.8rem; }
+.backtest-sample-table td > span { display: block; color: var(--text-muted); font-size: 0.7rem; margin-top: 0.2rem; }
+.backtest-sample-table small, .backtest-detail-header small { color: var(--text-muted); font-weight: 500; }
+.backtest-fixture-state { display: block; color: var(--text-muted); font-size: 0.68rem; margin-top: 0.25rem; white-space: nowrap; }
+.backtest-status { display: inline-flex; padding: 0.2rem 0.45rem; border-radius: 3px; font-size: 0.68rem; font-weight: 700; white-space: nowrap; }
+.backtest-status.settled { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 12%, transparent); }
+.backtest-status.pending { color: var(--color-primary); background: color-mix(in srgb, var(--color-primary) 12%, transparent); }
+.backtest-status.untracked { color: var(--text-secondary); background: var(--bg-app); }
+.backtest-detail-button, .backtest-detail-close { border: 1px solid var(--border-color); background: var(--bg-app); color: var(--text-primary); font: inherit; cursor: pointer; }
+.backtest-detail-button { padding: 0.32rem 0.5rem; border-radius: 3px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; }
+.backtest-detail-button:hover { border-color: var(--color-primary); color: var(--color-primary); }
+.backtest-sample-detail { border: 1px solid var(--border-color); background: var(--bg-app); padding: 1rem; }
+.backtest-detail-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.backtest-detail-eyebrow { display: block; color: var(--color-primary); font-size: 0.68rem; font-weight: 700; margin-bottom: 0.35rem; }
+.backtest-detail-header h4 { color: var(--text-primary); font-size: 1rem; }
+.backtest-detail-close { width: 28px; height: 28px; font-size: 1.15rem; line-height: 1; }
+.backtest-detail-meta { color: var(--text-muted); font-size: 0.72rem; line-height: 1.55; margin: 0.65rem 0 0.9rem; }
+.backtest-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.65rem; }
+.backtest-detail-grid section { border: 1px solid var(--border-color); padding: 0.75rem; }
+.backtest-detail-grid h5 { color: var(--text-primary); font-size: 0.76rem; margin-bottom: 0.45rem; }
+.backtest-detail-row { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.36rem 0; border-bottom: 1px solid var(--border-color); font-size: 0.74rem; }
+.backtest-detail-row:last-child { border-bottom: 0; }
+.backtest-detail-row span { color: var(--text-secondary); }
+.backtest-detail-row strong { color: var(--text-primary); font-weight: 700; text-align: right; }
+.backtest-raw-detail { border-top: 1px solid var(--border-color); margin-top: 0.75rem; padding-top: 0.75rem; }
+.backtest-raw-detail summary { color: var(--text-primary); cursor: pointer; font-size: 0.78rem; font-weight: 700; }
+.backtest-raw-detail pre { max-height: 280px; overflow: auto; margin: 0.65rem 0 0; padding: 0.75rem; background: var(--bg-hover); color: var(--text-secondary); font: 0.72rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 @media (max-width: 780px) {
     .backtest-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .backtest-market-grid { grid-template-columns: 1fr; }
-    .backtest-modal { width: calc(100% - 1.5rem); }
+    .backtest-modal { width: 100vw; max-width: none; max-height: 100vh; height: 100vh; border-radius: 0; }
+    .backtest-body { padding: 0.9rem; }
+    .backtest-sample-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .backtest-filter-search { grid-column: span 2; }
+    .backtest-filter-reset { grid-column: 2; grid-row: 2; justify-self: end; }
+    .backtest-sample-table { min-width: 620px; }
+    .backtest-detail-grid { grid-template-columns: 1fr; }
     .modal-header { padding: 1rem; }
     .modal-body { padding: 1rem; }
 }

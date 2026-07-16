@@ -10,7 +10,7 @@ import time
 from leisu_crawler import fetch_matches
 from detail_scraper import get_complete_match_details, get_odds_detail_via_playwright
 from scraper import scrape_desktop_matches
-from prediction_tracker import init_database, record_prediction, settle_finished_predictions, summary as prediction_summary
+from prediction_tracker import init_database, prediction_detail, record_prediction, settle_finished_predictions, summary as prediction_summary
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
@@ -1249,6 +1249,9 @@ def match_ai_analysis():
                 'home_team': match_metadata.get('home_team', home),
                 'away_team': match_metadata.get('away_team', away),
                 'kickoff': f"{match_metadata.get('date', '')} {match_metadata.get('time', '')}".strip(),
+                'competition': match_metadata.get('competition', ''),
+                'fixture_date': match_metadata.get('date', ''),
+                'fixture_status': match_status,
                 'analysis_mode': analysis_mode,
             },
             analysis_mode,
@@ -1306,16 +1309,47 @@ def ai_analysis_status():
     return jsonify({'success': True, 'status': 'idle'})
 
 
+def _enrich_prediction_samples(samples, matches_by_id):
+    """Backfill filter fields for legacy prediction rows from the match store."""
+    for sample in samples:
+        fixture = matches_by_id.get(str(sample.get('match_id')), {})
+        if not fixture:
+            continue
+        if not sample.get('competition'):
+            sample['competition'] = fixture.get('competition', '')
+        if not sample.get('fixture_date'):
+            sample['fixture_date'] = fixture.get('date', '')
+        if sample.get('fixture_status') is None:
+            sample['fixture_status'] = fixture.get('status')
+        if not sample.get('kickoff'):
+            sample['kickoff'] = f"{fixture.get('date', '')} {fixture.get('time', '')}".strip()
+
+
 @app.route('/api/prediction_backtest')
 def prediction_backtest():
     """Settle completed tracked predictions and return transparent aggregate metrics."""
     try:
-        matches, _ = load_match_store()
+        matches, matches_by_id = load_match_store()
         settled = settle_finished_predictions(PREDICTION_DB_FILE, matches)
         data = prediction_summary(PREDICTION_DB_FILE)
+        _enrich_prediction_samples(data.get('recent', []), matches_by_id)
         return jsonify({'success': True, 'newly_settled': settled, 'data': data})
     except Exception as e:
         return jsonify({'success': False, 'error': f'回测数据处理失败: {str(e)}'})
+
+
+@app.route('/api/prediction_backtest/<int:prediction_id>')
+def prediction_backtest_detail(prediction_id):
+    """Return one backtest sample's fixture input, prediction, and settlement."""
+    try:
+        detail = prediction_detail(PREDICTION_DB_FILE, prediction_id)
+        if not detail:
+            return jsonify({'success': False, 'error': '未找到该预测样本'}), 404
+        _, matches_by_id = load_match_store()
+        _enrich_prediction_samples([detail], matches_by_id)
+        return jsonify({'success': True, 'data': detail})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'读取预测样本失败: {str(e)}'})
 
 
 

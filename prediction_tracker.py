@@ -27,8 +27,12 @@ def init_database(db_path):
                 analysis_mode TEXT NOT NULL DEFAULT 'prematch',
                 created_at TEXT NOT NULL,
                 model_name TEXT NOT NULL,
+                competition TEXT,
+                fixture_date TEXT,
+                fixture_status INTEGER,
                 prompt_hash TEXT NOT NULL,
                 context_hash TEXT NOT NULL,
+                context_text TEXT,
                 prediction_json TEXT,
                 final_report TEXT NOT NULL,
                 settled_at TEXT,
@@ -38,6 +42,14 @@ def init_database(db_path):
         columns = {row[1] for row in conn.execute('PRAGMA table_info(predictions)')}
         if 'analysis_mode' not in columns:
             conn.execute("ALTER TABLE predictions ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'prematch'")
+        if 'context_text' not in columns:
+            conn.execute("ALTER TABLE predictions ADD COLUMN context_text TEXT")
+        if 'competition' not in columns:
+            conn.execute("ALTER TABLE predictions ADD COLUMN competition TEXT")
+        if 'fixture_date' not in columns:
+            conn.execute("ALTER TABLE predictions ADD COLUMN fixture_date TEXT")
+        if 'fixture_status' not in columns:
+            conn.execute("ALTER TABLE predictions ADD COLUMN fixture_status INTEGER")
         conn.commit()
 
 
@@ -102,12 +114,15 @@ def record_prediction(db_path, metadata, model_name, system_prompt, context, fin
         conn.execute('''
             INSERT INTO predictions (
                 match_id, home_team, away_team, kickoff, analysis_mode, created_at, model_name,
-                prompt_hash, context_hash, prediction_json, final_report
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                competition, fixture_date, fixture_status, prompt_hash, context_hash, context_text,
+                prediction_json, final_report
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             str(metadata['match_id']), metadata.get('home_team', ''), metadata.get('away_team', ''),
-            metadata.get('kickoff', ''), metadata.get('analysis_mode', 'prematch'), _now(), model_name, _hash(system_prompt), _hash(context),
-            json.dumps(record, ensure_ascii=False) if record else None, final_report,
+            metadata.get('kickoff', ''), metadata.get('analysis_mode', 'prematch'), _now(), model_name,
+            metadata.get('competition', ''), metadata.get('fixture_date', ''), metadata.get('fixture_status'),
+            _hash(system_prompt), _hash(context),
+            context, json.dumps(record, ensure_ascii=False) if record else None, final_report,
         ))
         conn.commit()
     return record is not None
@@ -191,21 +206,28 @@ def settle_finished_predictions(db_path, matches):
     return settled
 
 
-def summary(db_path, limit=100):
+def summary(db_path, limit=None):
     markets = {'one_x_two': [], 'asian_handicap': [], 'over_under': []}
     recent = []
     with closing(sqlite3.connect(db_path)) as conn:
-        rows = conn.execute('''
+        query = '''
             SELECT id, match_id, home_team, away_team, kickoff, analysis_mode, created_at,
-                   prediction_json, result_json
-            FROM predictions ORDER BY id DESC LIMIT ?
-        ''', (limit,)).fetchall()
+                   competition, fixture_date, fixture_status, prediction_json, result_json
+            FROM predictions ORDER BY id DESC
+        '''
+        params = ()
+        if limit is not None:
+            query += ' LIMIT ?'
+            params = (limit,)
+        rows = conn.execute(query, params).fetchall()
     for row in rows:
-        prediction = json.loads(row[7]) if row[7] else None
-        result = json.loads(row[8]) if row[8] else None
+        prediction = json.loads(row[10]) if row[10] else None
+        result = json.loads(row[11]) if row[11] else None
         recent.append({
             'id': row[0], 'match_id': row[1], 'home_team': row[2], 'away_team': row[3],
-            'kickoff': row[4], 'analysis_mode': row[5], 'created_at': row[6], 'prediction': prediction, 'result': result,
+            'kickoff': row[4], 'analysis_mode': row[5], 'created_at': row[6],
+            'competition': row[7], 'fixture_date': row[8], 'fixture_status': row[9],
+            'prediction': prediction, 'result': result,
         })
         if result:
             for market in markets:
@@ -213,18 +235,18 @@ def summary(db_path, limit=100):
 
     overview = {
         'window_size': len(rows),
-        'tracked': sum(row[7] is not None for row in rows),
-        'settled': sum(row[8] is not None for row in rows),
-        'pending': sum(row[7] is not None and row[8] is None for row in rows),
-        'untracked': sum(row[7] is None for row in rows),
+        'tracked': sum(row[10] is not None for row in rows),
+        'settled': sum(row[11] is not None for row in rows),
+        'pending': sum(row[10] is not None and row[11] is None for row in rows),
+        'untracked': sum(row[10] is None for row in rows),
     }
     by_mode = {}
     for row in rows:
         mode = row[5] or 'prematch'
         bucket = by_mode.setdefault(mode, {'total': 0, 'tracked': 0, 'settled': 0})
         bucket['total'] += 1
-        bucket['tracked'] += row[7] is not None
-        bucket['settled'] += row[8] is not None
+        bucket['tracked'] += row[10] is not None
+        bucket['settled'] += row[11] is not None
 
     metrics = {}
     hit_points = {'win': 1.0, 'half_win': 0.5, 'push': 0.0, 'half_loss': 0.0, 'loss': 0.0}
@@ -242,3 +264,36 @@ def summary(db_path, limit=100):
             'settlement_units': round(units, 2),
         }
     return {'overview': overview, 'by_mode': by_mode, 'metrics': metrics, 'recent': recent}
+
+
+def prediction_detail(db_path, prediction_id):
+    """Return one immutable backtest sample without loading every report into the list view."""
+    with closing(sqlite3.connect(db_path)) as conn:
+        row = conn.execute('''
+            SELECT id, match_id, home_team, away_team, kickoff, analysis_mode, created_at,
+                   model_name, competition, fixture_date, fixture_status, context_text,
+                   prediction_json, final_report, settled_at, result_json
+            FROM predictions WHERE id = ?
+        ''', (prediction_id,)).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        'id': row[0],
+        'match_id': row[1],
+        'home_team': row[2],
+        'away_team': row[3],
+        'kickoff': row[4],
+        'analysis_mode': row[5],
+        'created_at': row[6],
+        'model_name': row[7],
+        'competition': row[8],
+        'fixture_date': row[9],
+        'fixture_status': row[10],
+        'context': row[11],
+        'prediction': json.loads(row[12]) if row[12] else None,
+        'final_report': row[13],
+        'settled_at': row[14],
+        'result': json.loads(row[15]) if row[15] else None,
+    }
