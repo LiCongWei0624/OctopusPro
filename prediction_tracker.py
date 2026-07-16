@@ -251,10 +251,17 @@ def summary(db_path, limit=None):
     metrics = {}
     hit_points = {'win': 1.0, 'half_win': 0.5, 'push': 0.0, 'half_loss': 0.0, 'loss': 0.0}
     for market, outcomes in markets.items():
+        outcome_counts = {
+            outcome: sum(item.get('outcome') == outcome for item in outcomes)
+            for outcome in hit_points
+        }
         if market == 'one_x_two':
-            wins = sum(item['outcome'] == 'win' for item in outcomes)
-            metrics[market] = {'settled': len(outcomes), 'wins': wins,
-                               'hit_rate': round(wins / len(outcomes), 4) if outcomes else None}
+            wins = outcome_counts['win']
+            metrics[market] = {
+                'settled': len(outcomes), 'wins': wins,
+                'losses': outcome_counts['loss'],
+                'hit_rate': round(wins / len(outcomes), 4) if outcomes else None,
+            }
             continue
         points = sum(hit_points[item['outcome']] for item in outcomes)
         units = sum(item['unit_return'] for item in outcomes)
@@ -262,6 +269,11 @@ def summary(db_path, limit=None):
             'settled': len(outcomes),
             'hit_rate': round(points / len(outcomes), 4) if outcomes else None,
             'settlement_units': round(units, 2),
+            'wins': outcome_counts['win'],
+            'half_wins': outcome_counts['half_win'],
+            'pushes': outcome_counts['push'],
+            'half_losses': outcome_counts['half_loss'],
+            'losses': outcome_counts['loss'],
         }
     return {'overview': overview, 'by_mode': by_mode, 'metrics': metrics, 'recent': recent}
 

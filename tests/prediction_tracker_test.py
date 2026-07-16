@@ -30,7 +30,8 @@ class PredictionTrackerTests(unittest.TestCase):
             )
             settle_finished_predictions(database, [{'id': '101', 'status': 8, 'score': '2-1'}])
 
-            sample = summary(database)['recent'][0]
+            backtest = summary(database)
+            sample = backtest['recent'][0]
             detail = prediction_detail(database, sample['id'])
 
             self.assertEqual(detail['context'], 'fixture input')
@@ -40,6 +41,9 @@ class PredictionTrackerTests(unittest.TestCase):
             self.assertEqual(detail['competition'], 'Test League')
             self.assertEqual(detail['fixture_date'], '07-16 Thursday')
             self.assertEqual(detail['fixture_status'], 1)
+            self.assertEqual(backtest['metrics']['one_x_two']['wins'], 1)
+            self.assertEqual(backtest['metrics']['asian_handicap']['wins'], 1)
+            self.assertEqual(backtest['metrics']['over_under']['wins'], 1)
 
     def test_summary_defaults_to_all_samples(self):
         with tempfile.TemporaryDirectory() as directory:
