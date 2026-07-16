@@ -906,6 +906,26 @@ function formatBacktestRate(value) {
     return typeof value === 'number' ? `${(value * 100).toFixed(1)}%` : '--';
 }
 
+function formatBacktestDateTime(isoString) {
+    if (!isoString) return '--';
+    try {
+        const date = new Date(isoString);
+        if (isNaN(date.getTime())) return isoString;
+        
+        const pad = (num) => String(num).padStart(2, '0');
+        const yyyy = date.getFullYear();
+        const mm = pad(date.getMonth() + 1);
+        const dd = pad(date.getDate());
+        const hh = pad(date.getHours());
+        const min = pad(date.getMinutes());
+        const ss = pad(date.getSeconds());
+        
+        return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
+    } catch (_) {
+        return isoString;
+    }
+}
+
 let backtestSamples = [];
 let backtestFilters = { date: 'all', competition: 'all', status: 'all', query: '' };
 let expandedBacktestSampleId = null;
@@ -1136,7 +1156,7 @@ function predictionSampleDetailMarkup(sample) {
         ['胜平负结算', formatSettlementOutcome(result.one_x_two?.outcome)],
         ['亚洲让球结算', `${formatSettlementOutcome(result.asian_handicap?.outcome)}${result.asian_handicap?.unit_return !== undefined ? ` (${result.asian_handicap.unit_return > 0 ? '+' : ''}${result.asian_handicap.unit_return} 单位)` : ''}`],
         ['大小球结算', `${formatSettlementOutcome(result.over_under?.outcome)}${result.over_under?.unit_return !== undefined ? ` (${result.over_under.unit_return > 0 ? '+' : ''}${result.over_under.unit_return} 单位)` : ''}`],
-        ['结算时间', sample.settled_at || '--']
+        ['结算时间', formatBacktestDateTime(sample.settled_at)]
     ] : [['结算状态', prediction ? '等待比赛完赛或赛果同步' : '无可结算结构化预测']];
     const rowMarkup = rows => rows.map(([label, value]) => `<div class="backtest-detail-row"><span>${escapeBacktestHtml(label)}</span><strong>${escapeBacktestHtml(value)}</strong></div>`).join('');
 
@@ -1145,7 +1165,7 @@ function predictionSampleDetailMarkup(sample) {
             <div><span class="backtest-detail-eyebrow">样本 #${sample.id} · ${escapeBacktestHtml(sample.analysis_mode || 'prematch')}</span><h4>${escapeBacktestHtml(home)} <small>vs</small> ${escapeBacktestHtml(away)}</h4></div>
             <button type="button" class="backtest-detail-close" onclick="clearPredictionSampleDetail()" aria-label="关闭明细">×</button>
         </div>
-        <div class="backtest-detail-meta">${escapeBacktestHtml(sample.competition || '未分类')} · 赛事 ID ${escapeBacktestHtml(sample.match_id)} · 开赛 ${escapeBacktestHtml(sample.kickoff || '--')} · 分析于 ${escapeBacktestHtml(sample.created_at || '--')} · ${escapeBacktestHtml(sample.model_name || '--')}</div>
+        <div class="backtest-detail-meta">${escapeBacktestHtml(sample.competition || '未分类')} · 赛事 ID ${escapeBacktestHtml(sample.match_id)} · 开赛 ${escapeBacktestHtml(sample.kickoff || '--')} · 分析于 ${escapeBacktestHtml(formatBacktestDateTime(sample.created_at))} · ${escapeBacktestHtml(sample.model_name || '--')}</div>
         <div class="backtest-detail-grid">
             <section><h5>预测记录</h5>${rowMarkup(predictionRows)}</section>
             <section><h5>完赛结果</h5>${rowMarkup(settlementRows)}</section>
