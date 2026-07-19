@@ -24,18 +24,66 @@ let latestBatchProgress = null;
 let batchExecutionTickets = {};
 const MAX_BATCH_SELECTION = 6;
 
+function restoreNativeUiShell() {
+    const replaceElement = (element, tagName, afterCreate) => {
+        const replacement = document.createElement(tagName);
+        [...element.attributes].forEach(attribute => {
+            if (!['size', 'variant', 'circle', 'pill', 'password-toggle', 'resize', 'label'].includes(attribute.name)) {
+                replacement.setAttribute(attribute.name, attribute.value);
+            }
+        });
+        replacement.innerHTML = element.innerHTML
+            .replace(/<sl-option\b/g, '<option')
+            .replace(/<\/sl-option>/g, '</option>');
+        if (afterCreate) afterCreate(replacement, element);
+        element.replaceWith(replacement);
+        return replacement;
+    };
+
+    document.querySelectorAll('sl-button').forEach(element => {
+        const button = replaceElement(element, 'button');
+        if (button.id === 'refresh-btn') button.className = 'btn-refresh';
+        if (button.id === 'prediction-backtest-btn' || button.id === 'ai-config-btn') button.className = 'btn-secondary';
+        if (button.id === 'btn-batch-select-mode') button.className = 'btn-batch-select-mode';
+        if (button.id === 'btn-batch-ai-analysis') button.className = 'btn-batch-ai';
+    });
+    document.querySelectorAll('sl-badge').forEach(element => replaceElement(element, 'span'));
+    document.querySelectorAll('sl-input').forEach(element => replaceElement(element, 'input', input => {
+        input.type = element.getAttribute('type') || 'text';
+        input.value = element.getAttribute('value') || '';
+        input.placeholder = element.getAttribute('placeholder') || '';
+    }));
+    document.querySelectorAll('sl-select').forEach(element => {
+        const select = replaceElement(element, 'select');
+        select.value = element.getAttribute('value') || '';
+    });
+    document.querySelectorAll('sl-textarea').forEach(element => replaceElement(element, 'textarea', textarea => {
+        textarea.rows = Number(element.getAttribute('rows') || 5);
+        textarea.placeholder = element.getAttribute('placeholder') || '';
+    }));
+    document.querySelectorAll('sl-dialog').forEach(element => {
+        const dialog = replaceElement(element, 'div');
+        dialog.className = 'modal-backdrop';
+        dialog.style.display = 'none';
+        if (dialog.id === 'ai-config-modal') dialog.onclick = closeAiConfigModalOnBackdrop;
+        if (dialog.id === 'prediction-backtest-modal') dialog.onclick = closePredictionBacktestOnBackdrop;
+        if (dialog.id === 'batch-analysis-modal') dialog.onclick = closeBatchAnalysisModalOnBackdrop;
+    });
+}
+
 function showAppNotice(message, variant = 'primary') {
     const host = document.getElementById('app-notice-host');
     if (!host || !message) return;
-    const notice = document.createElement('sl-alert');
-    notice.className = 'app-notice';
-    notice.variant = variant === 'success' ? 'success' : 'primary';
-    notice.closable = true;
-    notice.duration = 3200;
-    notice.innerHTML = `<span>${String(message).replace(/[&<>]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char]))}</span>`;
+    const notice = document.createElement('div');
+    notice.className = `app-notice ${variant}`;
+    notice.setAttribute('role', 'status');
+    notice.textContent = message;
     host.appendChild(notice);
-    customElements.whenDefined('sl-alert').then(() => notice.toast());
-    notice.addEventListener('sl-after-hide', () => notice.remove(), { once: true });
+    requestAnimationFrame(() => notice.classList.add('visible'));
+    setTimeout(() => {
+        notice.classList.remove('visible');
+        setTimeout(() => notice.remove(), 180);
+    }, 3200);
 }
 
 function cacheMatchDetails(matchId, details) {
@@ -97,6 +145,7 @@ function checkAndLoadCachedReport(matchId) {
 window.checkAndLoadCachedReport = checkAndLoadCachedReport;
 
 // Initial Load
+restoreNativeUiShell();
 document.addEventListener('DOMContentLoaded', () => {
     autoFixHtmlCacheBug();
     loadMatches();
@@ -249,11 +298,9 @@ function renderDateSidebar() {
 
     const dates = getDatesRange();
     dates.forEach(date => {
-        const li = document.createElement('sl-button');
+        const li = document.createElement('li');
         li.className = `date-tab ${selectedDate === date ? 'active' : ''}`;
         li.id = `date-tab-${date}`;
-        li.size = 'small';
-        li.pill = true;
 
         let label = date;
         if (date === todayStr) label = `${date.split(' ')[0]} 今天`;
@@ -376,27 +423,23 @@ function renderLeagueFilters(leagues) {
     filterBar.innerHTML = `
         <div class="filter-controls-column">
             <div class="search-input-wrapper">
-                <sl-input id="match-search-input" class="search-input-field" size="small" placeholder="搜索球队、联赛..." value="${searchQuery}">
-                    <svg slot="prefix" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-                </sl-input>
+                <svg class="search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <input type="text" id="match-search-input" class="search-input-field" placeholder="搜索球队、联赛..." value="${searchQuery}" oninput="filterMatchesBySearch()">
             </div>
             <div class="filter-dropdowns-row">
                 <div class="dropdown-wrapper">
-                    <sl-select id="league-select" class="league-select-dropdown" size="small" value="${selectedLeague}">
-                        ${leagues.map(l => `<sl-option value="${l}">${l === '全部' ? '全部联赛' : l}</sl-option>`).join('')}
-                    </sl-select>
+                    <select id="league-select" class="league-select-dropdown" onchange="filterMatchesByLeague(this.value)">
+                        ${leagues.map(l => `<option value="${l}" ${selectedLeague === l ? 'selected' : ''}>${l === '全部' ? '全部联赛' : l}</option>`).join('')}
+                    </select>
                 </div>
                 <div class="dropdown-wrapper">
-                    <sl-select id="status-select" class="league-select-dropdown" size="small" value="${selectedStatus}">
-                        ${statuses.map(s => `<sl-option value="${s}">${s === '全部' ? '全部状态' : s}</sl-option>`).join('')}
-                    </sl-select>
+                    <select id="status-select" class="league-select-dropdown" onchange="filterMatchesByStatus(this.value)">
+                        ${statuses.map(s => `<option value="${s}" ${selectedStatus === s ? 'selected' : ''}>${s === '全部' ? '全部状态' : s}</option>`).join('')}
+                    </select>
                 </div>
             </div>
         </div>
     `;
-    document.getElementById('match-search-input')?.addEventListener('sl-input', filterMatchesBySearch);
-    document.getElementById('league-select')?.addEventListener('sl-change', event => filterMatchesByLeague(event.target.value));
-    document.getElementById('status-select')?.addEventListener('sl-change', event => filterMatchesByStatus(event.target.value));
 }
 
 // Handle status selector dropdown events
@@ -495,7 +538,7 @@ function renderMatchCards(matches) {
         groupMatches.forEach(m => {
             const status = Number(m.status || 1);
             const isLive = (status >= 2 && status <= 7);
-            const card = document.createElement('sl-card');
+            const card = document.createElement('div');
             const isBatchSelected = Boolean(batchSelectedMatches[String(m.id)]);
             card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''} ${isBatchSelected ? 'batch-selected' : ''}`;
             card.id = `match-card-${m.id}`;
@@ -608,7 +651,7 @@ function renderMatchCards(matches) {
                 </div>
             </div>
             <div class="match-status-col-vertical">
-                <sl-badge class="status-chip ${statusClass}" variant="${statusVariant}" pill>${statusText}</sl-badge>
+                <span class="status-chip ${statusClass}">${statusText}</span>
                 ${halfDisplay || penaltyDisplay ? `
                     <div class="extra-scores" style="display: flex; gap: 0.35rem; justify-content: flex-end; align-items: center; margin-top: 3px;">
                         ${halfDisplay}
@@ -679,13 +722,13 @@ window.clearBatchSelection = clearBatchSelection;
 
 function openBatchAnalysisModal() {
     const modal = document.getElementById('batch-analysis-modal');
-    if (modal) modal.show();
+    if (modal) modal.style.display = 'flex';
 }
 window.openBatchAnalysisModal = openBatchAnalysisModal;
 
 function closeBatchAnalysisModal() {
     const modal = document.getElementById('batch-analysis-modal');
-    if (modal) modal.hide();
+    if (modal) modal.style.display = 'none';
 }
 window.closeBatchAnalysisModal = closeBatchAnalysisModal;
 
@@ -1166,7 +1209,7 @@ function openAiConfigModal() {
         document.getElementById('global-ai-key').value = cfg.api_key || '';
         document.getElementById('global-ai-model').value = cfg.model_name || 'minimax-m2.5-free';
         document.getElementById('global-ai-prompt').value = cfg.system_prompt || '';
-        modal.show();
+        modal.style.display = 'flex';
     });
 }
 window.openAiConfigModal = openAiConfigModal;
@@ -1174,7 +1217,7 @@ window.openAiConfigModal = openAiConfigModal;
 function closeAiConfigModal() {
     const modal = document.getElementById('ai-config-modal');
     if (modal) {
-        modal.hide();
+        modal.style.display = 'none';
     }
 }
 window.closeAiConfigModal = closeAiConfigModal;
@@ -1557,7 +1600,7 @@ window.loadPredictionSampleDetail = loadPredictionSampleDetail;
 
 function closePredictionBacktestModal() {
     const modal = document.getElementById('prediction-backtest-modal');
-    if (modal) modal.hide();
+    if (modal) modal.style.display = 'none';
     clearPredictionSampleDetail();
 }
 window.closePredictionBacktestModal = closePredictionBacktestModal;
@@ -1621,7 +1664,7 @@ function openPredictionBacktestModal() {
     const container = document.getElementById('prediction-backtest-content');
     if (!modal || !container) return;
 
-    modal.show();
+    modal.style.display = 'flex';
     clearPredictionSampleDetail();
     container.innerHTML = '<p class="backtest-loading">正在同步已完场比赛并计算回测...</p>';
     fetch('/api/prediction_backtest')

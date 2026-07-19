@@ -2309,6 +2309,255 @@ body {
     }
 }
 
+/* Native controls for batch analysis and the mobile app shell. */
+.panel-title-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    min-width: 0;
+}
+
+.btn-batch-select-mode,
+.btn-batch-ai,
+.batch-ai-selection button,
+.batch-result-toggle,
+.batch-retry-failed {
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-panel);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1;
+    min-height: 32px;
+    padding: 0.45rem 0.65rem;
+    cursor: pointer;
+}
+
+.btn-batch-select-mode:hover,
+.btn-batch-select-mode.active {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+    background: var(--color-primary-glow);
+}
+
+.btn-batch-ai {
+    color: #fff;
+    border-color: var(--color-primary);
+    background: var(--color-primary);
+}
+
+.btn-batch-ai:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.batch-ai-selection {
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-top: 0.65rem;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--color-primary-glow);
+    border-radius: var(--border-radius-sm);
+    background: var(--color-primary-glow);
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.batch-ai-selection button {
+    min-height: 28px;
+    padding: 0.3rem 0.5rem;
+    color: var(--color-primary);
+    background: transparent;
+}
+
+.batch-match-select {
+    position: absolute;
+    top: 0.45rem;
+    right: 0.5rem;
+    z-index: 2;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--text-secondary);
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.batch-match-checkbox {
+    accent-color: var(--color-primary);
+}
+
+.match-card.batch-selected {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-primary-glow);
+}
+
+.batch-analysis-modal .modal-container {
+    max-width: 680px;
+}
+
+.batch-ai-progress {
+    width: 100%;
+}
+
+.batch-progress-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.65rem 0.75rem;
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-body-secondary);
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 650;
+}
+
+.batch-progress-list {
+    display: grid;
+    gap: 0.6rem;
+    margin: 0.85rem 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.batch-progress-item {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    gap: 0.65rem;
+    align-items: center;
+    padding: 0.7rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-sm);
+}
+
+.batch-progress-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+.batch-progress-item.processing .batch-progress-dot { background: var(--color-primary); }
+.batch-progress-item.completed .batch-progress-dot,
+.batch-progress-item.cached .batch-progress-dot { background: var(--color-success); }
+.batch-progress-item.failed .batch-progress-dot { background: var(--color-danger); }
+
+.batch-progress-match,
+.batch-progress-phase {
+    display: grid;
+    gap: 0.22rem;
+    min-width: 0;
+}
+
+.batch-progress-match strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.batch-progress-match small,
+.batch-progress-phase small {
+    color: var(--text-muted);
+    font-size: 0.74rem;
+}
+
+.batch-progress-phase {
+    justify-items: end;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+}
+
+.batch-result-toggle,
+.batch-retry-failed {
+    min-height: 28px;
+    padding: 0.35rem 0.5rem;
+    color: var(--color-primary);
+}
+
+.batch-execution-ticket {
+    grid-column: 2 / -1;
+    padding: 0.65rem;
+    border-radius: var(--border-radius-sm);
+    background: var(--bg-body-secondary);
+    font-size: 0.78rem;
+}
+
+.batch-ticket-details { margin-top: 0.5rem; }
+.batch-ticket-details summary { cursor: pointer; color: var(--color-primary); font-weight: 700; }
+.batch-ticket-details pre { margin: 0.5rem 0 0; white-space: pre-wrap; font: inherit; }
+
+.app-notice-host {
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 3000;
+    pointer-events: none;
+}
+
+.app-notice {
+    max-width: min(360px, calc(100vw - 2rem));
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--border-radius-sm);
+    background: var(--text-primary);
+    color: #fff;
+    box-shadow: var(--shadow-lg);
+    font-size: 0.82rem;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.app-notice.success { background: var(--color-success); }
+.app-notice.visible { opacity: 1; transform: translateY(0); }
+
+.mobile-bottom-nav { display: none; }
+
+@media (max-width: 780px) {
+    .panel-title-bar { gap: 0.6rem; }
+    .panel-title-actions { gap: 0.35rem; }
+    .btn-batch-select-mode,
+    .btn-batch-ai { min-height: 30px; padding: 0.35rem 0.5rem; font-size: 0.72rem; }
+
+    .mobile-bottom-nav {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        flex-shrink: 0;
+        min-height: 58px;
+        padding: 0.35rem 0.45rem calc(0.35rem + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--border-color);
+        background: var(--bg-panel);
+    }
+
+    .mobile-nav-item {
+        display: grid;
+        place-items: center;
+        gap: 0.15rem;
+        min-width: 0;
+        border: 0;
+        background: transparent;
+        color: var(--text-muted);
+        font: inherit;
+        font-size: 0.67rem;
+        font-weight: 650;
+    }
+
+    .mobile-nav-item svg { width: 19px; height: 19px; }
+    .mobile-nav-item.active { color: var(--color-primary); }
+    .app-notice-host { right: 0.75rem; bottom: 4.8rem; }
+
+    .batch-progress-item {
+        grid-template-columns: 10px minmax(0, 1fr);
+        align-items: start;
+    }
+    .batch-progress-phase { grid-column: 2; justify-items: start; }
+    .batch-execution-ticket { grid-column: 2; }
+}
+
 /* ==========================================================================
    Leisu Premium UX & Aesthetics Enhancements (SaaS Grade)
    ========================================================================== */
