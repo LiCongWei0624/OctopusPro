@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,10 +8,16 @@
     <meta name="description" content="基于高精度 WAF 绕过技术的实时足球赛事分析与预测系统">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/static/style.css?v=1.0.8">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/themes/light.css">
+    <link rel="stylesheet" href="/static/style.css?v=1.1.5">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script type="module"
+        src="https://cdn.jsdelivr.net/npm/@shoelace-style/shoelace@2.20.1/cdn/shoelace-autoloader.js"></script>
 </head>
+
 <body class="light-theme">
     <!-- Main Wrapper -->
     <div class="app-layout">
@@ -25,25 +32,34 @@
                 <div class="sync-status">
                     <span id="sync-time">数据未同步</span>
                 </div>
-                <button id="prediction-backtest-btn" class="btn-secondary" onclick="openPredictionBacktestModal()">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                        <path d="M4 19V5"></path><path d="M4 19h16"></path><path d="m7 15 3-3 3 2 4-5"></path>
+                <sl-button id="prediction-backtest-btn" class="nav-control" size="small"
+                    onclick="openPredictionBacktestModal()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"
+                        aria-hidden="true">
+                        <path d="M4 19V5"></path>
+                        <path d="M4 19h16"></path>
+                        <path d="m7 15 3-3 3 2 4-5"></path>
                     </svg>
                     <span>预测回测</span>
-                </button>
-                <button id="ai-config-btn" class="btn-secondary" onclick="openAiConfigModal()" style="margin-right: 0.5rem;">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                </sl-button>
+                <sl-button id="ai-config-btn" class="nav-control" size="small" onclick="openAiConfigModal()">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
                         <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                        <path
+                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z">
+                        </path>
                     </svg>
                     <span>AI 配置</span>
-                </button>
-                <button id="refresh-btn" class="btn-refresh" onclick="refreshData()">
+                </sl-button>
+                <sl-button id="refresh-btn" class="nav-control nav-sync-button" variant="primary" size="small"
+                    onclick="refreshData()">
                     <svg class="icon-spin" viewBox="0 0 24 24" width="16" height="16">
-                        <path fill="currentColor" d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                        <path fill="currentColor"
+                            d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                     </svg>
                     <span>同步最新赛事</span>
-                </button>
+                </sl-button>
 
             </div>
         </header>
@@ -59,36 +75,42 @@
                     </ul>
                 </div>
             </div>
-            
+
             <div class="datepicker-container" id="datepicker-container">
-                <button class="calendar-picker-btn" id="calendar-trigger-btn" onclick="toggleCustomDatePicker(event)" title="点击日历选择任意日期">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5">
+                <sl-button class="calendar-picker-btn" id="calendar-trigger-btn" size="small" circle
+                    onclick="toggleCustomDatePicker(event)" title="点击日历选择任意日期">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
                         <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
                         <line x1="16" y1="2" x2="16" y2="6"></line>
                         <line x1="8" y1="2" x2="8" y2="6"></line>
                         <line x1="3" y1="10" x2="21" y2="10"></line>
                     </svg>
-                </button>
-                
+                </sl-button>
+
                 <!-- 自定义日历下拉面板 (Popover) -->
-                <div class="custom-datepicker-popover" id="custom-datepicker-popover" style="display: none;" onclick="event.stopPropagation()">
+                <div class="custom-datepicker-popover" id="custom-datepicker-popover" style="display: none;"
+                    onclick="event.stopPropagation()">
                     <!-- 快捷选择区 -->
                     <div class="popover-quick-dates">
-                        <button class="btn-popover-quick" onclick="selectPopoverQuickDate('yesterday')">昨天</button>
-                        <button class="btn-popover-quick" onclick="selectPopoverQuickDate('today')">今天</button>
-                        <button class="btn-popover-quick" onclick="selectPopoverQuickDate('tomorrow')">明天</button>
+                        <sl-button class="btn-popover-quick" size="small"
+                            onclick="selectPopoverQuickDate('yesterday')">昨天</sl-button>
+                        <sl-button class="btn-popover-quick" size="small"
+                            onclick="selectPopoverQuickDate('today')">今天</sl-button>
+                        <sl-button class="btn-popover-quick" size="small"
+                            onclick="selectPopoverQuickDate('tomorrow')">明天</sl-button>
                     </div>
-                    
+
                     <!-- 日历头部 (已去除左右月份切换按钮) -->
                     <div class="popover-calendar-header" style="justify-content: center;">
                         <span class="cal-current-month" id="cal-current-month-lbl">2026年07月</span>
                     </div>
-                    
+
                     <!-- 星期表头 -->
                     <div class="popover-calendar-weekdays">
                         <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
                     </div>
-                    
+
                     <!-- 日期网格 -->
                     <div class="popover-calendar-grid" id="popover-calendar-grid">
                         <!-- 动态生成的日期天数 -->
@@ -104,9 +126,21 @@
                 <div class="matches-toolbar">
                     <div class="panel-title-bar">
                         <h3>赛事日程</h3>
-                        <span id="match-count-badge" class="count-badge">0 场</span>
+                        <div class="panel-title-actions">
+                            <sl-badge id="match-count-badge" class="count-badge" pill>0 场</sl-badge>
+                            <sl-button id="btn-batch-select-mode" class="batch-control" size="small" type="button"
+                                onclick="toggleBatchSelectionMode()">选择比赛</sl-button>
+                            <sl-button id="btn-batch-ai-analysis" class="batch-control" variant="primary" size="small"
+                                type="button" onclick="startBatchAiAnalysis()" title="分析已选择的比赛，单次最多 6 场"
+                                disabled>批量分析</sl-button>
+                        </div>
                     </div>
                     <div id="league-filter-bar" class="league-filter-bar"></div>
+                    <div id="batch-ai-selection" class="batch-ai-selection" style="display: none;">
+                        <span id="batch-ai-selection-count"></span>
+                        <sl-button type="button" size="small" variant="text"
+                            onclick="clearBatchSelection()">清空选择</sl-button>
+                    </div>
                 </div>
                 <div class="matches-scroll">
                     <div id="matches-container" class="matches-grid">
@@ -123,46 +157,66 @@
             <main class="panel-details">
                 <!-- Mobile Detail Header -->
                 <div class="mobile-detail-header">
-                    <button class="btn-mobile-back" onclick="closeMobileDetails()">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <sl-button class="btn-mobile-back" size="small" onclick="closeMobileDetails()">
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor"
+                            stroke-width="2.5">
                             <line x1="19" y1="12" x2="5" y2="12"></line>
                             <polyline points="12 19 5 12 12 5"></polyline>
                         </svg>
                         <span>返回列表</span>
-                    </button>
+                    </sl-button>
                     <span id="mobile-match-title" class="mobile-match-title">赛事详情</span>
                 </div>
                 <!-- Tabs for Details -->
                 <div class="details-tab-bar">
-                    <button class="detail-tab active" onclick="switchDetailTab('intel')">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+                    <sl-button class="detail-tab active" variant="text" onclick="switchDetailTab('intel')">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor"
+                                d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+                        </svg>
                         <span class="tab-text-full">预测 & SWOT 情报</span>
                         <span class="tab-text-short">情报</span>
-                    </button>
-                    <button class="detail-tab" onclick="switchDetailTab('history')">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 8 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+                    </sl-button>
+                    <sl-button class="detail-tab" variant="text" onclick="switchDetailTab('history')">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor"
+                                d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 8 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+                        </svg>
                         <span class="tab-text-full">对决 & 近期战绩</span>
                         <span class="tab-text-short">交锋</span>
-                    </button>
-                    <button class="detail-tab" onclick="switchDetailTab('squad')">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z"/></svg>
+                    </sl-button>
+                    <sl-button class="detail-tab" variant="text" onclick="switchDetailTab('squad')">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor"
+                                d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
+                        </svg>
                         <span class="tab-text-full">伤停 & 阵容</span>
                         <span class="tab-text-short">伤停</span>
-                    </button>
-                    <button class="detail-tab" onclick="switchDetailTab('odds')">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z"/></svg>
+                    </sl-button>
+                    <sl-button class="detail-tab" variant="text" onclick="switchDetailTab('odds')">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor"
+                                d="M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z" />
+                        </svg>
                         <span class="tab-text-full">盘口 & 走势指数</span>
                         <span class="tab-text-short">指数</span>
-                    </button>
-                    <button class="detail-tab" onclick="switchDetailTab('ai')">
-                        <svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z"/></svg>
+                    </sl-button>
+                    <sl-button class="detail-tab" variant="text" onclick="switchDetailTab('ai')">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path fill="currentColor"
+                                d="M9 21c0 .55.45 1 1 1h4c.55 0 1-.45 1-1v-1H9v1zm3-19C8.14 2 5 5.14 5 9c0 2.38 1.19 4.47 3 5.74V17c0 .55.45 1 1 1h6c.55 0 1-.45 1-1v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.86-3.14-7-7-7z" />
+                        </svg>
                         <span class="tab-text-full">AI 预测分析</span>
                         <span class="tab-text-short">AI</span>
-                    </button>
-                    <button id="btn-refresh-match" class="btn-refresh-detail" onclick="forceRefreshCurrentMatch()" title="强制重新同步当前比赛的所有实时数据" style="display: none;">
-                        <svg id="refresh-icon-svg" viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.07 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+                    </sl-button>
+                    <sl-button id="btn-refresh-match" class="btn-refresh-detail" size="small"
+                        onclick="forceRefreshCurrentMatch()" title="强制重新同步当前比赛的所有实时数据" style="display: none;">
+                        <svg id="refresh-icon-svg" viewBox="0 0 24 24" width="14" height="14">
+                            <path fill="currentColor"
+                                d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.07 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                        </svg>
                         <span>刷新本场</span>
-                    </button>
+                    </sl-button>
                 </div>
 
                 <!-- Details Content -->
@@ -175,9 +229,42 @@
                 </div>
             </main>
         </div>
+        <nav class="mobile-bottom-nav" aria-label="移动端主导航">
+            <sl-button type="button" class="mobile-nav-item active" variant="text" onclick="goMobileHome()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"></path>
+                </svg>
+                <span>首页</span>
+            </sl-button>
+            <sl-button type="button" class="mobile-nav-item" variant="text" onclick="openPredictionBacktestModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <path d="M4 19V5"></path>
+                    <path d="M4 19h16"></path>
+                    <path d="m7 15 3-3 3 2 4-5"></path>
+                </svg>
+                <span>回测</span>
+            </sl-button>
+            <sl-button type="button" class="mobile-nav-item" variant="text" onclick="openAiConfigModal()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path
+                        d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z">
+                    </path>
+                </svg>
+                <span>配置</span>
+            </sl-button>
+            <sl-button type="button" class="mobile-nav-item" variant="text" onclick="refreshData()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+                    <path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4"></path>
+                    <path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"></path>
+                </svg>
+                <span>同步</span>
+            </sl-button>
+        </nav>
     </div>
+    <div id="app-notice-host" class="app-notice-host" aria-live="polite" aria-atomic="true"></div>
     <!-- Global AI Config Modal -->
-    <div id="ai-config-modal" class="modal-backdrop" style="display: none;" onclick="closeAiConfigModalOnBackdrop(event)">
+    <sl-dialog id="ai-config-modal" class="app-dialog config-dialog" label="全局 AI 决策配置">
         <div class="modal-container">
             <div class="modal-header">
                 <h3>⚙️ 全局 AI 决策配置中心 (本地数据库存储)</h3>
@@ -186,34 +273,40 @@
             <div class="modal-body">
                 <div class="ai-form-group">
                     <label>API Base 接口地址</label>
-                    <input type="text" id="global-ai-base" class="ai-input" placeholder="例如: https://opencode.ai/zen/v1">
+                    <sl-input id="global-ai-base" class="ai-input"
+                        placeholder="例如: https://opencode.ai/zen/v1"></sl-input>
                 </div>
                 <div class="ai-form-group">
                     <label>API Key 密钥</label>
-                    <input type="password" id="global-ai-key" class="ai-input" placeholder="填入您的 OpenCode Zen 密钥">
+                    <sl-input id="global-ai-key" class="ai-input" type="password" password-toggle
+                        placeholder="填入您的 OpenCode Zen 密钥"></sl-input>
                 </div>
                 <div class="ai-form-group">
                     <label>选择大模型</label>
-                    <select id="global-ai-model" class="ai-select">
-                        <option value="deepseek-v4-flash-free">deepseek-v4-flash-free (OpenCode Zen 免费模型)</option>
-                        <option value="mimo-v2.5-free">mimo-v2.5-free (OpenCode Zen 免费模型)</option>
-                        <option value="nemotron-3-ultra-free">nemotron-3-ultra-free (OpenCode Zen 免费模型)</option>
-                        <option value="north-mini-code-free">north-mini-code-free (OpenCode Zen 免费模型)</option>
-                    </select>
+                    <sl-select id="global-ai-model" class="ai-select">
+                        <sl-option value="deepseek-v4-flash-free">deepseek-v4-flash-free (OpenCode Zen 免费模型)</sl-option>
+                        <sl-option value="mimo-v2.5-free">mimo-v2.5-free (OpenCode Zen 免费模型)</sl-option>
+                        <sl-option value="nemotron-3-ultra-free">nemotron-3-ultra-free (OpenCode Zen 免费模型)</sl-option>
+                        <sl-option value="north-mini-code-free">north-mini-code-free (OpenCode Zen 免费模型)</sl-option>
+                    </sl-select>
                 </div>
                 <div class="ai-form-group">
                     <label>全局系统分析提示词 (System Prompt)</label>
-                    <textarea id="global-ai-prompt" class="ai-textarea" rows="8" placeholder="在这里编辑定制您的 AI 系统分析指令..."></textarea>
+                    <sl-textarea id="global-ai-prompt" class="ai-textarea" rows="8" resize="auto"
+                        placeholder="在这里编辑定制您的 AI 系统分析指令..."></sl-textarea>
                 </div>
             </div>
             <div class="modal-footer">
-                <span id="global-ai-save-status" style="margin-right: auto; align-self: center; font-size: 0.82rem; font-weight: 700; color: var(--color-success); display: none;">✓ 配置已成功存入本地数据库</span>
-                <button class="btn-ai-cancel" onclick="closeAiConfigModal()">取消</button>
-                <button class="btn-ai-save" onclick="saveGlobalAiConfigToServer()" style="margin-left: 0.5rem;">保存配置</button>
+                <span id="global-ai-save-status"
+                    style="margin-right: auto; align-self: center; font-size: 0.82rem; font-weight: 700; color: var(--color-success); display: none;">✓
+                    配置已成功存入本地数据库</span>
+                <sl-button class="btn-ai-cancel" onclick="closeAiConfigModal()">取消</sl-button>
+                <sl-button class="btn-ai-save" variant="primary" onclick="saveGlobalAiConfigToServer()"
+                    style="margin-left: 0.5rem;">保存配置</sl-button>
             </div>
         </div>
-    </div>
-    <div id="prediction-backtest-modal" class="modal-backdrop" style="display: none;" onclick="closePredictionBacktestOnBackdrop(event)">
+    </sl-dialog>
+    <sl-dialog id="prediction-backtest-modal" class="app-dialog backtest-dialog" label="预测回测">
         <div class="modal-container backtest-modal">
             <div class="modal-header">
                 <div>
@@ -225,12 +318,24 @@
             <div id="prediction-backtest-content" class="modal-body backtest-body">
                 <p class="backtest-loading">正在读取预测记录...</p>
             </div>
-            <div class="modal-footer">
-                <button class="btn-ai-cancel" onclick="closePredictionBacktestModal()">关闭</button>
+        </div>
+    </sl-dialog>
+    <sl-dialog id="batch-analysis-modal" class="app-dialog batch-analysis-dialog" label="批量分析进度">
+        <div class="modal-container batch-analysis-modal">
+            <div class="modal-header">
+                <div>
+                    <h3>批量分析进度</h3>
+                    <p class="modal-subtitle">每场独立分析，可直接查看最终执行预测</p>
+                </div>
+                <button class="modal-close-btn" onclick="closeBatchAnalysisModal()" aria-label="关闭">×</button>
+            </div>
+            <div class="modal-body batch-analysis-body">
+                <div id="batch-ai-progress" class="batch-ai-progress" aria-live="polite"></div>
             </div>
         </div>
-    </div>
+    </sl-dialog>
 
-    <script src="/static/app.js?v=1.0.8"></script>
+    <script src="/static/app.js?v=1.1.5"></script>
 </body>
+
 </html>

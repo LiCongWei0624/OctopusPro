@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import json
 import os
@@ -7,8 +7,9 @@ import re
 import tempfile
 import threading
 import time
+import uuid
 from leisu_crawler import fetch_matches
-from detail_scraper import get_complete_match_details, get_odds_detail_via_playwright
+from detail_scraper import get_complete_match_details, get_odds_detail_via_playwright, get_real_odds
 from scraper import scrape_desktop_matches
 from prediction_tracker import init_database, prediction_detail, record_prediction, settle_finished_predictions, summary as prediction_summary
 
@@ -18,11 +19,14 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
 AI_ANALYSIS_CACHE_VERSION = 3
+MAX_BATCH_ANALYSIS_SIZE = 6
+BATCH_CONCURRENT_MATCHES = 6
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
 TERMINAL_STATUSES = {8, 9, 11, 12}
 PREDICTION_DB_FILE = os.path.join(os.path.dirname(__file__), 'prediction_history.sqlite3')
+BATCH_STATE_FILE = os.path.join(CACHE_DIR, 'latest_batch_ai_state.json')
 LIVE_DETAILS_CACHE_TTL_SECONDS = 90
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
@@ -626,12 +630,24 @@ def get_match_details():
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            return jsonify({'success': True, 'data': data})
+            if not data.get('odds_index'):
+                # A finished-match snapshot is otherwise permanent. Do not
+                # preserve an incomplete odds response from a transient WAF
+                # or upstream failure; refetch it when the fixture is opened.
+                data = None
+            if data is not None:
+                return jsonify({'success': True, 'data': data})
         except Exception as e:
             pass # fallback to scrape
             
     try:
         details = get_complete_match_details(match_id, home, away)
+        # A detail scrape can occasionally finish with an empty odds payload
+        # after a transient WAF/upstream response. Retry only that isolated
+        # endpoint before caching so an incomplete snapshot is never served as
+        # a successful detail result.
+        if not details.get('odds_index'):
+            details['odds_index'] = get_real_odds(match_id)
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(details, f, ensure_ascii=False, indent=2)
         return jsonify({'success': True, 'data': details})
@@ -763,8 +779,378 @@ def is_complete_analysis_cache(cache_data):
     )
 
 ai_tasks = {}
+batch_ai_tasks = {}
+_batch_ai_tasks_lock = threading.RLock()
 
 import concurrent.futures
+
+
+def _persist_latest_batch_state(batch_id):
+    """Persist the latest batch so a browser refresh can restore its progress view."""
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        if not batch:
+            return
+        payload = {'id': batch_id, 'batch': batch}
+    temp_path = None
+    try:
+        fd, temp_path = tempfile.mkstemp(prefix='batch_ai_', suffix='.json', dir=CACHE_DIR)
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, BATCH_STATE_FILE)
+    except Exception as error:
+        print(f'Failed to persist batch state: {error}')
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def _restore_latest_batch_state():
+    """Restore the last viewable batch; interrupted workers are safely marked failed."""
+    if not os.path.exists(BATCH_STATE_FILE):
+        return
+    try:
+        with open(BATCH_STATE_FILE, 'r', encoding='utf-8') as f:
+            stored = json.load(f)
+        batch_id = str(stored.get('id', '')).strip()
+        batch = stored.get('batch')
+        if not batch_id or not isinstance(batch, dict) or not isinstance(batch.get('items'), list):
+            return
+        for item in batch['items']:
+            if item.get('status') in {'queued', 'preparing', 'processing'}:
+                item['status'] = 'failed'
+                item['error'] = '服务重启导致任务中断，可仅重试该场。'
+        if batch.get('status') == 'processing':
+            batch['status'] = 'completed'
+        batch_ai_tasks[batch_id] = batch
+    except Exception as error:
+        print(f'Failed to restore batch state: {error}')
+
+
+def _load_ai_runtime_config():
+    """Load the shared model settings used by both single and batch analysis."""
+    api_key = ""
+    api_base = "https://opencode.ai/zen/v1"
+    model_name = "minimax-m2.5-free"
+    system_prompt = ""
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            api_key = cfg.get('api_key', '')
+            api_base = cfg.get('api_base', api_base)
+            model_name = cfg.get('model_name', model_name)
+            system_prompt = cfg.get('system_prompt', '')
+        except Exception:
+            pass
+
+    if not system_prompt:
+        system_prompt = DEFAULT_SYSTEM_PROMPT
+    if not api_key:
+        return False, '请先在顶部“AI配置中心”中配置您的 API Key。', None
+    return True, '', {
+        'api_key': api_key,
+        'api_base': api_base.rstrip('/'),
+        'model_name': model_name,
+        'system_prompt': system_prompt,
+    }
+
+
+def _has_reusable_prematch_cache(match_id):
+    """Only completed, current-version pre-match reports may be reused in a batch."""
+    ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+    if not os.path.exists(ai_cache_file):
+        return False
+    try:
+        with open(ai_cache_file, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+        return (
+            cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION
+            and cache_data.get('analysis_mode') == 'prematch'
+            and is_complete_analysis_cache(cache_data)
+        )
+    except Exception:
+        return False
+
+
+def _batch_snapshot(batch_id):
+    """Return a compact, browser-safe progress view without exposing report bodies."""
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        if not batch:
+            return None
+        items = [dict(item) for item in batch['items']]
+        for item in items:
+            status = item['status']
+            if status == 'queued':
+                item['phase'] = '等待数据准备'
+            elif status == 'preparing':
+                item['phase'] = '整理情报、伤停、阵容、战绩与盘口'
+            elif status == 'processing':
+                task = ai_tasks.get(item['match_id'], {})
+                if task.get('status') == 'failed':
+                    item['phase'] = 'AI 分析失败'
+                    item['error'] = task.get('error', item.get('error', '未知错误'))
+                else:
+                    status_list = task.get('status_list', [])
+                    completed_versions = sum(value == 'completed' for value in status_list)
+                    failed_versions = sum(value == 'failed' for value in status_list)
+                    if completed_versions == 3:
+                        item['phase'] = 'CRO 正在汇总最终执行单'
+                    elif failed_versions:
+                        item['phase'] = f'AI 三路研判中（完成 {completed_versions}/3，失败 {failed_versions}）'
+                    else:
+                        item['phase'] = f'AI 三路研判中（完成 {completed_versions}/3）'
+            elif status == 'completed':
+                item['phase'] = '分析完成'
+            elif status == 'cached':
+                item['phase'] = '已复用赛前报告缓存'
+            elif status == 'skipped':
+                item['phase'] = '已跳过'
+            elif status == 'failed':
+                item['phase'] = '分析失败'
+        counts = {
+            'total': len(items),
+            'completed': sum(item['status'] in {'completed', 'cached'} for item in items),
+            'failed': sum(item['status'] == 'failed' for item in items),
+            'processing': sum(item['status'] in {'preparing', 'queued', 'processing'} for item in items),
+            'cached': sum(item['status'] == 'cached' for item in items),
+            'skipped': sum(item['status'] == 'skipped' for item in items),
+        }
+        return {
+            'id': batch_id,
+            'status': batch['status'],
+            'counts': counts,
+            'items': items,
+        }
+
+
+def _run_batch_ai_analysis(batch_id, runtime_config):
+    """Prepare details serially and run each selected match independently.
+
+    Detail scraping keeps shared anti-bot state, so it deliberately stays on this
+    coordinator thread. Once prepared, up to six matches run concurrently; each
+    retains its own prompt context, task key, and match-specific cache file.
+    """
+    try:
+        with _batch_ai_tasks_lock:
+            items = batch_ai_tasks[batch_id]['items']
+        pending = [item for item in items if item['status'] == 'queued']
+        active = {}
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_CONCURRENT_MATCHES) as executor:
+            while pending or active:
+                while pending and len(active) < BATCH_CONCURRENT_MATCHES:
+                    item = pending.pop(0)
+                    with _batch_ai_tasks_lock:
+                        item['status'] = 'preparing'
+
+                    success, error, context_str = build_match_prompt_context(
+                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode']
+                    )
+                    if not success:
+                        with _batch_ai_tasks_lock:
+                            item['status'] = 'failed'
+                            item['error'] = error
+                        continue
+
+                    ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{item['match_id']}.json")
+                    if os.path.exists(ai_cache_file):
+                        try:
+                            os.remove(ai_cache_file)
+                        except OSError:
+                            pass
+
+                    prediction_metadata = {
+                        'match_id': item['match_id'],
+                        'home_team': item['home_team'],
+                        'away_team': item['away_team'],
+                        'kickoff': item['kickoff'],
+                        'competition': item['competition'],
+                        'fixture_date': item['fixture_date'],
+                        'fixture_status': item['fixture_status'],
+                        'analysis_mode': item['analysis_mode'],
+                    }
+                    with _batch_ai_tasks_lock:
+                        item['status'] = 'processing'
+                    future = executor.submit(
+                        run_ai_analysis_thread,
+                        item['match_id'], runtime_config['api_base'], runtime_config['api_key'],
+                        runtime_config['model_name'], runtime_config['system_prompt'], context_str,
+                        ai_cache_file, prediction_metadata, item['analysis_mode'],
+                    )
+                    active[future] = item
+
+                if not active:
+                    continue
+                done, _ = concurrent.futures.wait(
+                    active, return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for future in done:
+                    item = active.pop(future)
+                    try:
+                        future.result()
+                    except Exception as error:
+                        task = {'status': 'failed', 'error': str(error)}
+                    else:
+                        task = ai_tasks.get(item['match_id'], {})
+                    with _batch_ai_tasks_lock:
+                        if task.get('status') == 'completed':
+                            item['status'] = 'completed'
+                        else:
+                            item['status'] = 'failed'
+                            item['error'] = task.get('error', 'AI 分析未完成，请单独重试。')
+
+        with _batch_ai_tasks_lock:
+            batch_ai_tasks[batch_id]['status'] = 'completed'
+        _persist_latest_batch_state(batch_id)
+    except Exception as error:
+        print(f"Batch AI analysis error for batch {batch_id}: {error}")
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id)
+            if batch:
+                batch['status'] = 'failed'
+        _persist_latest_batch_state(batch_id)
+
+
+@app.route('/api/batch_ai_analysis', methods=['POST'])
+def batch_ai_analysis():
+    data = request.get_json(silent=True) or {}
+    requested_matches = data.get('matches')
+    if not isinstance(requested_matches, list) or not requested_matches:
+        return jsonify({'success': False, 'error': '请先选择至少一场赛事。'})
+
+    requested_ids = []
+    for match in requested_matches:
+        match_id = str(match.get('id', '') if isinstance(match, dict) else match).strip()
+        if match_id and match_id not in requested_ids:
+            requested_ids.append(match_id)
+    if not requested_ids:
+        return jsonify({'success': False, 'error': '未找到有效赛事。'})
+    if len(requested_ids) > MAX_BATCH_ANALYSIS_SIZE:
+        return jsonify({'success': False, 'error': f'单次最多批量分析 {MAX_BATCH_ANALYSIS_SIZE} 场，请先缩小筛选范围。'})
+    ok, error, runtime_config = _load_ai_runtime_config()
+    if not ok:
+        return jsonify({'success': False, 'error': error})
+
+    _, matches_by_id = load_match_store()
+    items = []
+    for match_id in requested_ids:
+        fixture = matches_by_id.get(match_id)
+        if not fixture:
+            continue
+        try:
+            fixture_status = int(fixture.get('status', 1))
+        except (TypeError, ValueError):
+            fixture_status = None
+        if fixture_status not in ANALYSIS_STATUSES:
+            continue
+
+        mode = 'live' if fixture_status in LIVE_STATUSES else 'prematch'
+        item = {
+            'match_id': match_id,
+            'home_team': fixture.get('home_team', ''),
+            'away_team': fixture.get('away_team', ''),
+            'competition': fixture.get('competition', ''),
+            'kickoff': f"{fixture.get('date', '')} {fixture.get('time', '')}".strip(),
+            'fixture_date': fixture.get('date', ''),
+            'fixture_status': fixture_status,
+            'analysis_mode': mode,
+            'status': 'queued',
+        }
+        existing_task = ai_tasks.get(match_id)
+        if existing_task and existing_task.get('status') == 'processing':
+            item['status'] = 'skipped'
+            item['error'] = '该赛事已有分析任务在运行。'
+        elif mode == 'prematch' and _has_reusable_prematch_cache(match_id):
+            item['status'] = 'cached'
+        items.append(item)
+
+    if not items:
+        return jsonify({'success': False, 'error': '当前筛选中没有可分析的未开赛或进行中赛事。'})
+
+    batch_id = f"batch-{uuid.uuid4().hex}"
+    with _batch_ai_tasks_lock:
+        batch_ai_tasks[batch_id] = {
+            'status': 'processing',
+            'created_at': datetime.datetime.now().isoformat(timespec='seconds'),
+            'items': items,
+        }
+    _persist_latest_batch_state(batch_id)
+
+    if any(item['status'] == 'queued' for item in items):
+        worker = threading.Thread(
+            target=_run_batch_ai_analysis,
+            args=(batch_id, runtime_config),
+            daemon=True,
+        )
+        worker.start()
+    else:
+        with _batch_ai_tasks_lock:
+            batch_ai_tasks[batch_id]['status'] = 'completed'
+
+    return jsonify({'success': True, 'batch_id': batch_id, 'batch': _batch_snapshot(batch_id)})
+
+
+@app.route('/api/batch_ai_analysis_status')
+def batch_ai_analysis_status():
+    batch_id = request.args.get('batch_id', '').strip()
+    batch = _batch_snapshot(batch_id)
+    if not batch:
+        return jsonify({'success': False, 'error': '批量任务不存在或已过期。'})
+    return jsonify({'success': True, 'batch': batch})
+
+
+@app.route('/api/batch_ai_analysis_latest')
+def batch_ai_analysis_latest():
+    with _batch_ai_tasks_lock:
+        if not batch_ai_tasks:
+            return jsonify({'success': True, 'batch': None})
+        batch_id = max(batch_ai_tasks, key=lambda key: batch_ai_tasks[key].get('created_at', ''))
+    return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
+
+
+_restore_latest_batch_state()
+
+
+@app.route('/api/batch_ai_analysis_result')
+def batch_ai_analysis_result():
+    """Return only one completed match's CRO execution ticket for batch quick view."""
+    batch_id = request.args.get('batch_id', '').strip()
+    match_id = request.args.get('match_id', '').strip()
+    if not batch_id or not match_id:
+        return jsonify({'success': False, 'error': '缺少批量任务或比赛标识。'}), 400
+
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        item = next((row for row in batch['items'] if row['match_id'] == match_id), None) if batch else None
+        if not item:
+            return jsonify({'success': False, 'error': '该比赛不属于当前批量任务。'}), 404
+        item_data = dict(item)
+
+    if item_data['status'] not in {'completed', 'cached'}:
+        return jsonify({'success': False, 'error': '该比赛的最终执行单尚未生成。'}), 409
+
+    ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+    try:
+        with open(ai_cache_file, 'r', encoding='utf-8') as f:
+            cache_data = json.load(f)
+        if not is_complete_analysis_cache(cache_data):
+            raise ValueError('报告缓存不完整')
+        return jsonify({
+            'success': True,
+            'match': {
+                'match_id': match_id,
+                'home_team': item_data.get('home_team', ''),
+                'away_team': item_data.get('away_team', ''),
+            },
+            'final_ticket': extract_final_output(cache_data.get('final_ticket', '')),
+        })
+    except Exception as error:
+        return jsonify({'success': False, 'error': f'读取最终执行单失败：{str(error)}'}), 500
+
 
 def build_match_prompt_context(match_id, home, away, analysis_mode='prematch'):
     details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
@@ -1196,11 +1582,13 @@ def match_ai_analysis():
                 with open(ai_cache_file, 'r', encoding='utf-8') as f:
                     cache_data = json.load(f)
                 
-                if analysis_mode == 'prematch' and cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
+                cache_matches_mode = cache_data.get('analysis_mode') == analysis_mode
+                if cache_matches_mode and cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
                     return jsonify({
                         'success': True, 
                         'status': 'completed', 
                         'cached': True, 
+                        'live_snapshot': analysis_mode == 'live',
                         'reports': cache_data['reports'],
                         'final_ticket': cache_data.get('final_ticket', '')
                     })

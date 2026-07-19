@@ -3068,3 +3068,191 @@ body {
     .modal-header { padding: 1rem; }
     .modal-body { padding: 1rem; }
 }
+
+/* ==========================================================================
+   custom additions for shoelace layout adjustment
+   ========================================================================== */
+
+/* Active Tab indicator line for both desktop and mobile */
+.details-tab-bar > .detail-tab.active {
+    position: relative !important;
+}
+.details-tab-bar > .detail-tab.active::part(base) {
+    border-bottom: 2.5px solid var(--sl-color-primary-600) !important;
+    color: var(--sl-color-primary-600) !important;
+    font-weight: 700 !important;
+}
+
+/* Desktop: Position the refresh button on the far right of the Tab Bar */
+.details-tab-bar > #btn-refresh-match {
+    position: absolute !important;
+    right: 18px !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+}
+.details-tab-bar > #btn-refresh-match::part(base) {
+    min-height: 32px !important;
+    height: 32px !important;
+    padding-inline: 0.65rem !important;
+    border: 1px solid #d8d6ff !important;
+    background: #f7f7ff !important;
+    color: var(--sl-color-primary-700) !important;
+    border-radius: 7px !important;
+}
+
+/* Ensure calendar button has the correct square size on both desktop and mobile */
+.calendar-picker-btn::part(base) {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--border-color) !important;
+    background: #f6f8fc !important;
+    color: var(--text-secondary) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Icon dimensions wrapper */
+.calendar-picker-btn > svg,
+.btn-refresh-detail > svg {
+    width: 18px !important;
+    height: 18px !important;
+    display: block !important;
+    margin: 0 !important;
+}
+
+/* Mobile: style the refresh button as a circular button in the top-right header */
+.btn-refresh-detail.in-mobile-header::part(base) {
+    width: 36px !important;
+    height: 36px !important;
+    min-width: 36px !important;
+    min-height: 36px !important;
+    border: 1px solid var(--border-color) !important;
+    background: var(--bg-body-secondary) !important;
+    border-radius: 50% !important;
+    color: var(--text-secondary) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/* Center icon-only controls in their own slots instead of their host box */
+.calendar-picker-btn::part(label),
+.btn-refresh-detail::part(label) {
+    width: 100%;
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Normalized Welcome View for Tab content pages */
+.tab-content > .welcome-view {
+    border: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 2.5rem 1rem !important;
+    box-shadow: none !important;
+    min-height: 280px !important;
+}
+
+/* Mobile specific styling inside media query */
+@media (max-width: 780px) {
+    /* Hide the desktop refresh button in mobile view */
+    .details-tab-bar .btn-refresh-detail {
+        display: none !important;
+    }
+    
+    /* 移动端详情头部导航栏样式：定位支持绝对居中 [返回] [队名绝对居中] [刷新] */
+    .mobile-detail-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding: 0.75rem 0.9rem !important;
+        background: var(--bg-panel) !important;
+        border-bottom: 1px solid var(--border-color) !important;
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 1001 !important;
+        flex-shrink: 0 !important;
+        backdrop-filter: blur(10px) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        min-height: 54px !important;
+    }
+    
+    .btn-mobile-back {
+        display: flex !important;
+        align-items: center !important;
+        gap: 0.35rem !important;
+        background: var(--color-primary-light) !important;
+        border: 1px solid rgba(79, 70, 229, 0.12) !important;
+        color: var(--color-primary) !important;
+        font-size: 0.82rem !important;
+        font-weight: 700 !important;
+        padding: 0.35rem 0.75rem !important;
+        border-radius: 20px !important;
+        cursor: pointer !important;
+        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+        box-shadow: 0 2px 6px rgba(79, 70, 229, 0.06) !important;
+        flex-shrink: 0 !important;
+    }
+    
+    .btn-mobile-back:active {
+        background-color: var(--color-primary) !important;
+        color: #ffffff !important;
+        border-color: var(--color-primary) !important;
+        transform: scale(0.95) !important;
+        box-shadow: 0 1px 3px rgba(79, 70, 229, 0.15) !important;
+    }
+    
+    .btn-mobile-back svg {
+        transition: transform 0.2s ease !important;
+    }
+    
+    .btn-mobile-back:active svg {
+        transform: translateX(-2px) !important;
+    }
+    
+    /* 队名绝对居中 */
+    .mobile-match-title {
+        position: absolute !important;
+        left: 50% !important;
+        top: 50% !important;
+        transform: translate(-50%, -50%) !important;
+        font-family: 'Outfit', sans-serif !important;
+        font-size: 0.88rem !important;
+        font-weight: 700 !important;
+        color: var(--text-primary) !important;
+        text-align: center !important;
+        width: 48% !important; /* 限制宽度防止与两侧返回及刷新按钮发生遮挡与重叠 */
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        pointer-events: none !important;
+    }
+
+    /* 右侧刷新按钮槽 */
+    .mobile-header-refresh-slot {
+        width: 36px !important;
+        height: 36px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+    }
+
+    /* Mobile details tab bar: adjust date container height to prevent overflow */
+    .top-date-bar .datepicker-container {
+        height: 40px !important;
+    }
+
+    .tab-content > .welcome-view {
+        min-height: 200px !important;
+        padding: 1.5rem 1rem !important;
+    }
+}

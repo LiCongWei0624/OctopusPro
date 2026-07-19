@@ -15,6 +15,28 @@ let searchRenderTimer = null;
 const MAX_MATCH_DETAILS_CACHE = 24;
 
 let aiPollingTimer = null;
+let batchAiPollingTimer = null;
+let activeBatchAiId = null;
+let isBatchSelectionMode = false;
+let batchSelectedMatches = {};
+let isBatchAiRunning = false;
+let latestBatchProgress = null;
+let batchExecutionTickets = {};
+const MAX_BATCH_SELECTION = 6;
+
+function showAppNotice(message, variant = 'primary') {
+    const host = document.getElementById('app-notice-host');
+    if (!host || !message) return;
+    const notice = document.createElement('sl-alert');
+    notice.className = 'app-notice';
+    notice.variant = variant === 'success' ? 'success' : 'primary';
+    notice.closable = true;
+    notice.duration = 3200;
+    notice.innerHTML = `<span>${String(message).replace(/[&<>]/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char]))}</span>`;
+    host.appendChild(notice);
+    customElements.whenDefined('sl-alert').then(() => notice.toast());
+    notice.addEventListener('sl-after-hide', () => notice.remove(), { once: true });
+}
 
 function cacheMatchDetails(matchId, details) {
     delete matchDetailsCache[matchId];
@@ -43,7 +65,7 @@ let isDateLoading = false;
 function checkAndLoadCachedReport(matchId) {
     if (!selectedMatch) return;
     if (!isAnalyzableFixture(selectedMatch)) return;
-    
+
     fetch('/api/match_ai_analysis', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -54,23 +76,23 @@ function checkAndLoadCachedReport(matchId) {
             force: false
         })
     })
-    .then(res => res.json())
-    .then(res => {
-        const report = document.getElementById('ai-report-content');
-        if (res.success && (res.reports || res.text) && report) {
-            latestFinalTicket = res.final_ticket || '';
-            renderFullMarkdownReport(res.reports || res.text);
-        } else if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-    })
-    .catch(err => {
-        const report = document.getElementById('ai-report-content');
-        if (report) {
-            report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
-        }
-        console.log("本场赛事尚未生成 AI 预测缓存报告");
-    });
+        .then(res => res.json())
+        .then(res => {
+            const report = document.getElementById('ai-report-content');
+            if (res.success && (res.reports || res.text) && report) {
+                latestFinalTicket = res.final_ticket || '';
+                renderFullMarkdownReport(res.reports || res.text);
+            } else if (report) {
+                report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+            }
+        })
+        .catch(err => {
+            const report = document.getElementById('ai-report-content');
+            if (report) {
+                report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
+            }
+            console.log("本场赛事尚未生成 AI 预测缓存报告");
+        });
 }
 window.checkAndLoadCachedReport = checkAndLoadCachedReport;
 
@@ -78,13 +100,14 @@ window.checkAndLoadCachedReport = checkAndLoadCachedReport;
 document.addEventListener('DOMContentLoaded', () => {
     autoFixHtmlCacheBug();
     loadMatches();
-    
+    restoreLatestBatchProgress();
+
     // Bind slider container scroll event
     const wrapper = document.getElementById('date-tabs-wrapper');
     if (wrapper) {
         wrapper.addEventListener('scroll', () => handleTabsScroll(wrapper));
     }
-    
+
     // Global click listener to close custom calendar popover
     document.addEventListener('click', (e) => {
         const popover = document.getElementById('custom-datepicker-popover');
@@ -101,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const todayStr = getTodayDateString();
         const todayYYYYMMDD = convertToYYYYMMDD(todayStr);
         console.log("Auto-refreshing today's matches...");
-        
+
         fetch(`/api/refresh?date=${todayYYYYMMDD}`)
             .then(res => res.json())
             .then(res => {
@@ -123,7 +146,7 @@ function loadMatches() {
     showMatchesLoading();
     const todayStr = getTodayDateString();
     const todayYYYYMMDD = convertToYYYYMMDD(todayStr);
-    
+
     fetch(`/api/matches?today=${todayYYYYMMDD}`)
         .then(res => res.json())
         .then(res => {
@@ -131,7 +154,7 @@ function loadMatches() {
                 allMatches = res.data;
                 groupMatchesByDate(allMatches);
                 renderDateSidebar();
-                
+
                 // Select today's date by default, fallback to first date
                 const dates = getDatesRange();
                 if (dates.includes(todayStr)) {
@@ -157,24 +180,24 @@ function refreshData() {
     const btn = document.getElementById('refresh-btn');
     btn.classList.add('btn-loading');
     btn.disabled = true;
-    
+
     showMatchesLoading();
     // Clear details cache on refresh
     matchDetailsCache = {};
-    
+
     const targetDateStr = convertToYYYYMMDD(selectedDate);
-    
+
     fetch(`/api/refresh?date=${targetDateStr}`)
         .then(res => res.json())
         .then(res => {
             btn.classList.remove('btn-loading');
             btn.disabled = false;
-            
+
             if (res.success) {
                 allMatches = res.data;
                 groupMatchesByDate(allMatches);
                 renderDateSidebar();
-                
+
                 // Keep the same date selected
                 if (selectedDate) {
                     renderDateMatches(selectedDate);
@@ -208,33 +231,35 @@ function renderDateSidebar() {
     const container = document.getElementById('date-list');
     if (!container) return;
     container.innerHTML = '';
-    
+
     const todayStr = getTodayDateString();
-    
+
     const dateObj = new Date();
     dateObj.setDate(dateObj.getDate() - 1);
     const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
     const dd = String(dateObj.getDate()).padStart(2, '0');
     const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const yesterdayStr = `${mm}-${dd} ${weekdays[dateObj.getDay()]}`;
-    
+
     const tObj = new Date();
     tObj.setDate(tObj.getDate() + 1);
     const tMm = String(tObj.getMonth() + 1).padStart(2, '0');
     const tDd = String(tObj.getDate()).padStart(2, '0');
     const tomorrowStr = `${tMm}-${tDd} ${weekdays[tObj.getDay()]}`;
-    
+
     const dates = getDatesRange();
     dates.forEach(date => {
-        const li = document.createElement('li');
+        const li = document.createElement('sl-button');
         li.className = `date-tab ${selectedDate === date ? 'active' : ''}`;
         li.id = `date-tab-${date}`;
-        
+        li.size = 'small';
+        li.pill = true;
+
         let label = date;
         if (date === todayStr) label = `${date.split(' ')[0]} 今天`;
         else if (date === yesterdayStr) label = `${date.split(' ')[0]} 昨天`;
         else if (date === tomorrowStr) label = `${date.split(' ')[0]} 明天`;
-        
+
         li.innerText = label;
         li.onclick = () => selectDate(date);
         container.appendChild(li);
@@ -249,19 +274,19 @@ function selectDate(date) {
     selectedDate = date;
     selectedLeague = '全部';
     selectedStatus = '全部';
-    
+
     // 检查对应日期的页签是否存在于 DOM 中
     const tabExists = !!document.getElementById(`date-tab-${date}`);
     if (!tabExists) {
         // 如果不存在，强制重新渲染滑动条以生成并高亮该页签
         renderDateSidebar();
     }
-    
+
     // Toggle active state in UI
     document.querySelectorAll('.date-tab').forEach(t => t.classList.remove('active'));
     const activeTab = document.getElementById(`date-tab-${date}`);
     if (activeTab) activeTab.classList.add('active');
-    
+
     const todayStr = getTodayDateString();
     if (date !== todayStr) {
         refreshDateData(date);
@@ -277,7 +302,7 @@ function selectDate(date) {
 function refreshDateData(date) {
     const dateStr = convertToYYYYMMDD(date);
     showMatchesLoading();
-    
+
     fetch(`/api/refresh?date=${dateStr}`)
         .then(res => res.json())
         .then(res => {
@@ -306,7 +331,7 @@ function renderDateMatches(date) {
             leagues.push(m.competition);
         }
     });
-    
+
     const majorLeaguesOrder = ["世界杯", "欧洲杯", "英超", "西甲", "德甲", "意甲", "法甲", "欧冠", "荷甲", "葡超", "英冠", "巴甲"];
     const otherLeagues = leagues.slice(1).sort((a, b) => {
         const idxA = majorLeaguesOrder.indexOf(a);
@@ -317,7 +342,7 @@ function renderDateMatches(date) {
         return a.localeCompare(b, 'zh-CN');
     });
     const sortedLeagues = ['全部', ...otherLeagues];
-    
+
     renderLeagueFilters(sortedLeagues);
     filterAndRenderMatches();
 }
@@ -329,7 +354,7 @@ function convertToYYYYMMDD(dateTabStr) {
     const dd = parts[1];
     const today = new Date();
     let year = today.getFullYear();
-    
+
     const month = parseInt(mm) - 1;
     const currentMonth = today.getMonth();
     if (currentMonth === 11 && month === 0) {
@@ -337,7 +362,7 @@ function convertToYYYYMMDD(dateTabStr) {
     } else if (currentMonth === 0 && month === 11) {
         year -= 1;
     }
-    
+
     return `${year}${mm}${dd}`;
 }
 
@@ -345,32 +370,33 @@ function convertToYYYYMMDD(dateTabStr) {
 function renderLeagueFilters(leagues) {
     const filterBar = document.getElementById('league-filter-bar');
     if (!filterBar) return;
-    
+
     const statuses = ['全部', '进行中', '未开始', '已结束', '异常/推迟'];
-    
+
     filterBar.innerHTML = `
         <div class="filter-controls-column">
             <div class="search-input-wrapper">
-                <svg class="search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <input type="text" id="match-search-input" class="search-input-field" placeholder="搜索球队、联赛..." value="${searchQuery}" oninput="filterMatchesBySearch()">
+                <sl-input id="match-search-input" class="search-input-field" size="small" placeholder="搜索球队、联赛..." value="${searchQuery}">
+                    <svg slot="prefix" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                </sl-input>
             </div>
             <div class="filter-dropdowns-row">
                 <div class="dropdown-wrapper">
-                    <select id="league-select" class="league-select-dropdown" onchange="filterMatchesByLeague(this.value)">
-                        ${leagues.map(l => `<option value="${l}" ${selectedLeague === l ? 'selected' : ''}>${l === '全部' ? '全部联赛' : l}</option>`).join('')}
-                    </select>
+                    <sl-select id="league-select" class="league-select-dropdown" size="small" value="${selectedLeague}">
+                        ${leagues.map(l => `<sl-option value="${l}">${l === '全部' ? '全部联赛' : l}</sl-option>`).join('')}
+                    </sl-select>
                 </div>
                 <div class="dropdown-wrapper">
-                    <select id="status-select" class="league-select-dropdown" onchange="filterMatchesByStatus(this.value)">
-                        ${statuses.map(s => `<option value="${s}" ${selectedStatus === s ? 'selected' : ''}>${s === '全部' ? '全部状态' : s}</option>`).join('')}
-                    </select>
+                    <sl-select id="status-select" class="league-select-dropdown" size="small" value="${selectedStatus}">
+                        ${statuses.map(s => `<sl-option value="${s}">${s === '全部' ? '全部状态' : s}</sl-option>`).join('')}
+                    </sl-select>
                 </div>
             </div>
         </div>
     `;
+    document.getElementById('match-search-input')?.addEventListener('sl-input', filterMatchesBySearch);
+    document.getElementById('league-select')?.addEventListener('sl-change', event => filterMatchesByLeague(event.target.value));
+    document.getElementById('status-select')?.addEventListener('sl-change', event => filterMatchesByStatus(event.target.value));
 }
 
 // Handle status selector dropdown events
@@ -379,18 +405,19 @@ function filterMatchesByStatus(statusName) {
     filterAndRenderMatches();
 }
 
-// Filter matches by selected league and search query, then render cards
-function filterAndRenderMatches() {
+// Resolve the currently visible fixtures once so batch analysis uses exactly the
+// same league, status, and search filters as the list.
+function getFilteredMatches() {
     const matches = groupedMatches[selectedDate] || [];
-    const filtered = matches.filter(m => {
+    return matches.filter(m => {
         const leagueMatch = (selectedLeague === '全部' || m.competition === selectedLeague);
-        
+
         const q = searchQuery.trim().toLowerCase();
-        const textMatch = !q || 
+        const textMatch = !q ||
             (m.competition && m.competition.toLowerCase().includes(q)) ||
             (m.home_team && m.home_team.toLowerCase().includes(q)) ||
             (m.away_team && m.away_team.toLowerCase().includes(q));
-            
+
         const status = Number(m.status || 1);
         let statusMatch = false;
         if (selectedStatus === '全部') {
@@ -404,25 +431,9 @@ function filterAndRenderMatches() {
         } else if (selectedStatus === '异常/推迟') {
             statusMatch = (status === 9 || status === 12);
         }
-            
+
         return leagueMatch && textMatch && statusMatch;
     });
-    
-    document.getElementById('match-count-badge').innerText = `${filtered.length} 场`;
-    renderMatchCards(filtered);
-    
-    if (filtered.length > 0) {
-        const currentMatchInFiltered = filtered.find(m => m.id === selectedMatch?.id);
-        if (!currentMatchInFiltered) {
-            const isMobile = window.innerWidth <= 768;
-            const isSearching = searchQuery.trim() !== '';
-            if (!isMobile && !isSearching) {
-                selectMatch(filtered[0]);
-            }
-        }
-    } else {
-        renderNoMatchSelected();
-    }
 }
 
 // Handle search input events
@@ -455,7 +466,7 @@ function selectLeague(league) {
 function renderMatchCards(matches) {
     const container = document.getElementById('matches-container');
     container.innerHTML = '';
-    
+
     if (matches.length === 0) {
         container.innerHTML = `
             <div class="empty-state" style="padding: 40px 20px; text-align: center; color: #8a99ad; font-size: 14px;">
@@ -465,85 +476,117 @@ function renderMatchCards(matches) {
         `;
         return;
     }
-    
+
     const fragment = document.createDocumentFragment();
-    matches.forEach(m => {
-        const status = Number(m.status || 1);
-        const isLive = (status >= 2 && status <= 7);
-        const card = document.createElement('div');
-        card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''}`;
-        card.id = `match-card-${m.id}`;
-        card.onclick = () => selectMatch(m);
-        
-        let scoreDisplay = 'vs';
-        let penaltyDisplay = '';
-        let halfDisplay = '';
-        let statusText = '已排期';
-        let statusClass = 'scheduled';
-        if (status === 1) {
-            statusText = '已排期';
-            statusClass = 'scheduled';
-        } else if (status === 2) {
-            statusText = '上半场';
-            statusClass = 'live';
-        } else if (status === 3) {
-            statusText = '中场';
-            statusClass = 'live';
-        } else if (status === 4) {
-            statusText = '下半场';
-            statusClass = 'live';
-        } else if (status === 5) {
-            statusText = '加时赛';
-            statusClass = 'live';
-        } else if (status === 7) {
-            statusText = '点球大战';
-            statusClass = 'live';
-        } else if (status === 8) {
-            statusText = '已结束';
-            statusClass = 'finished';
-        } else if (status === 9) {
-            statusText = '已推迟';
-            statusClass = 'finished';
-        } else if (status === 10) {
-            statusText = '已中断';
-            statusClass = 'live';
-        } else if (status === 11) {
-            statusText = '已腰斩';
-            statusClass = 'finished';
-        } else if (status === 12) {
-            statusText = '已取消';
-            statusClass = 'finished';
-        } else if (status === 13) {
-            statusText = '待定';
-            statusClass = 'scheduled';
-        }
-        
-        let homeScore = '';
-        let awayScore = '';
-        
-        if (status >= 2 && status <= 8) {
-            if (m.score && m.score.includes('-')) {
-                const parts = m.score.split('-');
-                homeScore = parts[0].trim();
-                awayScore = parts[1].trim();
-            } else if (m.score && m.score.includes(':')) {
-                const parts = m.score.split(':');
-                homeScore = parts[0].trim();
-                awayScore = parts[1].trim();
-            } else {
-                homeScore = m.score || '';
-                awayScore = '';
+    const competitionGroups = new Map();
+    matches.forEach(match => {
+        const competition = match.competition || '其他赛事';
+        if (!competitionGroups.has(competition)) competitionGroups.set(competition, []);
+        competitionGroups.get(competition).push(match);
+    });
+    competitionGroups.forEach((groupMatches, competition) => {
+        const group = document.createElement('section');
+        group.className = 'league-match-group';
+        group.innerHTML = `<div class="league-match-group-title"><strong>${competition}</strong><span>${groupMatches.length} 场</span></div>`;
+        const groupCards = document.createElement('div');
+        groupCards.className = 'league-match-group-cards';
+        group.appendChild(groupCards);
+        fragment.appendChild(group);
+        groupMatches.forEach(m => {
+            const status = Number(m.status || 1);
+            const isLive = (status >= 2 && status <= 7);
+            const card = document.createElement('sl-card');
+            const isBatchSelected = Boolean(batchSelectedMatches[String(m.id)]);
+            card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''} ${isBatchSelected ? 'batch-selected' : ''}`;
+            card.id = `match-card-${m.id}`;
+            card.onclick = () => selectMatch(m);
+
+            let scoreDisplay = 'vs';
+            let penaltyDisplay = '';
+            let halfDisplay = '';
+            let statusText = '已排期';
+            let statusClass = 'scheduled';
+            let statusVariant = 'primary';
+            if (status === 1) {
+                statusText = '已排期';
+                statusClass = 'scheduled';
+            } else if (status === 2) {
+                statusText = '上半场';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 3) {
+                statusText = '中场';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 4) {
+                statusText = '下半场';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 5) {
+                statusText = '加时赛';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 7) {
+                statusText = '点球大战';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 8) {
+                statusText = '已结束';
+                statusClass = 'finished';
+                statusVariant = 'neutral';
+            } else if (status === 9) {
+                statusText = '已推迟';
+                statusClass = 'finished';
+                statusVariant = 'neutral';
+            } else if (status === 10) {
+                statusText = '已中断';
+                statusClass = 'live';
+                statusVariant = 'danger';
+            } else if (status === 11) {
+                statusText = '已腰斩';
+                statusClass = 'finished';
+                statusVariant = 'neutral';
+            } else if (status === 12) {
+                statusText = '已取消';
+                statusClass = 'finished';
+                statusVariant = 'neutral';
+            } else if (status === 13) {
+                statusText = '待定';
+                statusClass = 'scheduled';
             }
-            
-            if (m.half_score && m.half_score.trim() !== '') {
-                halfDisplay = `<span class="half-score-label" style="font-size: 0.72rem; color: #8a99ad;">半:${m.half_score}</span>`;
+
+            let homeScore = '';
+            let awayScore = '';
+
+            if (status >= 2 && status <= 8) {
+                if (m.score && m.score.includes('-')) {
+                    const parts = m.score.split('-');
+                    homeScore = parts[0].trim();
+                    awayScore = parts[1].trim();
+                } else if (m.score && m.score.includes(':')) {
+                    const parts = m.score.split(':');
+                    homeScore = parts[0].trim();
+                    awayScore = parts[1].trim();
+                } else {
+                    homeScore = m.score || '';
+                    awayScore = '';
+                }
+
+                if (m.half_score && m.half_score.trim() !== '') {
+                    halfDisplay = `<span class="half-score-label" style="font-size: 0.72rem; color: #8a99ad;">半:${m.half_score}</span>`;
+                }
+                if (m.penalty_score && m.penalty_score.trim() !== '') {
+                    penaltyDisplay = `<span class="penalty-label" style="font-size: 0.72rem; color: #e74c5b; font-weight: bold;">点:${m.penalty_score}</span>`;
+                }
             }
-            if (m.penalty_score && m.penalty_score.trim() !== '') {
-                penaltyDisplay = `<span class="penalty-label" style="font-size: 0.72rem; color: #e74c5b; font-weight: bold;">点:${m.penalty_score}</span>`;
-            }
-        }
-        
-        card.innerHTML = `
+
+            card.innerHTML = `
+            ${isBatchSelectionMode ? `
+                <label class="batch-match-select" title="加入批量分析">
+                    <input class="batch-match-checkbox" type="checkbox" ${isBatchSelected ? 'checked' : ''}>
+                    <span>选择</span>
+                </label>
+            ` : ''}
             <div class="match-time-col">
                 <span class="m-time">${m.time}</span>
                 <span class="m-league" title="${m.competition}">${m.competition}</span>
@@ -565,7 +608,7 @@ function renderMatchCards(matches) {
                 </div>
             </div>
             <div class="match-status-col-vertical">
-                <span class="status-chip ${statusClass}">${statusText}</span>
+                <sl-badge class="status-chip ${statusClass}" variant="${statusVariant}" pill>${statusText}</sl-badge>
                 ${halfDisplay || penaltyDisplay ? `
                     <div class="extra-scores" style="display: flex; gap: 0.35rem; justify-content: flex-end; align-items: center; margin-top: 3px;">
                         ${halfDisplay}
@@ -574,32 +617,321 @@ function renderMatchCards(matches) {
                 ` : ''}
             </div>
         `;
-        fragment.appendChild(card);
+            const checkbox = card.querySelector('.batch-match-checkbox');
+            if (checkbox) {
+                checkbox.addEventListener('click', event => event.stopPropagation());
+                checkbox.addEventListener('change', event => toggleBatchMatchSelection(m, event.target.checked));
+            }
+            groupCards.appendChild(card);
+        });
     });
     container.appendChild(fragment);
+}
+
+function updateBatchSelectionUi() {
+    const modeButton = document.getElementById('btn-batch-select-mode');
+    const selection = document.getElementById('batch-ai-selection');
+    const selectionCount = document.getElementById('batch-ai-selection-count');
+    const count = Object.keys(batchSelectedMatches).length;
+    if (modeButton) {
+        modeButton.classList.toggle('active', isBatchSelectionMode);
+        modeButton.textContent = isBatchSelectionMode ? '完成选择' : '选择比赛';
+    }
+    if (selection && selectionCount) {
+        selection.style.display = count ? 'flex' : 'none';
+        selectionCount.textContent = `已选择 ${count}/${MAX_BATCH_SELECTION} 场，可切换日期或联赛继续勾选。`;
+    }
+    const batchButton = document.getElementById('btn-batch-ai-analysis');
+    if (batchButton && !isBatchAiRunning) {
+        batchButton.disabled = count === 0;
+    }
+}
+
+function toggleBatchSelectionMode() {
+    isBatchSelectionMode = !isBatchSelectionMode;
+    updateBatchSelectionUi();
+    renderMatchCards(getFilteredMatches());
+}
+window.toggleBatchSelectionMode = toggleBatchSelectionMode;
+
+function toggleBatchMatchSelection(match, checked) {
+    const matchId = String(match.id);
+    if (checked) {
+        if (!batchSelectedMatches[matchId] && Object.keys(batchSelectedMatches).length >= MAX_BATCH_SELECTION) {
+            alert(`单次最多选择 ${MAX_BATCH_SELECTION} 场比赛。`);
+            renderMatchCards(getFilteredMatches());
+            return;
+        }
+        batchSelectedMatches[matchId] = match;
+    } else {
+        delete batchSelectedMatches[matchId];
+    }
+    updateBatchSelectionUi();
+    renderMatchCards(getFilteredMatches());
+}
+
+function clearBatchSelection() {
+    batchSelectedMatches = {};
+    updateBatchSelectionUi();
+    renderMatchCards(getFilteredMatches());
+}
+window.clearBatchSelection = clearBatchSelection;
+
+function openBatchAnalysisModal() {
+    const modal = document.getElementById('batch-analysis-modal');
+    if (modal) modal.show();
+}
+window.openBatchAnalysisModal = openBatchAnalysisModal;
+
+function closeBatchAnalysisModal() {
+    const modal = document.getElementById('batch-analysis-modal');
+    if (modal) modal.hide();
+}
+window.closeBatchAnalysisModal = closeBatchAnalysisModal;
+
+function closeBatchAnalysisModalOnBackdrop(event) {
+    if (event.target.id === 'batch-analysis-modal') closeBatchAnalysisModal();
+}
+window.closeBatchAnalysisModalOnBackdrop = closeBatchAnalysisModalOnBackdrop;
+
+function escapeBatchProgressText(value) {
+    return String(value || '').replace(/[&<>"]/g, character => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'
+    }[character]));
+}
+
+function batchExecutionTicketMarkup(ticketView) {
+    const structuredPicks = finalTicketPredictionMarkup(ticketView.ticket || '', ticketView.match || {});
+    return `
+        ${structuredPicks || '<strong>最终执行预测</strong>'}
+        <details class="batch-ticket-details">
+            <summary>完整最终执行单</summary>
+            <pre>${escapeBatchProgressText(ticketView.ticket || '暂无内容')}</pre>
+        </details>
+    `;
+}
+
+function toggleBatchExecutionTicket(batchId, matchId) {
+    const key = `${batchId}:${matchId}`;
+    const existing = batchExecutionTickets[key];
+    if (existing) {
+        existing.expanded = !existing.expanded;
+        renderBatchAiProgress(latestBatchProgress);
+        return;
+    }
+
+    fetch(`/api/batch_ai_analysis_result?batch_id=${encodeURIComponent(batchId)}&match_id=${encodeURIComponent(matchId)}`)
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || '无法读取最终执行单。');
+            batchExecutionTickets[key] = {
+                ticket: result.final_ticket || '',
+                match: result.match || {},
+                expanded: true,
+            };
+            renderBatchAiProgress(latestBatchProgress);
+        })
+        .catch(error => alert(error.message || '读取最终执行单失败。'));
+}
+
+function retryFailedBatchItems(batch) {
+    const failedItems = (batch.items || []).filter(item => item.status === 'failed');
+    if (!failedItems.length) return;
+    batchSelectedMatches = {};
+    failedItems.forEach(item => {
+        batchSelectedMatches[String(item.match_id)] = {
+            id: item.match_id,
+            home_team: item.home_team,
+            away_team: item.away_team,
+            status: item.fixture_status,
+        };
+    });
+    updateBatchSelectionUi();
+    startBatchAiAnalysis();
+}
+
+function renderBatchAiProgress(batch) {
+    const progress = document.getElementById('batch-ai-progress');
+    const button = document.getElementById('btn-batch-ai-analysis');
+    if (!progress || !batch) return;
+
+    latestBatchProgress = batch;
+    const counts = batch.counts || {};
+    const isRunning = batch.status === 'processing';
+    isBatchAiRunning = isRunning;
+    const summary = `批量分析：已完成 ${counts.completed || 0}/${counts.total || 0}`
+        + `，进行中 ${counts.processing || 0}`
+        + `，失败 ${counts.failed || 0}`
+        + ((counts.cached || 0) ? `（复用缓存 ${counts.cached}）` : '')
+        + ((counts.skipped || 0) ? `（跳过 ${counts.skipped}）` : '');
+    progress.style.display = 'block';
+    progress.className = `batch-ai-progress ${isRunning ? 'running' : 'finished'}`;
+    const itemRows = (batch.items || []).map(item => {
+        const status = item.status || 'queued';
+        const title = `${item.home_team || '主队'} vs ${item.away_team || '客队'}`;
+        const meta = [item.competition, item.kickoff].filter(Boolean).join(' · ');
+        const error = item.error ? `<small class="batch-progress-error">${escapeBatchProgressText(item.error)}</small>` : '';
+        const ticketKey = `${batch.id}:${item.match_id}`;
+        const ticketView = batchExecutionTickets[ticketKey];
+        const resultAction = ['completed', 'cached'].includes(status)
+            ? `<button class="batch-result-toggle" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">${ticketView?.expanded ? '收起执行预测' : '查看执行预测'}</button>${ticketView?.expanded ? `<div class="batch-execution-ticket">${batchExecutionTicketMarkup(ticketView)}</div>` : ''}`
+            : '';
+        return `
+            <li class="batch-progress-item ${status}">
+                <span class="batch-progress-dot" aria-hidden="true"></span>
+                <div class="batch-progress-match">
+                    <strong>${escapeBatchProgressText(title)}</strong>
+                    ${meta ? `<small>${escapeBatchProgressText(meta)}</small>` : ''}
+                </div>
+                <div class="batch-progress-phase">
+                    <span>${escapeBatchProgressText(item.phase || '等待处理')}</span>
+                    ${error}
+                    ${resultAction}
+                </div>
+            </li>
+        `;
+    }).join('');
+    progress.innerHTML = `
+        <div class="batch-progress-summary"><span>${escapeBatchProgressText(isRunning ? `${summary}。最多 6 场同时分析。` : `${summary}。`)}</span>${!isRunning && (counts.failed || 0) ? '<button class="batch-retry-failed" type="button">重试失败项</button>' : ''}</div>
+        <ul class="batch-progress-list">${itemRows}</ul>
+    `;
+    progress.querySelectorAll('.batch-result-toggle').forEach(button => {
+        button.addEventListener('click', () => toggleBatchExecutionTicket(batch.id, button.dataset.matchId));
+    });
+    const retryButton = progress.querySelector('.batch-retry-failed');
+    if (retryButton) retryButton.addEventListener('click', () => retryFailedBatchItems(batch));
+    if (button) {
+        button.disabled = isRunning ? false : Object.keys(batchSelectedMatches).length === 0;
+        button.textContent = isRunning ? '查看进度' : '批量分析';
+    }
+}
+
+function stopBatchAiPolling() {
+    if (batchAiPollingTimer) {
+        clearInterval(batchAiPollingTimer);
+        batchAiPollingTimer = null;
+    }
+}
+
+function startBatchAiPolling() {
+    stopBatchAiPolling();
+    if (!activeBatchAiId) return;
+    batchAiPollingTimer = setInterval(() => {
+        fetch(`/api/batch_ai_analysis_status?batch_id=${encodeURIComponent(activeBatchAiId)}`)
+            .then(statusRes => statusRes.json())
+            .then(statusRes => {
+                if (!statusRes.success) throw new Error(statusRes.error || '无法读取批量任务状态。');
+                renderBatchAiProgress(statusRes.batch);
+                if (statusRes.batch.status !== 'processing') stopBatchAiPolling();
+            })
+            .catch(error => {
+                console.error('[Batch AI] Status polling failed:', error);
+                stopBatchAiPolling();
+                isBatchAiRunning = false;
+            });
+    }, 1500);
+}
+
+function restoreLatestBatchProgress() {
+    fetch('/api/batch_ai_analysis_latest')
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success || !result.batch) return;
+            activeBatchAiId = result.batch.id;
+            renderBatchAiProgress(result.batch);
+            if (result.batch.status === 'processing') startBatchAiPolling();
+        })
+        .catch(error => console.warn('[Batch AI] Could not restore latest batch:', error));
+}
+
+function startBatchAiAnalysis() {
+    if (isBatchAiRunning && activeBatchAiId) {
+        openBatchAnalysisModal();
+        return;
+    }
+    const matches = Object.values(batchSelectedMatches).filter(isAnalyzableFixture);
+    if (!matches.length) {
+        alert('请先点击“选择比赛”，勾选至少一场未开赛或进行中的赛事。可以切换日期或联赛继续选择。');
+        return;
+    }
+    if (!confirm(`将批量分析已选择的 ${matches.length} 场赛事。已完成的赛前报告会直接复用缓存；最多 6 场同时分析。是否继续？`)) {
+        return;
+    }
+
+    const button = document.getElementById('btn-batch-ai-analysis');
+    if (button) {
+        button.disabled = true;
+        button.textContent = '正在创建…';
+    }
+    fetch('/api/batch_ai_analysis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            matches: matches.map(match => ({ id: match.id }))
+        })
+    })
+        .then(res => res.json())
+        .then(res => {
+            if (!res.success) throw new Error(res.error || '批量任务创建失败。');
+            activeBatchAiId = res.batch_id;
+            renderBatchAiProgress(res.batch);
+            openBatchAnalysisModal();
+            showAppNotice(`已启动 ${res.batch.counts.total} 场批量分析`, 'primary');
+            startBatchAiPolling();
+        })
+        .catch(error => {
+            alert(error.message || String(error));
+            isBatchAiRunning = false;
+            if (button) {
+                button.disabled = Object.keys(batchSelectedMatches).length === 0;
+                button.textContent = '批量分析';
+            }
+        });
+}
+window.startBatchAiAnalysis = startBatchAiAnalysis;
+
+// Filter matches by selected league and search query, then render cards
+function filterAndRenderMatches() {
+    const filtered = getFilteredMatches();
+    document.getElementById('match-count-badge').innerText = `${filtered.length} 场`;
+    renderMatchCards(filtered);
+    updateBatchSelectionUi();
+
+    if (filtered.length > 0) {
+        const currentMatchInFiltered = filtered.find(m => m.id === selectedMatch?.id);
+        if (!currentMatchInFiltered) {
+            const isMobile = window.innerWidth <= 768;
+            const isSearching = searchQuery.trim() !== '';
+            if (!isMobile && !isSearching) {
+                selectMatch(filtered[0]);
+            }
+        }
+    } else {
+        renderNoMatchSelected();
+    }
 }
 
 // Select a Match
 function selectMatch(match) {
     selectedMatch = match;
-    
+
     // Toggle active state in Match Cards UI
     document.querySelectorAll('.match-card').forEach(c => c.classList.remove('active'));
     const activeCard = document.getElementById(`match-card-${match.id}`);
     if (activeCard) activeCard.classList.add('active');
-    
+
     // Update mobile details title
     const mobTitle = document.getElementById('mobile-match-title');
     if (mobTitle) {
         mobTitle.innerText = `${match.home_team} VS ${match.away_team}`;
     }
-    
+
     // Slide in the details view on mobile
     const detailsPanel = document.querySelector('.panel-details');
     if (detailsPanel) {
         detailsPanel.classList.add('slide-in');
     }
-    
+
     // Load Match Details
     loadMatchDetails(match);
 }
@@ -612,13 +944,21 @@ function closeMobileDetails() {
     }
 }
 
+function goMobileHome() {
+    closeMobileDetails();
+    closeBatchAnalysisModal();
+    document.querySelectorAll('.mobile-nav-item').forEach(item => item.classList.remove('active'));
+    document.querySelector('.mobile-nav-item')?.classList.add('active');
+}
+window.goMobileHome = goMobileHome;
+
 // Fetch and load Match Details
 function loadMatchDetails(match) {
     if (!match.id) {
         renderNoIntelligenceView(match);
         return;
     }
-    
+
     // 让刷新本场按钮在加载期置灰占位，规避数据渲染时才蹦出来导致页签向左被挤压的抖动
     const refreshBtn = document.getElementById('btn-refresh-match');
     if (refreshBtn) {
@@ -638,9 +978,9 @@ function loadMatchDetails(match) {
         renderMatchDetails(match, matchDetailsCache[match.id]);
         return;
     }
-    
+
     showDetailsLoading(match);
-    
+
     fetch(`/api/match_details?id=${match.id}&home=${encodeURIComponent(match.home_team)}&away=${encodeURIComponent(match.away_team)}`)
         .then(res => res.json())
         .then(res => {
@@ -660,7 +1000,7 @@ function loadMatchDetails(match) {
 // Switch Right Panel Tabs (intel, history, squad, odds)
 function switchDetailTab(tabName) {
     activeDetailTab = tabName;
-    
+
     // Toggle tab active class
     document.querySelectorAll('.detail-tab').forEach(t => t.classList.remove('active'));
     const clickedTab = Array.from(document.querySelectorAll('.detail-tab')).find(t => {
@@ -668,12 +1008,12 @@ function switchDetailTab(tabName) {
         return attr && attr.includes("'" + tabName + "'");
     });
     if (clickedTab) clickedTab.classList.add('active');
-    
+
     // Toggle content divs active class
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     const activeContent = document.getElementById(`tab-content-${tabName}`);
     if (activeContent) activeContent.classList.add('active');
-    
+
     // 切换到 AI 研判 tab 时，自动检查并秒级载入已缓存的 AI 预测报告
     if (tabName === 'ai' && selectedMatch) {
         checkAndLoadCachedReport(selectedMatch.id);
@@ -683,10 +1023,10 @@ function switchDetailTab(tabName) {
 // Render Complete Match Details
 function renderMatchDetails(match, details) {
     const container = document.getElementById('details-content');
-    container.innerHTML = '';
-    
     // Show refresh button since details exist
     const refreshBtn = document.getElementById('btn-refresh-match');
+    container.innerHTML = '';
+
     if (refreshBtn) {
         refreshBtn.style.display = 'inline-flex';
         refreshBtn.classList.remove('btn-disabled');
@@ -695,7 +1035,7 @@ function renderMatchDetails(match, details) {
         const btnText = refreshBtn.querySelector('span');
         if (btnText) btnText.textContent = '刷新本场';
     }
-    
+
     // 1. VS Header
     let html = `
         <div class="details-vs-header">
@@ -716,7 +1056,7 @@ function renderMatchDetails(match, details) {
             </div>
         </div>
     `;
-    
+
     // Add sub-content divs for the 5 tabs
     html += `
         <!-- TAB 1: Intelligence / SWOT -->
@@ -744,14 +1084,22 @@ function renderMatchDetails(match, details) {
             ${renderAiTab(match, details)}
         </div>
     `;
-    
+
     container.innerHTML = html;
-    
+    // Keep the refresh action with the fixture header instead of mixing it into
+    // the centered tab sequence. The same element is reused to preserve its
+    // loading state and click handler.
+    const renderedHeader = container.querySelector('.details-vs-header');
+    if (refreshBtn && renderedHeader) {
+        renderedHeader.appendChild(refreshBtn);
+        refreshBtn.classList.add('in-match-header');
+    }
+
     // 如果当前选中的是 AI 选项卡，在切换场次后自动尝试秒级拉取并渲染已有的 AI 分析缓存
     if (activeDetailTab === 'ai') {
         checkAndLoadCachedReport(match.id);
     }
-    
+
     // 渲染完详情后，自动静默触发 12 家博彩公司走势图的排队异步拉取写缓存，供 AI 全量分析使用
     triggerOddsBackgroundFetch(match.id, details);
 }
@@ -759,14 +1107,14 @@ function renderMatchDetails(match, details) {
 // Force refresh current match details
 function forceRefreshCurrentMatch() {
     if (!selectedMatch || !selectedMatch.id) return;
-    
+
     const refreshBtn = document.getElementById('btn-refresh-match');
     if (!refreshBtn || refreshBtn.classList.contains('refreshing')) return;
-    
+
     refreshBtn.classList.add('refreshing');
     const btnText = refreshBtn.querySelector('span');
     if (btnText) btnText.textContent = '刷新中...';
-    
+
     fetch(`/api/match_details?id=${selectedMatch.id}&home=${encodeURIComponent(selectedMatch.home_team)}&away=${encodeURIComponent(selectedMatch.away_team)}&force=true`)
         .then(res => res.json())
         .then(res => {
@@ -812,13 +1160,13 @@ function loadAiConfigFromServer(callback) {
 function openAiConfigModal() {
     const modal = document.getElementById('ai-config-modal');
     if (!modal) return;
-    
+
     loadAiConfigFromServer((cfg) => {
         document.getElementById('global-ai-base').value = cfg.api_base || 'https://opencode.ai/zen/v1';
         document.getElementById('global-ai-key').value = cfg.api_key || '';
         document.getElementById('global-ai-model').value = cfg.model_name || 'minimax-m2.5-free';
         document.getElementById('global-ai-prompt').value = cfg.system_prompt || '';
-        modal.style.display = 'flex';
+        modal.show();
     });
 }
 window.openAiConfigModal = openAiConfigModal;
@@ -826,7 +1174,7 @@ window.openAiConfigModal = openAiConfigModal;
 function closeAiConfigModal() {
     const modal = document.getElementById('ai-config-modal');
     if (modal) {
-        modal.style.display = 'none';
+        modal.hide();
     }
 }
 window.closeAiConfigModal = closeAiConfigModal;
@@ -843,62 +1191,62 @@ function saveGlobalAiConfigToServer() {
     const baseInput = document.getElementById('global-ai-base');
     const modelSelect = document.getElementById('global-ai-model');
     const promptTextarea = document.getElementById('global-ai-prompt');
-    
+
     if (!keyInput || !baseInput || !modelSelect || !promptTextarea) return;
-    
+
     const key = keyInput.value.trim();
     const base = baseInput.value.trim();
     const model = modelSelect.value;
     const prompt = promptTextarea.value;
-    
+
     const payload = {
         api_key: key,
         api_base: base,
         model_name: model,
         system_prompt: prompt
     };
-    
+
     fetch('/api/ai_config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     })
-    .then(res => res.json())
-    .then(res => {
-        const statusSpan = document.getElementById('global-ai-save-status');
-        if (res.success) {
-            currentAiConfig = payload;
-            if (statusSpan) {
-                statusSpan.style.color = 'var(--color-success)';
-                statusSpan.textContent = '✓ 配置已成功存入本地数据库';
-                statusSpan.style.display = 'inline';
-                setTimeout(() => {
-                    statusSpan.style.display = 'none';
+        .then(res => res.json())
+        .then(res => {
+            const statusSpan = document.getElementById('global-ai-save-status');
+            if (res.success) {
+                currentAiConfig = payload;
+                if (statusSpan) {
+                    statusSpan.style.color = 'var(--color-success)';
+                    statusSpan.textContent = '✓ 配置已成功存入本地数据库';
+                    statusSpan.style.display = 'inline';
+                    setTimeout(() => {
+                        statusSpan.style.display = 'none';
+                        closeAiConfigModal();
+                    }, 1200);
+                } else {
                     closeAiConfigModal();
-                }, 1200);
+                }
             } else {
-                closeAiConfigModal();
+                if (statusSpan) {
+                    statusSpan.style.color = 'var(--color-danger)';
+                    statusSpan.textContent = '✗ 保存失败: ' + res.error;
+                    statusSpan.style.display = 'inline';
+                    setTimeout(() => { statusSpan.style.display = 'none'; }, 3000);
+                } else {
+                    console.error("保存配置失败: " + res.error);
+                }
             }
-        } else {
+        })
+        .catch(err => {
+            const statusSpan = document.getElementById('global-ai-save-status');
             if (statusSpan) {
                 statusSpan.style.color = 'var(--color-danger)';
-                statusSpan.textContent = '✗ 保存失败: ' + res.error;
+                statusSpan.textContent = '✗ 连接保存接口失败';
                 statusSpan.style.display = 'inline';
                 setTimeout(() => { statusSpan.style.display = 'none'; }, 3000);
-            } else {
-                console.error("保存配置失败: " + res.error);
             }
-        }
-    })
-    .catch(err => {
-        const statusSpan = document.getElementById('global-ai-save-status');
-        if (statusSpan) {
-            statusSpan.style.color = 'var(--color-danger)';
-            statusSpan.textContent = '✗ 连接保存接口失败';
-            statusSpan.style.display = 'inline';
-            setTimeout(() => { statusSpan.style.display = 'none'; }, 3000);
-        }
-    });
+        });
 }
 window.saveGlobalAiConfigToServer = saveGlobalAiConfigToServer;
 
@@ -911,7 +1259,7 @@ function formatBacktestDateTime(isoString) {
     try {
         const date = new Date(isoString);
         if (isNaN(date.getTime())) return isoString;
-        
+
         const pad = (num) => String(num).padStart(2, '0');
         const yyyy = date.getFullYear();
         const mm = pad(date.getMonth() + 1);
@@ -919,7 +1267,7 @@ function formatBacktestDateTime(isoString) {
         const hh = pad(date.getHours());
         const min = pad(date.getMinutes());
         const ss = pad(date.getSeconds());
-        
+
         return `${yyyy}-${mm}-${dd} ${hh}:${min}:${ss}`;
     } catch (_) {
         return isoString;
@@ -1006,11 +1354,11 @@ function predictionRecordFromReport(report) {
     return record;
 }
 
-function finalTicketPredictionMarkup(report) {
+function finalTicketPredictionMarkup(report, fixture = null) {
     const prediction = predictionRecordFromReport(report);
     if (!prediction) return '';
-    const home = selectedMatch?.home_team || '主队';
-    const away = selectedMatch?.away_team || '客队';
+    const home = fixture?.home_team || selectedMatch?.home_team || '主队';
+    const away = fixture?.away_team || selectedMatch?.away_team || '客队';
     const picks = [
         ['胜平负', formatPredictionSide(prediction.one_x_two, home, away)],
         ['让球', formatAsianHandicapPrediction(prediction.asian_handicap, home, away)],
@@ -1110,16 +1458,16 @@ function renderBacktestSampleTable() {
                 <thead><tr><th>赛事</th><th>赛前预测</th><th>赛果与结算</th><th>状态</th><th></th></tr></thead>
                 <tbody>
                     ${samples.map(sample => {
-                        const status = predictionSampleStatus(sample);
-                        const expanded = Number(sample.id) === expandedBacktestSampleId;
-                        return `<tr class="${expanded ? 'is-expanded' : ''}">
+        const status = predictionSampleStatus(sample);
+        const expanded = Number(sample.id) === expandedBacktestSampleId;
+        return `<tr class="${expanded ? 'is-expanded' : ''}">
                             <td><strong>${escapeBacktestHtml(sample.home_team)} <small>vs</small> ${escapeBacktestHtml(sample.away_team)}</strong><span>${escapeBacktestHtml(sample.competition || '未分类')} · ${escapeBacktestHtml(sample.kickoff || backtestSampleDate(sample))}</span></td>
                             <td>${backtestPredictionMarkup(sample)}</td>
                             <td>${backtestSettlementMarkup(sample)}</td>
                             <td><span class="backtest-status ${status.className}">${status.label}</span><small class="backtest-fixture-state">赛事：${backtestFixtureStatusLabel(sample.fixture_status)}</small></td>
                             <td><button type="button" class="backtest-detail-button ${expanded ? 'active' : ''}" onclick="loadPredictionSampleDetail(${Number(sample.id)})">${expanded ? '收起' : '明细'}</button></td>
                         </tr>${expanded ? `<tr class="backtest-expanded-row"><td colspan="5"><div id="backtest-sample-detail-${Number(sample.id)}" class="backtest-sample-detail"><p class="backtest-loading">正在读取该样本的完整记录...</p></div></td></tr>` : ''}`;
-                    }).join('')}
+    }).join('')}
                 </tbody>
             </table>
         </div>` : '<p class="backtest-empty">没有符合筛选条件的样本。</p>';
@@ -1209,7 +1557,7 @@ window.loadPredictionSampleDetail = loadPredictionSampleDetail;
 
 function closePredictionBacktestModal() {
     const modal = document.getElementById('prediction-backtest-modal');
-    if (modal) modal.style.display = 'none';
+    if (modal) modal.hide();
     clearPredictionSampleDetail();
 }
 window.closePredictionBacktestModal = closePredictionBacktestModal;
@@ -1273,7 +1621,7 @@ function openPredictionBacktestModal() {
     const container = document.getElementById('prediction-backtest-content');
     if (!modal || !container) return;
 
-    modal.style.display = 'flex';
+    modal.show();
     clearPredictionSampleDetail();
     container.innerHTML = '<p class="backtest-loading">正在同步已完场比赛并计算回测...</p>';
     fetch('/api/prediction_backtest')
@@ -1297,34 +1645,38 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
         alert("本场比赛的独家情报等基础数据尚未加载完成，请稍候数据加载成功后，再手动点击一键生成分析！");
         return;
     }
-    
+    if (String(currentOddsFetchMatchId) === String(matchId) && oddsFetchQueue.length > 0) {
+        alert("重点公司盘口走势仍在同步中。已有报告可直接查看；如需生成新报告，请等待同步完成以保证研判完整性。");
+        return;
+    }
+
     const runBtn = document.getElementById('btn-run-ai-analysis');
     const skeleton = document.getElementById('ai-generating-status');
     const report = document.getElementById('ai-report-content');
-    
+
     // 初始化三版本状态与展示
     latestReports = ['', '', ''];
     latestStatusList = ['processing', 'processing', 'processing'];
     latestFinalTicket = '';
-    activeReportVersion = 0; 
-    
+    activeReportVersion = 0;
+
     if (skeleton && report) {
         skeleton.style.display = 'none';
         report.style.display = 'block';
     }
     renderReportContent(true);
-    
+
     if (runBtn) {
         runBtn.disabled = true;
         const runText = runBtn.querySelector('span');
         if (runText) runText.textContent = 'AI 研判并发生成中...';
     }
-    
+
     if (aiPollingTimer) {
         clearInterval(aiPollingTimer);
         aiPollingTimer = null;
     }
-    
+
     // 1. 发起后台异步托管生成
     fetch('/api/match_ai_analysis', {
         method: 'POST',
@@ -1336,78 +1688,78 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
             force: true
         })
     })
-    .then(res => res.json())
-    .then(res => {
-        if (!res.success) {
-            throw new Error(res.error || "异步托管生成请求失败");
-        }
-        
-        console.log("[AI Background Worker] Managed successfully! Message:", res.message);
-        
-        // 2. 开启心跳短轮询
-        aiPollingTimer = setInterval(() => {
-            fetch(`/api/ai_analysis_status?match_id=${matchId}`)
-                .then(stRes => stRes.json())
-                .then(stRes => {
-                    if (stRes.success) {
-                        if (stRes.status === 'completed') {
-                            clearInterval(aiPollingTimer);
-                            aiPollingTimer = null;
-                            
-                            if (runBtn) {
-                                runBtn.disabled = false;
-                                const runText = runBtn.querySelector('span');
-                                if (runText) runText.textContent = '一键生成 AI 深度研判报告';
+        .then(res => res.json())
+        .then(res => {
+            if (!res.success) {
+                throw new Error(res.error || "异步托管生成请求失败");
+            }
+
+            console.log("[AI Background Worker] Managed successfully! Message:", res.message);
+
+            // 2. 开启心跳短轮询
+            aiPollingTimer = setInterval(() => {
+                fetch(`/api/ai_analysis_status?match_id=${matchId}`)
+                    .then(stRes => stRes.json())
+                    .then(stRes => {
+                        if (stRes.success) {
+                            if (stRes.status === 'completed') {
+                                clearInterval(aiPollingTimer);
+                                aiPollingTimer = null;
+
+                                if (runBtn) {
+                                    runBtn.disabled = false;
+                                    const runText = runBtn.querySelector('span');
+                                    if (runText) runText.textContent = '一键生成 AI 深度研判报告';
+                                }
+                                latestFinalTicket = stRes.final_ticket || '';
+                                renderFullMarkdownReport(stRes.reports);
+                            } else if (stRes.status === 'failed') {
+                                clearInterval(aiPollingTimer);
+                                aiPollingTimer = null;
+
+                                if (report) {
+                                    report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
+                                }
+                                if (runBtn) {
+                                    runBtn.disabled = false;
+                                    const runText = runBtn.querySelector('span');
+                                    if (runText) runText.textContent = '一键生成 AI 深度研判报告';
+                                }
+                            } else if (stRes.status === 'processing') {
+                                // 正在并发处理中，流式刷新三版本结果
+                                latestFinalTicket = stRes.final_ticket || '';
+                                renderStreamingMarkdown(stRes.reports, stRes.status_list);
                             }
-                            latestFinalTicket = stRes.final_ticket || '';
-                            renderFullMarkdownReport(stRes.reports);
-                        } else if (stRes.status === 'failed') {
-                            clearInterval(aiPollingTimer);
-                            aiPollingTimer = null;
-                            
-                            if (report) {
-                                report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
-                            }
-                            if (runBtn) {
-                                runBtn.disabled = false;
-                                const runText = runBtn.querySelector('span');
-                                if (runText) runText.textContent = '一键生成 AI 深度研判报告';
-                            }
-                        } else if (stRes.status === 'processing') {
-                            // 正在并发处理中，流式刷新三版本结果
-                            latestFinalTicket = stRes.final_ticket || '';
-                            renderStreamingMarkdown(stRes.reports, stRes.status_list);
                         }
-                    }
-                })
-                .catch(err => {
-                    console.error("[AI Status Polling] Ping failed:", err);
-                });
-        }, 1500);
-    })
-    .catch(err => {
-        if (report) {
-            report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
-        }
-        if (runBtn) {
-            runBtn.disabled = false;
-            const runText = runBtn.querySelector('span');
-            if (runText) runText.textContent = '一键生成 AI 深度研判报告';
-        }
-    });
+                    })
+                    .catch(err => {
+                        console.error("[AI Status Polling] Ping failed:", err);
+                    });
+            }, 1500);
+        })
+        .catch(err => {
+            if (report) {
+                report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
+            }
+            if (runBtn) {
+                runBtn.disabled = false;
+                const runText = runBtn.querySelector('span');
+                if (runText) runText.textContent = '一键生成 AI 深度研判报告';
+            }
+        });
 }
 window.generateAiReport = generateAiReport;
 
 function renderReportContent(isStreaming = false) {
     const reportContainer = document.getElementById('ai-report-content');
     if (!reportContainer) return;
-    
+
     const text = latestReports[activeReportVersion] || '';
     const status = latestStatusList[activeReportVersion] || 'idle';
-    
+
     let ticketHtml = '';
     const allEsCompleted = latestStatusList.every(s => s === 'completed');
-    
+
     if (status === 'processing' && allEsCompleted && (!latestFinalTicket || latestFinalTicket.trim() === '')) {
         // 精算师报告生成完成，但CRO风控聚合处于长考中：显示流光骨架屏
         ticketHtml = `
@@ -1430,17 +1782,17 @@ function renderReportContent(isStreaming = false) {
         // CRO 已开始输出：流式打字机渲染
         let parsedTicket = parseSimpleMarkdown(latestFinalTicket, isStreaming && status === 'processing');
         const structuredPicks = finalTicketPredictionMarkup(latestFinalTicket);
-        
+
         parsedTicket = parsedTicket.replace(/🤝\s*【达成绝对共识的玩法】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-consensus">🤝 核心共识</span>');
         parsedTicket = parsedTicket.replace(/⚡\s*【冲突重塑与(?:降档收敛|诱盘拦截)报告】[^\s\:\：\n\r]*/g, '<span class="cro-tag cro-tag-melt">⚡ 冲突重塑</span>');
-        
+
         // 判断是否全面熔断：检查执行主单里有没有有效的投资项目（比如是否有“无”或者是否包含全面熔断的字样）
-        const hasNoConsensus = latestFinalTicket.includes("投资项目：无") || 
-                              latestFinalTicket.includes("核心共识项】\n- 无") ||
-                              latestFinalTicket.includes("核心共识项】\n- **投资项目**：无") ||
-                              latestFinalTicket.includes("全部玩法触发熔断") ||
-                              latestFinalTicket.includes("触发全面熔断");
-        
+        const hasNoConsensus = latestFinalTicket.includes("投资项目：无") ||
+            latestFinalTicket.includes("核心共识项】\n- 无") ||
+            latestFinalTicket.includes("核心共识项】\n- **投资项目**：无") ||
+            latestFinalTicket.includes("全部玩法触发熔断") ||
+            latestFinalTicket.includes("触发全面熔断");
+
         let warnBanner = '';
         if (hasNoConsensus) {
             warnBanner = `
@@ -1452,7 +1804,7 @@ function renderReportContent(isStreaming = false) {
                 </div>
             `;
         }
-        
+
         ticketHtml = `
             <div class="cro-ticket-card">
                 <div class="cro-ticket-header">
@@ -1467,7 +1819,7 @@ function renderReportContent(isStreaming = false) {
             </div>
         `;
     }
-    
+
     let tabsHtml = '';
     // 只要有任意一个版本有文字，或者正在处理中，就显示版本页签
     if (latestReports.some(r => r && r.trim() !== '') || latestStatusList.some(s => s === 'processing')) {
@@ -1485,7 +1837,7 @@ function renderReportContent(isStreaming = false) {
             </div>
         `;
     }
-    
+
     let textHtml = '';
     if (text && text.trim() !== '') {
         textHtml = parseSimpleMarkdown(text, isStreaming && status === 'processing');
@@ -1496,7 +1848,7 @@ function renderReportContent(isStreaming = false) {
             textHtml = `<p style="color:var(--text-muted); font-style:italic;">该版本的研判报告为空，或生成中发生错误。</p>`;
         }
     }
-    
+
     reportContainer.innerHTML = ticketHtml + tabsHtml + textHtml;
 }
 
@@ -1527,26 +1879,26 @@ function renderStreamingMarkdown(reports, statusList) {
 
 function parseSimpleMarkdown(md, isStreaming = false) {
     let html = md;
-    
+
     // 替换 > 引用块
     html = html.replace(/^\s*>\s+(.+)$/gm, '<blockquote>$1</blockquote>');
-    
+
     // Replace # header with h3
     html = html.replace(/^#\s+(.+)$/gm, '<h3>$1</h3>');
     // Replace ## header with h4
     html = html.replace(/^##\s+(.+)$/gm, '<h4>$1</h4>');
     // Replace ### or #### headers with h5
     html = html.replace(/^(?:####|###)\s+(.+)$/gm, '<h5>$1</h5>');
-    
+
     // Replace **bold** with <b>bold</b>
     html = html.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-    
+
     // Replace list * or - with <li>
     html = html.replace(/^\s*[\*\-]\s+(.+)$/gm, '<li>$1</li>');
-    
+
     // 替换数字有序列表
     html = html.replace(/^\s*(\d+)\.\s+(.+)$/gm, '<li>$1. $2</li>');
-    
+
     // Process paragraphs
     let lines = html.split('\n\n');
     html = lines.map(line => {
@@ -1560,10 +1912,10 @@ function parseSimpleMarkdown(md, isStreaming = false) {
         }
         return `<p>${trimmed}</p>`;
     }).join('');
-    
+
     // Single newlines to linebreaks
     html = html.replace(/\n/g, '<br>');
-    
+
     // 2. 处理 <think> 标签的推理过程折叠框替换
     if (html.includes('<think>')) {
         if (html.includes('</think>')) {
@@ -1584,7 +1936,7 @@ function parseSimpleMarkdown(md, isStreaming = false) {
             const before = html.substring(0, index);
             const inside = html.substring(index + 7); // 跳过 '<think>'
             let summary = "🧠 AI 正在思考推理中...";
-            
+
             if (isStreaming) {
                 html = `${before}<details class="ai-think-details" open><summary>${summary}</summary>${inside}<span class="ai-cursor"></span></details>`;
             } else {
@@ -1596,13 +1948,20 @@ function parseSimpleMarkdown(md, isStreaming = false) {
             html += '<span class="ai-cursor"></span>';
         }
     }
-    
+
     return html;
 }
 
 function renderAiTab(match, details) {
     const isAnalyzable = isAnalyzableFixture(match);
     const isLive = isLiveFixture(match);
+    const healthIssues = [];
+    if (!Array.isArray(details?.odds_index) || !details.odds_index.length) healthIssues.push('赔率指数');
+    if (!details?.recent_results?.home?.length || !details?.recent_results?.away?.length) healthIssues.push('近期战绩');
+    if (!details?.injuries?.home || !details?.injuries?.away) healthIssues.push('伤停阵容');
+    const healthMarkup = healthIssues.length
+        ? `<div class="ai-data-health">数据完整度提示：${healthIssues.join('、')}暂缺或不完整，结论应降低仓位并等待补全。</div>`
+        : '';
     if (!currentAiConfig) {
         loadAiConfigFromServer(() => {
             if (activeDetailTab === 'ai') {
@@ -1614,9 +1973,10 @@ function renderAiTab(match, details) {
             }
         });
     }
-    
+
     return `
         <div class="ai-prediction-container">
+            ${healthMarkup}
             <!-- 一键生成研判报告按钮 -->
             <button id="btn-run-ai-analysis" class="btn-ai-run" style="width: 100%; margin-bottom: 0.85rem;" ${isAnalyzable ? '' : 'disabled title="仅支持未开赛或进行中的赛事"'} onclick="generateAiReport('${match.id}', '${encodeURIComponent(match.home_team)}', '${encodeURIComponent(match.away_team)}')">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
@@ -1651,7 +2011,7 @@ function renderAiTab(match, details) {
 
 function renderIntelTab(match, details) {
     let tabHtml = '';
-    
+
     // 1. Win Probability
     const hasProb = match.win_probability && match.win_probability.home && match.win_probability.away;
     if (hasProb) {
@@ -1671,7 +2031,7 @@ function renderIntelTab(match, details) {
             </div>
         `;
     }
-    
+
     // 2. Similar Trend
     const hasTrend = match.similar_trend && match.similar_trend.stats && match.similar_trend.stats.length > 0;
     if (hasTrend) {
@@ -1683,20 +2043,20 @@ function renderIntelTab(match, details) {
                 </p>
                 <div class="similar-grid">
                     ${match.similar_trend.stats.map(s => {
-                        const isPrimary = s.percentage.replace('%', '') > 50;
-                        return `
+            const isPrimary = s.percentage.replace('%', '') > 50;
+            return `
                             <div class="similar-item ${isPrimary ? 'highlight' : ''}">
                                 <span class="similar-label">${s.outcome.split(' ')[0]}</span>
                                 <span class="similar-val">${s.percentage}</span>
                                 <span class="similar-count">${s.outcome.split(' ')[1] || ''}</span>
                             </div>
                         `;
-                    }).join('')}
+        }).join('')}
                 </div>
             </div>
         `;
     }
-    
+
     // 3. SWOT Intelligence List
     const hasSwot = details.pros_cons && (details.pros_cons.home.pros.length > 0 || details.pros_cons.away.pros.length > 0);
     if (hasSwot) {
@@ -1713,9 +2073,9 @@ function renderIntelTab(match, details) {
                             </div>
                             <ul class="swot-item-list pros-list">
                                 ${details.pros_cons.home.pros.length > 0
-                                    ? details.pros_cons.home.pros.map(p => `<li>${p}</li>`).join('')
-                                    : `<li style="color:var(--text-muted); border:none; background:none;">暂无有利情报</li>`
-                                }
+                ? details.pros_cons.home.pros.map(p => `<li>${p}</li>`).join('')
+                : `<li style="color:var(--text-muted); border:none; background:none;">暂无有利情报</li>`
+            }
                             </ul>
                         </div>
                         <div class="swot-group">
@@ -1724,9 +2084,9 @@ function renderIntelTab(match, details) {
                             </div>
                             <ul class="swot-item-list cons-list">
                                 ${details.pros_cons.home.cons.length > 0
-                                    ? details.pros_cons.home.cons.map(c => `<li>${c}</li>`).join('')
-                                    : `<li style="color:var(--text-muted); border:none; background:none;">暂无不利情报</li>`
-                                }
+                ? details.pros_cons.home.cons.map(c => `<li>${c}</li>`).join('')
+                : `<li style="color:var(--text-muted); border:none; background:none;">暂无不利情报</li>`
+            }
                             </ul>
                         </div>
                     </div>
@@ -1740,9 +2100,9 @@ function renderIntelTab(match, details) {
                             </div>
                             <ul class="swot-item-list pros-list">
                                 ${details.pros_cons.away.pros.length > 0
-                                    ? details.pros_cons.away.pros.map(p => `<li>${p}</li>`).join('')
-                                    : `<li style="color:var(--text-muted); border:none; background:none;">暂无有利情报</li>`
-                                }
+                ? details.pros_cons.away.pros.map(p => `<li>${p}</li>`).join('')
+                : `<li style="color:var(--text-muted); border:none; background:none;">暂无有利情报</li>`
+            }
                             </ul>
                         </div>
                         <div class="swot-group">
@@ -1751,9 +2111,9 @@ function renderIntelTab(match, details) {
                             </div>
                             <ul class="swot-item-list cons-list">
                                 ${details.pros_cons.away.cons.length > 0
-                                    ? details.pros_cons.away.cons.map(c => `<li>${c}</li>`).join('')
-                                    : `<li style="color:var(--text-muted); border:none; background:none;">暂无不利情报</li>`
-                                }
+                ? details.pros_cons.away.cons.map(c => `<li>${c}</li>`).join('')
+                : `<li style="color:var(--text-muted); border:none; background:none;">暂无不利情报</li>`
+            }
                             </ul>
                         </div>
                     </div>
@@ -1761,7 +2121,7 @@ function renderIntelTab(match, details) {
             </div>
         `;
     }
-    
+
     if (tabHtml === '') {
         tabHtml = `<div class="welcome-view"><h3>暂无情报预测数据</h3></div>`;
     }
@@ -1770,7 +2130,7 @@ function renderIntelTab(match, details) {
 
 function renderHistoryTab(match, details) {
     let tabHtml = '';
-    
+
     // 1. H2H Section
     tabHtml += `<div class="details-card">`;
     tabHtml += `<div class="details-card-title">历史对决交锋 (近 10 场)</div>`;
@@ -1807,7 +2167,7 @@ function renderHistoryTab(match, details) {
         tabHtml += `<p class="trend-desc" style="color:var(--text-muted); font-style:italic;">双方近三年内暂无交战历史。</p>`;
     }
     tabHtml += `</div>`;
-    
+
     // 2. Recent Results Section
     tabHtml += `<div class="details-card">`;
     tabHtml += `<div class="details-card-title">${match.home_team} 近期战绩</div>`;
@@ -1844,7 +2204,7 @@ function renderHistoryTab(match, details) {
         tabHtml += `<p style="color:var(--text-muted); font-style:italic;">暂无近期战绩数据。</p>`;
     }
     tabHtml += `</div>`;
-    
+
     // Away Recent Results
     tabHtml += `<div class="details-card">`;
     tabHtml += `<div class="details-card-title">${match.away_team} 近期战绩</div>`;
@@ -1881,7 +2241,7 @@ function renderHistoryTab(match, details) {
         tabHtml += `<p style="color:var(--text-muted); font-style:italic;">暂无近期战绩数据。</p>`;
     }
     tabHtml += `</div>`;
-    
+
     return tabHtml;
 }
 
@@ -1908,10 +2268,10 @@ function renderPlayerEvents(player, incidents) {
 
 function renderSquadTab(match, details) {
     let tabHtml = '';
-    
+
     const hasHomeInjuries = details.injuries && details.injuries.home && (details.injuries.home.injuries.length > 0 || details.injuries.home.suspensions.length > 0);
     const hasAwayInjuries = details.injuries && details.injuries.away && (details.injuries.away.injuries.length > 0 || details.injuries.away.suspensions.length > 0);
-    
+
     // 1. Home injuries
     tabHtml += `<div class="details-card">`;
     tabHtml += `<div class="details-card-title">${match.home_team} 伤停信息</div>`;
@@ -1960,7 +2320,7 @@ function renderSquadTab(match, details) {
         `;
     }
     tabHtml += `</div>`;
-    
+
     // 2. Away injuries
     tabHtml += `<div class="details-card">`;
     tabHtml += `<div class="details-card-title">${match.away_team} 伤停信息</div>`;
@@ -2009,7 +2369,7 @@ function renderSquadTab(match, details) {
         `;
     }
     tabHtml += `</div>`;
-    
+
     // 3. Render starting lineup and substitutes if available
     const hasLineup = details.injuries && details.injuries.home && details.injuries.home.startings && details.injuries.home.startings.length > 0;
     if (hasLineup) {
@@ -2093,7 +2453,7 @@ function renderSquadTab(match, details) {
             </div>
         `;
     }
-    
+
     return tabHtml;
 }
 
@@ -2111,7 +2471,7 @@ function renderOddsTab(match, details) {
     if (indexData.length === 0) {
         return `<div class="welcome-view"><h3>暂无详细指数数据</h3></div>`;
     }
-    
+
     const companyToCid = {
         "36*": 2,
         "皇*": 3,
@@ -2126,7 +2486,7 @@ function renderOddsTab(match, details) {
         "盈*": 16,
         "18**": 17
     };
-    
+
     let handicapRows = indexData.map(row => {
         if (!row.cid) {
             row.cid = companyToCid[row.company];
@@ -2136,10 +2496,10 @@ function renderOddsTab(match, details) {
         const awayInit = h.initial[1].toFixed(2);
         const homeInst = h.instant[0].toFixed(2);
         const awayInst = h.instant[1].toFixed(2);
-        
+
         const classHome = h.trends[0] > 0 ? 'up' : (h.trends[0] < 0 ? 'down' : '');
         const classAway = h.trends[1] > 0 ? 'up' : (h.trends[1] < 0 ? 'down' : '');
-        
+
         return `
             <tr class="odds-row-clickable" onclick="toggleOddsTrend(${match.id}, ${row.cid}, 1, this)">
                 <td class="company-cell">
@@ -2179,7 +2539,7 @@ function renderOddsTab(match, details) {
             </tr>
         `;
     }).join('');
-    
+
     let europeRows = indexData.map(row => {
         if (!row.cid) {
             row.cid = companyToCid[row.company];
@@ -2191,11 +2551,11 @@ function renderOddsTab(match, details) {
         const instH = e.instant[0].toFixed(2);
         const instD = e.instant[1].toFixed(2);
         const instA = e.instant[2].toFixed(2);
-        
+
         const classH = e.trends[0] > 0 ? 'up' : (e.trends[0] < 0 ? 'down' : '');
         const classD = e.trends[1] > 0 ? 'up' : (e.trends[1] < 0 ? 'down' : '');
         const classA = e.trends[2] > 0 ? 'up' : (e.trends[2] < 0 ? 'down' : '');
-        
+
         return `
             <tr class="odds-row-clickable" onclick="toggleOddsTrend(${match.id}, ${row.cid}, 2, this)">
                 <td class="company-cell">
@@ -2239,7 +2599,7 @@ function renderOddsTab(match, details) {
             </tr>
         `;
     }).join('');
-    
+
     let overUnderRows = indexData.map(row => {
         if (!row.cid) {
             row.cid = companyToCid[row.company];
@@ -2249,10 +2609,10 @@ function renderOddsTab(match, details) {
         const underInit = ou.initial[1].toFixed(2);
         const overInst = ou.instant[0].toFixed(2);
         const underInst = ou.instant[1].toFixed(2);
-        
+
         const classOver = ou.trends[0] > 0 ? 'up' : (ou.trends[0] < 0 ? 'down' : '');
         const classUnder = ou.trends[1] > 0 ? 'up' : (ou.trends[1] < 0 ? 'down' : '');
-        
+
         return `
             <tr class="odds-row-clickable" onclick="toggleOddsTrend(${match.id}, ${row.cid}, 3, this)">
                 <td class="company-cell">
@@ -2292,7 +2652,7 @@ function renderOddsTab(match, details) {
             </tr>
         `;
     }).join('');
-    
+
     return `
         <div class="odds-tab-subheaders">
             <button id="subtab-handicap-btn" class="odds-subtab-btn active" onclick="switchOddsSubtab('handicap')">让球 (Handicap)</button>
@@ -2374,12 +2734,13 @@ function showMatchesLoading() {
 function showDetailsLoading(match) {
     const container = document.getElementById('details-content');
     if (!container || !match) return;
-    
+    const refreshBtn = document.getElementById('btn-refresh-match');
+
     let scoreDisplay = 'vs';
     if (match.score && (match.score.includes('-') || match.score.includes(':'))) {
         scoreDisplay = match.score.replace('-', ':');
     }
-    
+
     container.innerHTML = `
         <div class="details-vs-header">
             <div class="match-league" style="font-size: 0.8rem; font-weight:700;">${match.competition}</div>
@@ -2404,6 +2765,11 @@ function showDetailsLoading(match) {
             <div class="shimmer-box" style="height: 180px;"></div>
         </div>
     `;
+    const loadingHeader = container.querySelector('.details-vs-header');
+    if (refreshBtn && loadingHeader) {
+        loadingHeader.appendChild(refreshBtn);
+        refreshBtn.classList.add('in-match-header');
+    }
 }
 
 function renderNoMatchSelected() {
@@ -2458,7 +2824,7 @@ function switchOddsSubtab(type) {
     document.getElementById('subtab-handicap-btn').classList.toggle('active', type === 'handicap');
     document.getElementById('subtab-europe-btn').classList.toggle('active', type === 'europe');
     document.getElementById('subtab-overunder-btn').classList.toggle('active', type === 'over_under');
-    
+
     document.getElementById('odds-subtab-handicap').style.display = type === 'handicap' ? 'block' : 'none';
     document.getElementById('odds-subtab-europe').style.display = type === 'europe' ? 'block' : 'none';
     document.getElementById('odds-subtab-over_under').style.display = type === 'over_under' ? 'block' : 'none';
@@ -2478,24 +2844,24 @@ function getDatesRange() {
     const dates = [];
     const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const today = new Date();
-    
+
     for (let i = startOffsetDays; i <= endOffsetDays; i++) {
         const d = new Date(today);
         d.setDate(today.getDate() + i);
-        
+
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         const dd = String(d.getDate()).padStart(2, '0');
         const w = weekdays[d.getDay()];
         dates.push(`${mm}-${dd} ${w}`);
     }
-    
+
     // 如果用户选择了一个超出当前默认范围的日期，则动态扩充边界以包容它
     if (selectedDate && !dates.includes(selectedDate)) {
         try {
             const parts = selectedDate.split(' ')[0].split('-');
             const mm = parseInt(parts[0]);
             const dd = parseInt(parts[1]);
-            
+
             const today = new Date();
             const currentYear = today.getFullYear();
             let selYear = currentYear;
@@ -2505,11 +2871,11 @@ function getDatesRange() {
             } else if (currentMonth === 0 && mm === 12) {
                 selYear -= 1;
             }
-            
+
             const selD = new Date(selYear, mm - 1, dd);
             const diffTime = selD - today;
             const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            
+
             if (diffDays < startOffsetDays) {
                 startOffsetDays = diffDays - 5;
             } else if (diffDays > endOffsetDays) {
@@ -2527,18 +2893,18 @@ function getDatesRange() {
 function loadMoreDates(direction, callback) {
     if (isDateLoading) return;
     isDateLoading = true;
-    
+
     const wrapper = document.getElementById('date-tabs-wrapper');
     const oldScrollWidth = wrapper ? wrapper.scrollWidth : 0;
-    
+
     if (direction === 'left') {
         startOffsetDays -= 10;
     } else if (direction === 'right') {
         endOffsetDays += 10;
     }
-    
+
     renderDateSidebar();
-    
+
     if (direction === 'left' && wrapper) {
         setTimeout(() => {
             const newScrollWidth = wrapper.scrollWidth;
@@ -2559,7 +2925,7 @@ function loadMoreDates(direction, callback) {
 function scrollDateTabs(direction) {
     const wrapper = document.getElementById('date-tabs-wrapper');
     if (!wrapper) return;
-    
+
     const scrollAmount = wrapper.clientWidth * 0.7;
     if (direction === 'prev') {
         wrapper.scrollLeft -= scrollAmount;
@@ -2581,7 +2947,7 @@ function updateSliderArrowsState() {
     const prevBtn = document.querySelector('.slider-arrow.prev-arrow');
     const nextBtn = document.querySelector('.slider-arrow.next-arrow');
     if (!wrapper || !prevBtn || !nextBtn) return;
-    
+
     prevBtn.disabled = wrapper.scrollLeft <= 2;
     nextBtn.disabled = (wrapper.scrollLeft + wrapper.clientWidth >= wrapper.scrollWidth - 2);
 }
@@ -2596,7 +2962,7 @@ function scrollToSelectedTab(date) {
             const wrapperWidth = wrapper.clientWidth;
             const tabLeft = tab.offsetLeft;
             const tabWidth = tab.clientWidth;
-            
+
             const targetScroll = tabLeft - (wrapperWidth / 2) + (tabWidth / 2);
             wrapper.scrollTo({
                 left: targetScroll,
@@ -2621,12 +2987,12 @@ function toggleCustomDatePicker(event) {
     if (event) event.stopPropagation();
     const popover = document.getElementById('custom-datepicker-popover');
     if (!popover) return;
-    
+
     const isHidden = popover.style.display === 'none';
     if (isHidden) {
         const aiModal = document.getElementById('ai-config-modal');
         if (aiModal) aiModal.style.display = 'none';
-        
+
         if (selectedDate) {
             try {
                 const parts = selectedDate.split(' ')[0].split('-');
@@ -2679,25 +3045,25 @@ function renderPopoverCalendar() {
     const grid = document.getElementById('popover-calendar-grid');
     const lbl = document.getElementById('cal-current-month-lbl');
     if (!grid || !lbl) return;
-    
+
     lbl.innerText = `${calendarYear}年${String(calendarMonth + 1).padStart(2, '0')}月`;
     grid.innerHTML = '';
-    
+
     const firstDayIndex = new Date(calendarYear, calendarMonth, 1).getDay();
     const totalDays = new Date(calendarYear, calendarMonth + 1, 0).getDate();
     const prevTotalDays = new Date(calendarYear, calendarMonth, 0).getDate();
-    
+
     const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const today = new Date();
     const todayStr = `${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')} ${weekdays[today.getDay()]}`;
-    
+
     // 1. 上月填充
     for (let i = firstDayIndex - 1; i >= 0; i--) {
         const dayNum = prevTotalDays - i;
         const div = document.createElement('div');
         div.className = 'popover-cal-day other-month';
         div.innerText = dayNum;
-        
+
         let pm = calendarMonth - 1;
         let py = calendarYear;
         if (pm < 0) { pm = 11; py -= 1; }
@@ -2705,14 +3071,14 @@ function renderPopoverCalendar() {
         div.onclick = () => selectCalendarTabDate(dateStr);
         grid.appendChild(div);
     }
-    
+
     // 2. 本月天数
     for (let d = 1; d <= totalDays; d++) {
         const div = document.createElement('div');
         div.innerText = d;
-        
+
         const dateStr = formatToTabStr(calendarYear, calendarMonth, d);
-        
+
         let classes = 'popover-cal-day';
         if (dateStr === todayStr) {
             classes += ' today';
@@ -2724,7 +3090,7 @@ function renderPopoverCalendar() {
         div.onclick = () => selectCalendarTabDate(dateStr);
         grid.appendChild(div);
     }
-    
+
     // 3. 下月填充
     const renderedCount = firstDayIndex + totalDays;
     const remaining = 42 - renderedCount;
@@ -2732,7 +3098,7 @@ function renderPopoverCalendar() {
         const div = document.createElement('div');
         div.className = 'popover-cal-day other-month';
         div.innerText = d;
-        
+
         let nm = calendarMonth + 1;
         let ny = calendarYear;
         if (nm > 11) { nm = 0; ny += 1; }
@@ -2747,7 +3113,7 @@ function selectCalendarTabDate(dateStr) {
     selectedDate = dateStr;
     const popover = document.getElementById('custom-datepicker-popover');
     if (popover) popover.style.display = 'none';
-    
+
     selectDate(dateStr);
 }
 window.selectCalendarTabDate = selectCalendarTabDate;
@@ -2760,12 +3126,12 @@ function selectPopoverQuickDate(type) {
     } else if (type === 'tomorrow') {
         today.setDate(today.getDate() + 1);
     }
-    
+
     const weekdays = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
     const dateStr = `${mm}-${dd} ${weekdays[today.getDay()]}`;
-    
+
     selectCalendarTabDate(dateStr);
 }
 window.selectPopoverQuickDate = selectPopoverQuickDate;
@@ -2803,40 +3169,40 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
     if (!trendRow || !trendRow.classList.contains('trend-chart-row')) {
         return;
     }
-    
+
     // 如果目前已经是展开的，直接折叠
     if (trendRow.style.display !== 'none') {
         trendRow.style.display = 'none';
         trEl.classList.remove('odds-row-active');
         return;
     }
-    
+
     // 折叠该表格内的其它所有展开的走势行，保证视觉简洁
     const allTrendRows = trEl.parentElement.querySelectorAll('.trend-chart-row');
     allTrendRows.forEach(r => r.style.display = 'none');
     const allClickableRows = trEl.parentElement.querySelectorAll('.odds-row-clickable');
     allClickableRows.forEach(r => r.classList.remove('odds-row-active'));
-    
+
     // 展开当前行
     trendRow.style.display = 'table-row';
     trEl.classList.add('odds-row-active');
-    
+
     const box = trendRow.querySelector('.trend-chart-box');
     const spinner = box.querySelector('.trend-loading-spinner');
     const wrapper = box.querySelector('.trend-chart-wrapper');
     const detailsBox = box.querySelector('#trend-details-' + cid + '-' + type);
     const canvasId = 'trend-canvas-' + cid + '-' + type;
-    
+
     // 如果已经加载过数据了，就不重复请求，只做渲染
     if (wrapper.getAttribute('data-loaded') === 'true') {
         return;
     }
-    
+
     // 显示 loading
     spinner.style.display = 'block';
     wrapper.style.display = 'none';
     detailsBox.style.display = 'none';
-    
+
     // 发起 API 请求拉取数据
     fetch(`/api/match_odds_detail?match_id=${matchId}&cid=${cid}&type=${type}`)
         .then(response => response.json())
@@ -2845,13 +3211,13 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
                 spinner.style.display = 'none';
                 wrapper.style.display = 'block';
                 detailsBox.style.display = 'block';
-                
+
                 // 绘制图表
                 drawChart(canvasId, res.data, type);
-                
+
                 // 渲染变盘明文列表
                 renderTrendDetails(detailsBox, res.data, type);
-                
+
                 wrapper.setAttribute('data-loaded', 'true');
             } else {
                 spinner.innerText = res.error || '该盘口暂无详细历史变盘走势点';
@@ -2866,10 +3232,10 @@ window.toggleOddsTrend = toggleOddsTrend;
 
 function drawChart(canvasId, trendData, type) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     // 反转数组，让变盘历史时间从早到晚排序展示（通常接口返回的是最新到最旧）
     const sortedData = [...trendData].reverse();
-    
+
     // 准备数据
     const labels = sortedData.map(item => {
         if (item.match_status > 1) {
@@ -2877,24 +3243,24 @@ function drawChart(canvasId, trendData, type) {
         }
         return item.change_time || '即时';
     });
-    
+
     let datasets = [];
-    
+
     if (type === 1 || type === 3) {
         // 让球 (1) 或 大小球 (3)
         const homeOdds = sortedData.map(item => parseFloat(item.home));
         const awayOdds = sortedData.map(item => parseFloat(item.away));
-        
+
         // 粉蓝渐变
         const gradientHome = ctx.createLinearGradient(0, 0, 0, 160);
         gradientHome.addColorStop(0, 'rgba(54, 162, 235, 0.3)');
         gradientHome.addColorStop(1, 'rgba(54, 162, 235, 0.0)');
-        
+
         // 橘黄渐变
         const gradientAway = ctx.createLinearGradient(0, 0, 0, 160);
         gradientAway.addColorStop(0, 'rgba(255, 159, 64, 0.3)');
         gradientAway.addColorStop(1, 'rgba(255, 159, 64, 0.0)');
-        
+
         datasets = [
             {
                 label: type === 1 ? '主队/大球水位' : '大球水位',
@@ -2924,7 +3290,7 @@ function drawChart(canvasId, trendData, type) {
         const winOdds = sortedData.map(item => parseFloat(item.home));
         const drawOdds = sortedData.map(item => parseFloat(item.draw));
         const loseOdds = sortedData.map(item => parseFloat(item.away));
-        
+
         datasets = [
             {
                 label: '主胜',
@@ -2955,12 +3321,12 @@ function drawChart(canvasId, trendData, type) {
             }
         ];
     }
-    
+
     // 如果已有实例则销毁，防止报错
     if (chartInstances[canvasId]) {
         chartInstances[canvasId].destroy();
     }
-    
+
     chartInstances[canvasId] = new Chart(ctx, {
         type: 'line',
         data: {
@@ -3016,7 +3382,7 @@ function renderTrendDetails(container, trendData, type) {
             <span>赔率明细 (主/平/客)</span>
         </div>
     `;
-    
+
     // 最新的变盘放在最上面展示
     trendData.forEach(item => {
         let lineVal = cleanHandicap(item.line_zh || item.line || '');
@@ -3026,12 +3392,12 @@ function renderTrendDetails(container, trendData, type) {
         } else {
             oddsVal = `${parseFloat(item.home).toFixed(2)} | ${parseFloat(item.draw).toFixed(2)} | ${parseFloat(item.away).toFixed(2)}`;
         }
-        
+
         let timeStr = item.change_time || '即时';
         if (item.match_status > 1) {
             timeStr = `<span class="in-play-badge">滚 ${item.match_time || ''}'</span>`;
         }
-        
+
         listHtml += `
             <div class="trend-detail-row">
                 <span class="trend-detail-time">${timeStr}</span>
@@ -3040,7 +3406,7 @@ function renderTrendDetails(container, trendData, type) {
             </div>
         `;
     });
-    
+
     container.innerHTML = listHtml;
 }
 
@@ -3050,11 +3416,11 @@ window.toggleOddsTrend = toggleOddsTrend;
 function autoFixHtmlCacheBug() {
     const oldSidebar = document.querySelector('.sidebar-dates');
     const navbar = document.querySelector('.navbar');
-    
+
     if (oldSidebar) {
         console.warn("[HTML Cache Fix] Detected legacy sidebar-dates aside element due to browser cache. Removing it to prevent grid displacement.");
         oldSidebar.remove();
-        
+
         // 既然 index.html 是旧的，那么 body 里下必然缺少了顶级全宽贯穿日期选择控制栏 .top-date-bar。我们必须动态把它注入并组装起来！
         if (navbar && !document.querySelector('.top-date-bar')) {
             const topDateBar = document.createElement('div');
@@ -3099,13 +3465,13 @@ function autoFixHtmlCacheBug() {
                 </div>
             `;
             navbar.insertAdjacentElement('afterend', topDateBar);
-            
+
             // 绑定事件
             const wrapper = topDateBar.querySelector('#date-tabs-wrapper');
             if (wrapper) {
                 wrapper.addEventListener('scroll', () => handleTabsScroll(wrapper));
             }
-            
+
             renderDateSidebar();
         }
     }
@@ -3118,12 +3484,11 @@ let oddsFetchIntervalId = null;
 
 function triggerOddsBackgroundFetch(matchId, details) {
     if (!matchId || !details) return;
-    
-    // 自动获取前端 AI 选项卡按钮并初始化状态，解禁之前残留的按钮以防锁死
+
+    // AI 页始终可查看已完成报告；仅在生成新报告时拦截尚未完成的走势同步。
     const aiTab = document.querySelector('.detail-tab[onclick*="\'ai\'"]');
     const resetAiTabUI = () => {
         if (aiTab) {
-            aiTab.classList.remove('tab-disabled');
             aiTab.removeAttribute('title');
             const fText = aiTab.querySelector('.tab-text-full');
             const sText = aiTab.querySelector('.tab-text-short');
@@ -3132,45 +3497,44 @@ function triggerOddsBackgroundFetch(matchId, details) {
         }
     };
     resetAiTabUI();
-    
+
     currentOddsFetchMatchId = matchId;
     oddsFetchQueue = [];
-    
+
     // Stop scheduling the previous match. An in-flight request may finish, but
     // it cannot schedule another request once the selected match has changed.
     if (oddsFetchIntervalId) {
         clearTimeout(oddsFetchIntervalId);
         oddsFetchIntervalId = null;
     }
-    
+
     const companyToCid = {
-        "36*": 2, "皇*": 3, "立*": 5, "澳*": 7, 
+        "36*": 2, "皇*": 3, "立*": 5, "澳*": 7,
         "威***": 9, "易**": 10, "韦*": 11, "Inter*": 13,
         "12*": 14, "利*": 15, "盈*": 16, "18**": 17
     };
-    
+
     const indexData = details.odds_index || [];
-    
+
     indexData.forEach(row => {
         const cid = row.cid || companyToCid[row.company];
         if (cid) {
             oddsFetchQueue.push({ matchId, cid, type: 1 });
         }
     });
-    
+
     if (oddsFetchQueue.length === 0) return;
-    
+
     // The full instant odds snapshot is already available in match details.
     // This queue warms the heavier handicap-trend history before AI analysis.
     if (aiTab) {
-        aiTab.classList.add('tab-disabled');
-        aiTab.setAttribute('title', '正在同步重点公司的让球走势，请稍候...');
+        aiTab.setAttribute('title', '盘口走势同步中：可查看已有报告；生成新报告请等待同步完成。');
         const fText = aiTab.querySelector('.tab-text-full');
         const sText = aiTab.querySelector('.tab-text-short');
-        if (fText) fText.textContent = 'AI 预测分析 (同步走势中...)';
-        if (sText) sText.textContent = 'AI (同步中)';
+        if (fText) fText.textContent = 'AI 预测分析';
+        if (sText) sText.textContent = 'AI';
     }
-    
+
     console.log(`[Background Fetcher] Queue initialized with ${oddsFetchQueue.length} companies to cache.`);
 
     const fetchNextTrend = () => {
