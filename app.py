@@ -3,6 +3,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 import json
 import os
 import datetime
+import hashlib
 import re
 import tempfile
 import threading
@@ -18,9 +19,15 @@ app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
-AI_ANALYSIS_CACHE_VERSION = 3
+AI_ANALYSIS_CACHE_VERSION = 4
 MAX_BATCH_ANALYSIS_SIZE = 6
 BATCH_CONCURRENT_MATCHES = 6
+BATCH_DETAIL_CONCURRENCY = 2
+AI_VERSION_TIMEOUT_SECONDS = 100
+CRO_TIMEOUT_SECONDS = 100
+BATCH_MATCH_TIMEOUT_SECONDS = 360
+BATCH_HEARTBEAT_TIMEOUT_SECONDS = 420
+MIN_REQUIRED_ODDS_COMPANIES = 12
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
@@ -28,6 +35,10 @@ TERMINAL_STATUSES = {8, 9, 11, 12}
 PREDICTION_DB_FILE = os.path.join(os.path.dirname(__file__), 'prediction_history.sqlite3')
 BATCH_STATE_FILE = os.path.join(CACHE_DIR, 'latest_batch_ai_state.json')
 LIVE_DETAILS_CACHE_TTL_SECONDS = 90
+
+# Detail scraping shares the upstream anti-bot session. Keep this limiter global
+# so a batch cannot accidentally turn six fixtures into a WAF burst.
+_detail_prepare_semaphore = threading.BoundedSemaphore(BATCH_DETAIL_CONCURRENCY)
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -465,7 +476,7 @@ def get_ai_config():
 def save_ai_config():
     data = request.json
     if not data:
-        return jsonify({'success': False, 'error': "Empty data"})
+        return jsonify({'success': False, 'error': '提交内容为空。'})
     
     existing_key = ''
     if os.path.exists(CONFIG_FILE):
@@ -858,6 +869,81 @@ def _load_ai_runtime_config():
     }
 
 
+def _detail_cache_path(match_id):
+    return os.path.join(CACHE_DIR, f'details_{match_id}.json')
+
+
+def _detail_quality_report(details):
+    """Return an auditable completeness report; do not treat empty placeholders as valid data."""
+    details = details if isinstance(details, dict) else {}
+    pros_cons = details.get('pros_cons')
+    injuries = details.get('injuries')
+    h2h = details.get('h2h')
+    recent = details.get('recent_results')
+    odds = details.get('odds_index')
+
+    checks = {
+        'intelligence': isinstance(pros_cons, dict) and all(key in pros_cons for key in ('home', 'away')),
+        'lineup_injuries': isinstance(injuries, dict) and all(key in injuries for key in ('home', 'away')),
+        'history': isinstance(h2h, dict) and isinstance(h2h.get('matches'), list),
+        # Recent form is required; an empty list usually means collection is incomplete,
+        # so the batch must not start AI analysis from a partial snapshot.
+        'recent_form': isinstance(recent, dict) and bool(recent.get('home')) and bool(recent.get('away')),
+        'odds_snapshot': isinstance(odds, list) and len(odds) >= MIN_REQUIRED_ODDS_COMPANIES,
+    }
+    labels = {
+        'intelligence': '情报数据',
+        'lineup_injuries': '伤停与阵容',
+        'history': '历史交锋',
+        'recent_form': '近期战绩',
+        'odds_snapshot': '12 家赔率指数',
+    }
+    missing = [key for key, passed in checks.items() if not passed]
+    return {
+        'passed': not missing,
+        'checks': checks,
+        'missing': missing,
+        'missing_labels': [labels[key] for key in missing],
+        'odds_companies': len(odds) if isinstance(odds, list) else 0,
+    }
+
+
+def _prepare_analysis_snapshot(match_id, home, away, force_refresh=True):
+    """Fetch a fresh, validated detail snapshot for an analysis execution.
+
+    This intentionally uses the same scraper and WAF session as single-match
+    detail loading. The semaphore serializes upstream-sensitive collection;
+    Data collection is capped at two fixtures to protect the upstream session;
+    the AI stage may fan out to all six validated fixtures.
+    """
+    try:
+        with _detail_prepare_semaphore:
+            details = get_complete_match_details(match_id, home, away)
+            if not details.get('odds_index'):
+                details['odds_index'] = get_real_odds(match_id)
+    except Exception as error:
+        return False, f'详情数据抓取失败：{error}', None, None
+
+    quality = _detail_quality_report(details)
+    if not quality['passed']:
+        return False, f"数据校验未通过：缺少 {', '.join(quality['missing_labels'])}", details, quality
+
+    snapshot = {
+        'captured_at': datetime.datetime.now().isoformat(timespec='seconds'),
+        'match_id': str(match_id),
+        'quality': quality,
+        'details': details,
+    }
+    snapshot_payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
+    snapshot['hash'] = hashlib.sha256(snapshot_payload.encode('utf-8')).hexdigest()
+    try:
+        with open(_detail_cache_path(match_id), 'w', encoding='utf-8') as cache_file:
+            json.dump(details, cache_file, ensure_ascii=False, indent=2)
+    except OSError as error:
+        return False, f'详情数据缓存写入失败：{error}', details, quality
+    return True, '', details, snapshot
+
+
 def _has_reusable_prematch_cache(match_id):
     """Only completed, current-version pre-match reports may be reused in a batch."""
     ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
@@ -869,6 +955,7 @@ def _has_reusable_prematch_cache(match_id):
         return (
             cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION
             and cache_data.get('analysis_mode') == 'prematch'
+            and bool(cache_data.get('snapshot_hash'))
             and is_complete_analysis_cache(cache_data)
         )
     except Exception:
@@ -887,12 +974,16 @@ def _batch_snapshot(batch_id):
             if status == 'queued':
                 item['phase'] = '等待数据准备'
             elif status == 'preparing':
-                item['phase'] = '整理情报、伤停、阵容、战绩与盘口'
+                item['phase'] = item.get('prepare_phase', '正在获取比赛数据')
+            elif status == 'validating':
+                item['phase'] = '正在校验数据完整性'
             elif status == 'processing':
-                task = ai_tasks.get(item['match_id'], {})
-                if task.get('status') == 'failed':
+                task = ai_tasks.get(item.get('task_key', item['match_id']), {})
+                if task.get('status') in {'failed', 'timed_out'}:
                     item['phase'] = 'AI 分析失败'
                     item['error'] = task.get('error', item.get('error', '未知错误'))
+                    if task.get('phase') == 'cro' and all(has_final_output(report) for report in task.get('reports', [])):
+                        item['retry_scope'] = 'cro'
                 else:
                     status_list = task.get('status_list', [])
                     completed_versions = sum(value == 'completed' for value in status_list)
@@ -909,13 +1000,16 @@ def _batch_snapshot(batch_id):
                 item['phase'] = '已复用赛前报告缓存'
             elif status == 'skipped':
                 item['phase'] = '已跳过'
+            elif status == 'timed_out':
+                item['phase'] = '分析超时，可重试'
             elif status == 'failed':
                 item['phase'] = '分析失败'
         counts = {
             'total': len(items),
             'completed': sum(item['status'] in {'completed', 'cached'} for item in items),
-            'failed': sum(item['status'] == 'failed' for item in items),
-            'processing': sum(item['status'] in {'preparing', 'queued', 'processing'} for item in items),
+            'failed': sum(item['status'] in {'failed', 'timed_out'} for item in items),
+            'timed_out': sum(item['status'] == 'timed_out' for item in items),
+            'processing': sum(item['status'] in {'preparing', 'validating', 'queued', 'processing'} for item in items),
             'cached': sum(item['status'] == 'cached' for item in items),
             'skipped': sum(item['status'] == 'skipped' for item in items),
         }
@@ -946,9 +1040,29 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                     item = pending.pop(0)
                     with _batch_ai_tasks_lock:
                         item['status'] = 'preparing'
+                        item['prepare_phase'] = '正在获取情报、阵容、战绩与赔率'
+                        item['started_at'] = time.time()
+                        item['heartbeat_at'] = time.time()
+
+                    success, error, details, snapshot = _prepare_analysis_snapshot(
+                        item['match_id'], item['home_team'], item['away_team'], force_refresh=True
+                    )
+                    if not success:
+                        with _batch_ai_tasks_lock:
+                            item['status'] = 'failed'
+                            item['error'] = error
+                        continue
+
+                    with _batch_ai_tasks_lock:
+                        item['status'] = 'validating'
+                        item['prepare_phase'] = '数据完整性校验通过，正在构建独立分析上下文'
+                        item['data_quality'] = snapshot.get('quality', {})
+                        item['snapshot_hash'] = snapshot.get('hash', '')
+                        item['snapshot_captured_at'] = snapshot.get('captured_at', '')
+                        item['heartbeat_at'] = time.time()
 
                     success, error, context_str = build_match_prompt_context(
-                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode']
+                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'], details=details
                     )
                     if not success:
                         with _batch_ai_tasks_lock:
@@ -973,21 +1087,43 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                         'fixture_status': item['fixture_status'],
                         'analysis_mode': item['analysis_mode'],
                     }
+                    task_key = f"{batch_id}:{item['match_id']}:{uuid.uuid4().hex}"
                     with _batch_ai_tasks_lock:
+                        item['task_key'] = task_key
                         item['status'] = 'processing'
+                        item['prepare_phase'] = ''
+                        item['heartbeat_at'] = time.time()
                     future = executor.submit(
                         run_ai_analysis_thread,
                         item['match_id'], runtime_config['api_base'], runtime_config['api_key'],
                         runtime_config['model_name'], runtime_config['system_prompt'], context_str,
-                        ai_cache_file, prediction_metadata, item['analysis_mode'],
+                        ai_cache_file, prediction_metadata, item['analysis_mode'], task_key, snapshot,
                     )
                     active[future] = item
 
                 if not active:
                     continue
                 done, _ = concurrent.futures.wait(
-                    active, return_when=concurrent.futures.FIRST_COMPLETED
+                    active, timeout=1, return_when=concurrent.futures.FIRST_COMPLETED
                 )
+                now = time.time()
+                for running_future, running_item in list(active.items()):
+                    elapsed = now - running_item.get('started_at', now)
+                    if elapsed <= BATCH_MATCH_TIMEOUT_SECONDS:
+                        continue
+                    active.pop(running_future, None)
+                    running_future.cancel()
+                    with _batch_ai_tasks_lock:
+                        running_item['status'] = 'timed_out'
+                        running_item['error'] = f'单场任务超过 {BATCH_MATCH_TIMEOUT_SECONDS} 秒未完成，已释放批次。'
+                        running_item['heartbeat_at'] = now
+                        task = ai_tasks.get(running_item.get('task_key', ''), {})
+                        if task:
+                            task['status'] = 'timed_out'
+                            task['error'] = running_item['error']
+                    _persist_latest_batch_state(batch_id)
+                if not done:
+                    continue
                 for future in done:
                     item = active.pop(future)
                     try:
@@ -995,7 +1131,7 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                     except Exception as error:
                         task = {'status': 'failed', 'error': str(error)}
                     else:
-                        task = ai_tasks.get(item['match_id'], {})
+                        task = ai_tasks.get(item.get('task_key', item['match_id']), {})
                     with _batch_ai_tasks_lock:
                         if task.get('status') == 'completed':
                             item['status'] = 'completed'
@@ -1013,6 +1149,225 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
             if batch:
                 batch['status'] = 'failed'
         _persist_latest_batch_state(batch_id)
+
+
+def _run_batch_cro_retry(batch_id, match_id, task_key, runtime_config):
+    """Retry only the CRO phase when all three analyst reports already exist."""
+    try:
+        task = ai_tasks.get(task_key, {})
+        reports = task.get('reports', [])
+        if len(reports) != 3 or not all(has_final_output(report) for report in reports):
+            raise ValueError('三版本报告不完整，无法只重试 CRO。')
+        reports_list = [extract_final_output(report) for report in reports]
+        combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
+        ai_tasks[task_key]['phase'] = 'cro'
+        ai_tasks[task_key]['status'] = 'processing'
+        ai_tasks[task_key]['heartbeat_at'] = time.time()
+        final_ticket = run_cro_aggregation(
+            match_id, runtime_config['api_base'], runtime_config['api_key'],
+            runtime_config['model_name'], combined_reports, task_key,
+        )
+        if not has_final_output(final_ticket):
+            raise ValueError('CRO 未返回最终执行预测。')
+        ai_tasks[task_key]['final_ticket'] = final_ticket
+        ai_tasks[task_key]['status'] = 'completed'
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id, {})
+            item = next((row for row in batch.get('items', []) if str(row.get('match_id')) == str(match_id)), None)
+            if not item:
+                raise ValueError('批量任务中未找到该比赛。')
+            cache_path = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+            with open(cache_path, 'w', encoding='utf-8') as cache_file:
+                json.dump({
+                    'analysis_version': AI_ANALYSIS_CACHE_VERSION,
+                    'analysis_mode': item.get('analysis_mode', 'prematch'),
+                    'reports': reports,
+                    'final_ticket': final_ticket,
+                    'snapshot_hash': item.get('snapshot_hash', ''),
+                    'snapshot_captured_at': item.get('snapshot_captured_at', ''),
+                }, cache_file, ensure_ascii=False, indent=2)
+            item['status'] = 'completed'
+            item.pop('error', None)
+            item.pop('retry_scope', None)
+            item['heartbeat_at'] = time.time()
+            batch['status'] = 'completed' if not any(row.get('status') in {'queued', 'preparing', 'validating', 'processing'} for row in batch.get('items', [])) else 'processing'
+    except Exception as error:
+        current = ai_tasks.get(task_key, {})
+        ai_tasks[task_key] = {
+            **current,
+            'status': 'failed',
+            'phase': 'cro',
+            'error': str(error),
+            'heartbeat_at': time.time(),
+        }
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id, {})
+            item = next((row for row in batch.get('items', []) if str(row.get('match_id')) == str(match_id)), None)
+            if item:
+                item['status'] = 'failed'
+                item['error'] = str(error)
+                item['retry_scope'] = 'cro'
+    finally:
+        _persist_latest_batch_state(batch_id)
+
+
+def _prepare_batch_item(batch_id, item):
+    """Collect and validate one fixture before it is eligible for AI work."""
+    with _batch_ai_tasks_lock:
+        item['status'] = 'preparing'
+        item['prepare_phase'] = '正在获取情报、阵容、战绩与赔率'
+        item['started_at'] = time.time()
+        item['heartbeat_at'] = time.time()
+    _persist_latest_batch_state(batch_id)
+    success, error, details, snapshot = _prepare_analysis_snapshot(
+        item['match_id'], item['home_team'], item['away_team'], force_refresh=True
+    )
+    if not success:
+        return False, error, None, None
+    with _batch_ai_tasks_lock:
+        item['status'] = 'validating'
+        item['prepare_phase'] = '数据校验通过，正在构建独立分析上下文'
+        item['data_quality'] = snapshot.get('quality', {})
+        item['snapshot_hash'] = snapshot.get('hash', '')
+        item['snapshot_captured_at'] = snapshot.get('captured_at', '')
+        item['heartbeat_at'] = time.time()
+    success, error, context_str = build_match_prompt_context(
+        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'], details=details
+    )
+    return success, error, context_str, snapshot
+
+
+def _run_batch_ai_analysis_v2(batch_id, runtime_config):
+    """Two-stage batch pipeline: safe data preparation, then six isolated AI jobs."""
+    prepared = []
+    try:
+        with _batch_ai_tasks_lock:
+            items = [item for item in batch_ai_tasks[batch_id]['items'] if item['status'] == 'queued']
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_DETAIL_CONCURRENCY) as prepare_executor:
+            futures = {prepare_executor.submit(_prepare_batch_item, batch_id, item): item for item in items}
+            for future in concurrent.futures.as_completed(futures):
+                item = futures[future]
+                try:
+                    success, error, context_str, snapshot = future.result()
+                except Exception as error:
+                    success, context_str, snapshot = False, None, None
+                if item.get('status') == 'timed_out':
+                    continue
+                if not success:
+                    with _batch_ai_tasks_lock:
+                        item['status'] = 'failed'
+                        item['error'] = str(error)
+                    _persist_latest_batch_state(batch_id)
+                    continue
+                prepared.append((item, context_str, snapshot))
+                _persist_latest_batch_state(batch_id)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_CONCURRENT_MATCHES) as ai_executor:
+            active = {}
+            for item, context_str, snapshot in prepared:
+                ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{item['match_id']}.json")
+                if os.path.exists(ai_cache_file):
+                    try:
+                        os.remove(ai_cache_file)
+                    except OSError:
+                        pass
+                task_key = f"{batch_id}:{item['match_id']}:{uuid.uuid4().hex}"
+                metadata = {
+                    'match_id': item['match_id'], 'home_team': item['home_team'], 'away_team': item['away_team'],
+                    'kickoff': item['kickoff'], 'competition': item['competition'], 'fixture_date': item['fixture_date'],
+                    'fixture_status': item['fixture_status'], 'analysis_mode': item['analysis_mode'],
+                }
+                with _batch_ai_tasks_lock:
+                    item['task_key'] = task_key
+                    item['status'] = 'processing'
+                    item['prepare_phase'] = ''
+                    item['started_at'] = time.time()
+                    item['heartbeat_at'] = time.time()
+                future = ai_executor.submit(
+                    run_ai_analysis_thread, item['match_id'], runtime_config['api_base'], runtime_config['api_key'],
+                    runtime_config['model_name'], runtime_config['system_prompt'], context_str, ai_cache_file,
+                    metadata, item['analysis_mode'], task_key, snapshot,
+                )
+                active[future] = item
+
+            while active:
+                done, _ = concurrent.futures.wait(active, timeout=1, return_when=concurrent.futures.FIRST_COMPLETED)
+                now = time.time()
+                for future, item in list(active.items()):
+                    if now - item.get('started_at', now) <= BATCH_MATCH_TIMEOUT_SECONDS:
+                        continue
+                    active.pop(future, None)
+                    future.cancel()
+                    with _batch_ai_tasks_lock:
+                        item['status'] = 'timed_out'
+                        item['error'] = f'单场任务超过 {BATCH_MATCH_TIMEOUT_SECONDS} 秒未完成，已释放批次。'
+                        task = ai_tasks.get(item.get('task_key', ''), {})
+                        if task:
+                            task['status'] = 'timed_out'
+                            task['error'] = item['error']
+                    _persist_latest_batch_state(batch_id)
+                for future in done:
+                    item = active.pop(future, None)
+                    if not item:
+                        continue
+                    try:
+                        future.result()
+                    except Exception as error:
+                        task = {'status': 'failed', 'error': str(error)}
+                    else:
+                        task = ai_tasks.get(item.get('task_key', ''), {})
+                    with _batch_ai_tasks_lock:
+                        if task.get('status') == 'completed':
+                            item['status'] = 'completed'
+                        elif item.get('status') != 'timed_out':
+                            item['status'] = 'failed'
+                            item['error'] = task.get('error', 'AI 分析未完成，请重试该场。')
+                    _persist_latest_batch_state(batch_id)
+
+        with _batch_ai_tasks_lock:
+            batch_ai_tasks[batch_id]['status'] = 'completed'
+    except Exception as error:
+        print(f"Batch AI analysis error for batch {batch_id}: {error}")
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id)
+            if batch:
+                batch['status'] = 'failed'
+    finally:
+        _persist_latest_batch_state(batch_id)
+
+
+def _watch_batch_timeouts(batch_id):
+    """Keep the user-facing batch terminal even if a third-party worker freezes."""
+    while True:
+        time.sleep(2)
+        changed = False
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id)
+            if not batch or batch.get('status') != 'processing':
+                return
+            now = time.time()
+            for item in batch.get('items', []):
+                if item.get('status') not in {'queued', 'preparing', 'validating', 'processing'}:
+                    continue
+                started_at = item.get('started_at', now)
+                if now - started_at <= BATCH_MATCH_TIMEOUT_SECONDS:
+                    continue
+                item['status'] = 'timed_out'
+                item['error'] = f'任务超过 {BATCH_MATCH_TIMEOUT_SECONDS} 秒未完成，已自动释放。'
+                item['heartbeat_at'] = now
+                task = ai_tasks.get(item.get('task_key', ''), {})
+                if task:
+                    task['status'] = 'timed_out'
+                    task['error'] = item['error']
+                changed = True
+            if not any(item.get('status') in {'queued', 'preparing', 'validating', 'processing'} for item in batch.get('items', [])):
+                batch['status'] = 'completed'
+                changed = True
+        if changed:
+            _persist_latest_batch_state(batch_id)
+        if changed and _batch_snapshot(batch_id).get('status') != 'processing':
+            return
 
 
 @app.route('/api/batch_ai_analysis', methods=['POST'])
@@ -1064,8 +1419,8 @@ def batch_ai_analysis():
         if existing_task and existing_task.get('status') == 'processing':
             item['status'] = 'skipped'
             item['error'] = '该赛事已有分析任务在运行。'
-        elif mode == 'prematch' and _has_reusable_prematch_cache(match_id):
-            item['status'] = 'cached'
+        # A batch always starts from a fresh verified data snapshot. Reusing an
+        # old report here can silently carry stale odds or incomplete details.
         items.append(item)
 
     if not items:
@@ -1082,11 +1437,13 @@ def batch_ai_analysis():
 
     if any(item['status'] == 'queued' for item in items):
         worker = threading.Thread(
-            target=_run_batch_ai_analysis,
+            target=_run_batch_ai_analysis_v2,
             args=(batch_id, runtime_config),
             daemon=True,
         )
         worker.start()
+        watchdog = threading.Thread(target=_watch_batch_timeouts, args=(batch_id,), daemon=True)
+        watchdog.start()
     else:
         with _batch_ai_tasks_lock:
             batch_ai_tasks[batch_id]['status'] = 'completed'
@@ -1109,6 +1466,41 @@ def batch_ai_analysis_latest():
         if not batch_ai_tasks:
             return jsonify({'success': True, 'batch': None})
         batch_id = max(batch_ai_tasks, key=lambda key: batch_ai_tasks[key].get('created_at', ''))
+    return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
+
+
+@app.route('/api/batch_ai_analysis_retry_cro', methods=['POST'])
+def retry_batch_cro():
+    payload = request.get_json(silent=True) or {}
+    batch_id = str(payload.get('batch_id', '')).strip()
+    match_id = str(payload.get('match_id', '')).strip()
+    if not batch_id or not match_id:
+        return jsonify({'success': False, 'error': '缺少批量任务或比赛标识。'}), 400
+    ok, error, runtime_config = _load_ai_runtime_config()
+    if not ok:
+        return jsonify({'success': False, 'error': error}), 400
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        item = next((row for row in (batch or {}).get('items', []) if str(row.get('match_id')) == match_id), None)
+        if not item:
+            return jsonify({'success': False, 'error': '未找到对应比赛。'}), 404
+        task_key = item.get('task_key', '')
+        task = ai_tasks.get(task_key, {})
+        reports = task.get('reports', [])
+        if len(reports) != 3 or not all(has_final_output(report) for report in reports):
+            return jsonify({'success': False, 'error': '三版本报告不可用，请重试整场分析。'}), 409
+        item['status'] = 'processing'
+        item.pop('error', None)
+        item['retry_scope'] = 'cro'
+        item['heartbeat_at'] = time.time()
+        batch['status'] = 'processing'
+    worker = threading.Thread(
+        target=_run_batch_cro_retry,
+        args=(batch_id, match_id, task_key, runtime_config),
+        daemon=True,
+    )
+    worker.start()
+    _persist_latest_batch_state(batch_id)
     return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
 
 
@@ -1152,19 +1544,22 @@ def batch_ai_analysis_result():
         return jsonify({'success': False, 'error': f'读取最终执行单失败：{str(error)}'}), 500
 
 
-def build_match_prompt_context(match_id, home, away, analysis_mode='prematch'):
-    details_cache_file = os.path.join(CACHE_DIR, f'details_{match_id}.json')
-    details = None
-    if os.path.exists(details_cache_file):
-        try:
-            with open(details_cache_file, 'r', encoding='utf-8') as f:
-                details = json.load(f)
-        except Exception:
-            pass
-            
+def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', details=None):
+    """Build one immutable match-specific prompt from a validated snapshot."""
+    if details is None:
+        details_cache_file = _detail_cache_path(match_id)
+        if os.path.exists(details_cache_file):
+            try:
+                with open(details_cache_file, 'r', encoding='utf-8') as f:
+                    details = json.load(f)
+            except Exception:
+                details = None
+
     if not details:
         try:
             details = get_complete_match_details(match_id, home, away)
+            if not details.get('odds_index'):
+                details['odds_index'] = get_real_odds(match_id)
         except Exception as e:
             return False, f"获取比赛详情数据失败: {str(e)}", ""
 
@@ -1300,8 +1695,9 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch'):
     context_str = "\n".join(context_lines)
     return True, "", context_str
 
-def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str):
+def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key=None):
     global ai_tasks
+    task_key = task_key or str(match_id)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -1322,7 +1718,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
     }
     
     import requests
-    r = requests.post(url, headers=headers, json=payload, timeout=90, stream=True)
+    r = requests.post(url, headers=headers, json=payload, timeout=AI_VERSION_TIMEOUT_SECONDS, stream=True)
     if r.status_code != 200:
         err_text = ""
         try:
@@ -1363,18 +1759,21 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                     if content:
                         ai_output += content
                         
-                ai_tasks[str(match_id)]['reports'][version_idx] = ai_output
+                if ai_tasks.get(task_key, {}).get('status') == 'processing':
+                    ai_tasks[task_key]['reports'][version_idx] = ai_output
             except Exception:
                 pass
                 
     if in_reasoning:
         ai_output += "\n</think>\n"
-        ai_tasks[str(match_id)]['reports'][version_idx] = ai_output
+        if ai_tasks.get(task_key, {}).get('status') == 'processing':
+            ai_tasks[task_key]['reports'][version_idx] = ai_output
         
     return ai_output
 
-def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports):
+def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key=None):
     global ai_tasks
+    task_key = task_key or str(match_id)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json"
@@ -1393,7 +1792,7 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         "stream": True
     }
     import requests
-    r = requests.post(url, headers=headers, json=payload, timeout=90, stream=True)
+    r = requests.post(url, headers=headers, json=payload, timeout=CRO_TIMEOUT_SECONDS, stream=True)
     if r.status_code != 200:
         err_text = ""
         try:
@@ -1433,31 +1832,37 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
                     if content:
                         ai_output += content
                         
-                ai_tasks[str(match_id)]['final_ticket'] = ai_output
+                if ai_tasks.get(task_key, {}).get('status') == 'processing':
+                    ai_tasks[task_key]['final_ticket'] = ai_output
             except Exception:
                 pass
                 
     if in_reasoning:
         ai_output += "\n</think>\n"
-        ai_tasks[str(match_id)]['final_ticket'] = ai_output
+        if ai_tasks.get(task_key, {}).get('status') == 'processing':
+            ai_tasks[task_key]['final_ticket'] = ai_output
         
     return ai_output
 
-def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file, prediction_metadata, analysis_mode):
+def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file, prediction_metadata, analysis_mode, task_key=None, snapshot=None):
     global ai_tasks
+    task_key = task_key or str(match_id)
     try:
-        ai_tasks[str(match_id)] = {
+        ai_tasks[task_key] = {
             'status': 'processing', 
             'reports': ['', '', ''],
             'status_list': ['processing', 'processing', 'processing'],
-            'final_ticket': ''
+            'final_ticket': '',
+            'started_at': time.time(),
+            'heartbeat_at': time.time(),
+            'snapshot_hash': (snapshot or {}).get('hash', ''),
         }
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(
                     run_single_version, 
-                    i, match_id, api_base, api_key, model_name, system_prompt, context_str
+                    i, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key
                 ): i for i in range(3)
             }
             sub_errors = []
@@ -1465,20 +1870,22 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                 idx = futures[future]
                 try:
                     future.result()
-                    ai_tasks[str(match_id)]['status_list'][idx] = 'completed'
+                    ai_tasks[task_key]['status_list'][idx] = 'completed'
+                    ai_tasks[task_key]['heartbeat_at'] = time.time()
                 except Exception as sub_e:
                     print(f"Sub-thread {idx} failed for match {match_id}: {sub_e}")
                     sub_errors.append(str(sub_e))
-                    ai_tasks[str(match_id)]['status_list'][idx] = 'failed'
-                    ai_tasks[str(match_id)]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+                    ai_tasks[task_key]['status_list'][idx] = 'failed'
+                    ai_tasks[task_key]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+                    ai_tasks[task_key]['heartbeat_at'] = time.time()
         
         # 判断是否全都失败
-        st_list = ai_tasks[str(match_id)]['status_list']
+        st_list = ai_tasks[task_key]['status_list']
         if all(s == 'failed' for s in st_list):
             detail = sub_errors[0] if sub_errors else '未返回可用错误信息'
             raise Exception(f"三个版本的 AI 研判全部请求失败：{detail}")
 
-        incomplete_reports = [idx + 1 for idx, report in enumerate(ai_tasks[str(match_id)]['reports']) if not has_final_output(report)]
+        incomplete_reports = [idx + 1 for idx, report in enumerate(ai_tasks[task_key]['reports']) if not has_final_output(report)]
         if incomplete_reports:
             raise Exception(f"第 {', '.join(map(str, incomplete_reports))} 份研判只返回了思考过程，未生成正文。请重新生成。")
             
@@ -1486,22 +1893,28 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
         # The CRO judges each analyst's conclusion, not its raw reasoning trace.
         # Keeping traces out of this prompt cuts a large redundant model input while
         # preserving them unchanged in the UI and analysis cache.
-        reports_list = [extract_final_output(ai_tasks[str(match_id)]['reports'][i]) for i in range(3)]
+        reports_list = [extract_final_output(ai_tasks[task_key]['reports'][i]) for i in range(3)]
         combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
         
         # 串行调用大模型进行收敛层聚合
-        final_ticket = run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports)
+        ai_tasks[task_key]['phase'] = 'cro'
+        ai_tasks[task_key]['heartbeat_at'] = time.time()
+        final_ticket = run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key)
         if not has_final_output(final_ticket):
             raise Exception("CRO 只返回了思考过程，未生成最终执行单。请重新生成。")
-        ai_tasks[str(match_id)]['final_ticket'] = final_ticket
+        if ai_tasks.get(task_key, {}).get('status') != 'processing':
+            return
+        ai_tasks[task_key]['final_ticket'] = final_ticket
         
-        final_reports = ai_tasks[str(match_id)]['reports']
+        final_reports = ai_tasks[task_key]['reports']
         with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
             json.dump({
                 'analysis_version': AI_ANALYSIS_CACHE_VERSION,
                 'analysis_mode': analysis_mode,
                 'reports': final_reports,
-                'final_ticket': final_ticket
+                'final_ticket': final_ticket,
+                'snapshot_hash': (snapshot or {}).get('hash', ''),
+                'snapshot_captured_at': (snapshot or {}).get('captured_at', ''),
             }, cache_f, ensure_ascii=False, indent=2)
 
         try:
@@ -1514,10 +1927,21 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
             # Tracking must never invalidate a completed user-facing analysis.
             print(f"Prediction tracking failed for match {match_id}: {tracking_error}")
             
-        ai_tasks[str(match_id)]['status'] = 'completed'
+        ai_tasks[task_key]['status'] = 'completed'
+        ai_tasks[task_key]['heartbeat_at'] = time.time()
     except Exception as e:
         print(f"Background AI Thread error for match {match_id}: {e}")
-        ai_tasks[str(match_id)] = {'status': 'failed', 'error': str(e)}
+        existing = ai_tasks.get(task_key, {})
+        if existing.get('status') not in {'timed_out', 'cancelled'}:
+            ai_tasks[task_key] = {
+                'status': 'failed',
+                'error': str(e),
+                'reports': existing.get('reports', ['', '', '']),
+                'status_list': existing.get('status_list', ['failed', 'failed', 'failed']),
+                'final_ticket': existing.get('final_ticket', ''),
+                'phase': existing.get('phase', 'ai'),
+                'heartbeat_at': time.time(),
+            }
 
 @app.route('/api/match_ai_analysis', methods=['POST'])
 def match_ai_analysis():

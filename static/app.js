@@ -24,53 +24,6 @@ let latestBatchProgress = null;
 let batchExecutionTickets = {};
 const MAX_BATCH_SELECTION = 6;
 
-function restoreNativeUiShell() {
-    const replaceElement = (element, tagName, afterCreate) => {
-        const replacement = document.createElement(tagName);
-        [...element.attributes].forEach(attribute => {
-            if (!['size', 'variant', 'circle', 'pill', 'password-toggle', 'resize', 'label'].includes(attribute.name)) {
-                replacement.setAttribute(attribute.name, attribute.value);
-            }
-        });
-        replacement.innerHTML = element.innerHTML
-            .replace(/<sl-option\b/g, '<option')
-            .replace(/<\/sl-option>/g, '</option>');
-        if (afterCreate) afterCreate(replacement, element);
-        element.replaceWith(replacement);
-        return replacement;
-    };
-
-    document.querySelectorAll('sl-button').forEach(element => {
-        const button = replaceElement(element, 'button');
-        if (button.id === 'refresh-btn') button.className = 'btn-refresh';
-        if (button.id === 'prediction-backtest-btn' || button.id === 'ai-config-btn') button.className = 'btn-secondary';
-        if (button.id === 'btn-batch-select-mode') button.className = 'btn-batch-select-mode';
-        if (button.id === 'btn-batch-ai-analysis') button.className = 'btn-batch-ai';
-    });
-    document.querySelectorAll('sl-badge').forEach(element => replaceElement(element, 'span'));
-    document.querySelectorAll('sl-input').forEach(element => replaceElement(element, 'input', input => {
-        input.type = element.getAttribute('type') || 'text';
-        input.value = element.getAttribute('value') || '';
-        input.placeholder = element.getAttribute('placeholder') || '';
-    }));
-    document.querySelectorAll('sl-select').forEach(element => {
-        const select = replaceElement(element, 'select');
-        select.value = element.getAttribute('value') || '';
-    });
-    document.querySelectorAll('sl-textarea').forEach(element => replaceElement(element, 'textarea', textarea => {
-        textarea.rows = Number(element.getAttribute('rows') || 5);
-        textarea.placeholder = element.getAttribute('placeholder') || '';
-    }));
-    document.querySelectorAll('sl-dialog').forEach(element => {
-        const dialog = replaceElement(element, 'div');
-        dialog.className = 'modal-backdrop';
-        dialog.style.display = 'none';
-        if (dialog.id === 'ai-config-modal') dialog.onclick = closeAiConfigModalOnBackdrop;
-        if (dialog.id === 'prediction-backtest-modal') dialog.onclick = closePredictionBacktestOnBackdrop;
-        if (dialog.id === 'batch-analysis-modal') dialog.onclick = closeBatchAnalysisModalOnBackdrop;
-    });
-}
-
 function showAppNotice(message, variant = 'primary') {
     const host = document.getElementById('app-notice-host');
     if (!host || !message) return;
@@ -145,7 +98,6 @@ function checkAndLoadCachedReport(matchId) {
 window.checkAndLoadCachedReport = checkAndLoadCachedReport;
 
 // Initial Load
-restoreNativeUiShell();
 document.addEventListener('DOMContentLoaded', () => {
     autoFixHtmlCacheBug();
     loadMatches();
@@ -226,6 +178,7 @@ function loadMatches() {
 
 // Refresh matches triggering
 function refreshData() {
+    setMobileNavActive('sync');
     const btn = document.getElementById('refresh-btn');
     btn.classList.add('btn-loading');
     btn.disabled = true;
@@ -511,10 +464,13 @@ function renderMatchCards(matches) {
     container.innerHTML = '';
 
     if (matches.length === 0) {
+        const dateHasMatches = (groupedMatches[selectedDate] || []).length > 0;
         container.innerHTML = `
             <div class="empty-state" style="padding: 40px 20px; text-align: center; color: #8a99ad; font-size: 14px;">
                 <span class="iconfont" style="font-size: 24px; display: block; margin-bottom: 8px;">&#xe682;</span>
-                所选日期暂无一级/主流赛事
+                <strong style="display:block; color:var(--text-primary); margin-bottom:6px;">${dateHasMatches ? '没有符合当前筛选条件的比赛' : '当前日期暂无赛事'}</strong>
+                <span>${dateHasMatches ? '可调整搜索、联赛或状态筛选后再查看。' : '该日期尚未同步到赛事数据。'}</span>
+                ${dateHasMatches ? '' : '<button class="btn-refresh empty-date-refresh" type="button" onclick="refreshDateData(selectedDate)">刷新本日期</button>'}
             </div>
         `;
         return;
@@ -540,7 +496,7 @@ function renderMatchCards(matches) {
             const isLive = (status >= 2 && status <= 7);
             const card = document.createElement('div');
             const isBatchSelected = Boolean(batchSelectedMatches[String(m.id)]);
-            card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''} ${isBatchSelected ? 'batch-selected' : ''}`;
+            card.className = `match-card ${selectedMatch && selectedMatch.id === m.id ? 'active' : ''} ${isLive ? 'live-match' : ''} ${isBatchSelected ? 'batch-selected' : ''} ${isBatchSelectionMode ? 'batch-selection-mode' : ''}`;
             card.id = `match-card-${m.id}`;
             card.onclick = () => selectMatch(m);
 
@@ -624,12 +580,10 @@ function renderMatchCards(matches) {
             }
 
             card.innerHTML = `
-            ${isBatchSelectionMode ? `
-                <label class="batch-match-select" title="加入批量分析">
-                    <input class="batch-match-checkbox" type="checkbox" ${isBatchSelected ? 'checked' : ''}>
-                    <span>选择</span>
-                </label>
-            ` : ''}
+            <label class="batch-match-select ${isBatchSelectionMode ? '' : 'is-idle'}" title="加入批量分析">
+                <input class="batch-match-checkbox" type="checkbox" ${isBatchSelected ? 'checked' : ''} ${isBatchSelectionMode ? '' : 'tabindex="-1"'}>
+                <span>选择</span>
+            </label>
             <div class="match-time-col">
                 <span class="m-time">${m.time}</span>
                 <span class="m-league" title="${m.competition}">${m.competition}</span>
@@ -693,7 +647,18 @@ function updateBatchSelectionUi() {
 function toggleBatchSelectionMode() {
     isBatchSelectionMode = !isBatchSelectionMode;
     updateBatchSelectionUi();
-    renderMatchCards(getFilteredMatches());
+    // 复选框轨道始终预留，切换选择模式时仅原地显示控件，避免列表
+    // 重绘、滚动位置跳动或比赛信息横向挤压。
+    document.querySelectorAll('.match-card').forEach(card => {
+        card.classList.toggle('batch-selection-mode', isBatchSelectionMode);
+        const selector = card.querySelector('.batch-match-select');
+        const checkbox = card.querySelector('.batch-match-checkbox');
+        if (selector) selector.classList.toggle('is-idle', !isBatchSelectionMode);
+        if (checkbox) {
+            if (isBatchSelectionMode) checkbox.removeAttribute('tabindex');
+            else checkbox.setAttribute('tabindex', '-1');
+        }
+    });
 }
 window.toggleBatchSelectionMode = toggleBatchSelectionMode;
 
@@ -702,7 +667,8 @@ function toggleBatchMatchSelection(match, checked) {
     if (checked) {
         if (!batchSelectedMatches[matchId] && Object.keys(batchSelectedMatches).length >= MAX_BATCH_SELECTION) {
             alert(`单次最多选择 ${MAX_BATCH_SELECTION} 场比赛。`);
-            renderMatchCards(getFilteredMatches());
+            const checkbox = document.getElementById(`match-card-${matchId}`)?.querySelector('.batch-match-checkbox');
+            if (checkbox) checkbox.checked = false;
             return;
         }
         batchSelectedMatches[matchId] = match;
@@ -710,13 +676,14 @@ function toggleBatchMatchSelection(match, checked) {
         delete batchSelectedMatches[matchId];
     }
     updateBatchSelectionUi();
-    renderMatchCards(getFilteredMatches());
+    document.getElementById(`match-card-${matchId}`)?.classList.toggle('batch-selected', checked);
 }
 
 function clearBatchSelection() {
     batchSelectedMatches = {};
     updateBatchSelectionUi();
-    renderMatchCards(getFilteredMatches());
+    document.querySelectorAll('.match-card.batch-selected').forEach(card => card.classList.remove('batch-selected'));
+    document.querySelectorAll('.batch-match-checkbox:checked').forEach(checkbox => { checkbox.checked = false; });
 }
 window.clearBatchSelection = clearBatchSelection;
 
@@ -778,7 +745,7 @@ function toggleBatchExecutionTicket(batchId, matchId) {
 }
 
 function retryFailedBatchItems(batch) {
-    const failedItems = (batch.items || []).filter(item => item.status === 'failed');
+    const failedItems = (batch.items || []).filter(item => ['failed', 'timed_out'].includes(item.status));
     if (!failedItems.length) return;
     batchSelectedMatches = {};
     failedItems.forEach(item => {
@@ -793,6 +760,22 @@ function retryFailedBatchItems(batch) {
     startBatchAiAnalysis();
 }
 
+function retryBatchCro(batchId, matchId) {
+    fetch('/api/batch_ai_analysis_retry_cro', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: batchId, match_id: matchId })
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || '无法重试 CRO 汇总。');
+            activeBatchAiId = batchId;
+            renderBatchAiProgress(result.batch);
+            startBatchAiPolling();
+        })
+        .catch(error => alert(error.message || '重试 CRO 汇总失败。'));
+}
+
 function renderBatchAiProgress(batch) {
     const progress = document.getElementById('batch-ai-progress');
     const button = document.getElementById('btn-batch-ai-analysis');
@@ -805,6 +788,7 @@ function renderBatchAiProgress(batch) {
     const summary = `批量分析：已完成 ${counts.completed || 0}/${counts.total || 0}`
         + `，进行中 ${counts.processing || 0}`
         + `，失败 ${counts.failed || 0}`
+        + ((counts.timed_out || 0) ? `（超时 ${counts.timed_out}）` : '')
         + ((counts.cached || 0) ? `（复用缓存 ${counts.cached}）` : '')
         + ((counts.skipped || 0) ? `（跳过 ${counts.skipped}）` : '');
     progress.style.display = 'block';
@@ -814,10 +798,16 @@ function renderBatchAiProgress(batch) {
         const title = `${item.home_team || '主队'} vs ${item.away_team || '客队'}`;
         const meta = [item.competition, item.kickoff].filter(Boolean).join(' · ');
         const error = item.error ? `<small class="batch-progress-error">${escapeBatchProgressText(item.error)}</small>` : '';
+        const quality = item.data_quality
+            ? `<small class="batch-progress-quality">数据校验：情报 ${item.data_quality.checks?.intelligence ? '✓' : '—'} · 阵容 ${item.data_quality.checks?.lineup_injuries ? '✓' : '—'} · 交锋 ${item.data_quality.checks?.history ? '✓' : '—'} · 战绩 ${item.data_quality.checks?.recent_form ? '✓' : '—'} · 指数 ${escapeBatchProgressText(item.data_quality.odds_companies || 0)} 家</small>`
+            : '';
         const ticketKey = `${batch.id}:${item.match_id}`;
         const ticketView = batchExecutionTickets[ticketKey];
         const resultAction = ['completed', 'cached'].includes(status)
             ? `<button class="batch-result-toggle" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">${ticketView?.expanded ? '收起执行预测' : '查看执行预测'}</button>${ticketView?.expanded ? `<div class="batch-execution-ticket">${batchExecutionTicketMarkup(ticketView)}</div>` : ''}`
+            : '';
+        const retryAction = item.retry_scope === 'cro'
+            ? `<button class="batch-retry-cro" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">重试 CRO 汇总</button>`
             : '';
         return `
             <li class="batch-progress-item ${status}">
@@ -828,8 +818,9 @@ function renderBatchAiProgress(batch) {
                 </div>
                 <div class="batch-progress-phase">
                     <span>${escapeBatchProgressText(item.phase || '等待处理')}</span>
+                    ${quality}
                     ${error}
-                    ${resultAction}
+                    ${resultAction || retryAction}
                 </div>
             </li>
         `;
@@ -840,6 +831,9 @@ function renderBatchAiProgress(batch) {
     `;
     progress.querySelectorAll('.batch-result-toggle').forEach(button => {
         button.addEventListener('click', () => toggleBatchExecutionTicket(batch.id, button.dataset.matchId));
+    });
+    progress.querySelectorAll('.batch-retry-cro').forEach(button => {
+        button.addEventListener('click', () => retryBatchCro(batch.id, button.dataset.matchId));
     });
     const retryButton = progress.querySelector('.batch-retry-failed');
     if (retryButton) retryButton.addEventListener('click', () => retryFailedBatchItems(batch));
@@ -987,13 +981,36 @@ function closeMobileDetails() {
     }
 }
 
+function setMobileNavActive(name) {
+    document.querySelectorAll('.mobile-nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.nav === name);
+    });
+}
+
 function goMobileHome() {
     closeMobileDetails();
     closeBatchAnalysisModal();
-    document.querySelectorAll('.mobile-nav-item').forEach(item => item.classList.remove('active'));
-    document.querySelector('.mobile-nav-item')?.classList.add('active');
+    setMobileNavActive('home');
 }
 window.goMobileHome = goMobileHome;
+
+function setMatchRefreshControls({ visible = true, disabled = false, refreshing = false } = {}) {
+    const desktop = document.getElementById('btn-refresh-match');
+    const mobile = document.getElementById('btn-refresh-match-mobile');
+    const tabBar = document.querySelector('.details-tab-bar');
+    if (desktop && tabBar && desktop.parentElement !== tabBar) {
+        tabBar.appendChild(desktop);
+    }
+    [desktop, mobile].filter(Boolean).forEach(button => {
+        button.style.display = visible ? 'inline-flex' : 'none';
+        button.classList.toggle('is-visible', visible);
+        button.disabled = disabled;
+        button.classList.toggle('btn-disabled', disabled);
+        button.classList.toggle('refreshing', refreshing);
+    });
+    const label = desktop?.querySelector('span');
+    if (label) label.textContent = refreshing ? '刷新中…' : '刷新本场';
+}
 
 // Fetch and load Match Details
 function loadMatchDetails(match) {
@@ -1011,6 +1028,7 @@ function loadMatchDetails(match) {
         const btnText = refreshBtn.querySelector('span');
         if (btnText) btnText.textContent = '刷新本场';
     }
+    setMatchRefreshControls({ visible: true, disabled: true });
 
     // Check local memory cache first
     if (matchDetailsCache[match.id]) {
@@ -1018,6 +1036,7 @@ function loadMatchDetails(match) {
             refreshBtn.classList.remove('btn-disabled');
             refreshBtn.disabled = false;
         }
+        setMatchRefreshControls({ visible: true, disabled: false });
         renderMatchDetails(match, matchDetailsCache[match.id]);
         return;
     }
@@ -1078,6 +1097,7 @@ function renderMatchDetails(match, details) {
         const btnText = refreshBtn.querySelector('span');
         if (btnText) btnText.textContent = '刷新本场';
     }
+    setMatchRefreshControls({ visible: true, disabled: false, refreshing: false });
 
     // 1. VS Header
     let html = `
@@ -1129,15 +1149,6 @@ function renderMatchDetails(match, details) {
     `;
 
     container.innerHTML = html;
-    // Keep the refresh action with the fixture header instead of mixing it into
-    // the centered tab sequence. The same element is reused to preserve its
-    // loading state and click handler.
-    const renderedHeader = container.querySelector('.details-vs-header');
-    if (refreshBtn && renderedHeader) {
-        renderedHeader.appendChild(refreshBtn);
-        refreshBtn.classList.add('in-match-header');
-    }
-
     // 如果当前选中的是 AI 选项卡，在切换场次后自动尝试秒级拉取并渲染已有的 AI 分析缓存
     if (activeDetailTab === 'ai') {
         checkAndLoadCachedReport(match.id);
@@ -1155,6 +1166,7 @@ function forceRefreshCurrentMatch() {
     if (!refreshBtn || refreshBtn.classList.contains('refreshing')) return;
 
     refreshBtn.classList.add('refreshing');
+    setMatchRefreshControls({ visible: true, disabled: true, refreshing: true });
     const btnText = refreshBtn.querySelector('span');
     if (btnText) btnText.textContent = '刷新中...';
 
@@ -1177,6 +1189,7 @@ function forceRefreshCurrentMatch() {
         .finally(() => {
             refreshBtn.classList.remove('refreshing');
             if (btnText) btnText.textContent = '刷新本场';
+            setMatchRefreshControls({ visible: true, disabled: false, refreshing: false });
         });
 }
 window.forceRefreshCurrentMatch = forceRefreshCurrentMatch;
@@ -1203,6 +1216,7 @@ function loadAiConfigFromServer(callback) {
 function openAiConfigModal() {
     const modal = document.getElementById('ai-config-modal');
     if (!modal) return;
+    setMobileNavActive('config');
 
     loadAiConfigFromServer((cfg) => {
         document.getElementById('global-ai-base').value = cfg.api_base || 'https://opencode.ai/zen/v1';
@@ -1663,6 +1677,7 @@ function openPredictionBacktestModal() {
     const modal = document.getElementById('prediction-backtest-modal');
     const container = document.getElementById('prediction-backtest-content');
     if (!modal || !container) return;
+    setMobileNavActive('backtest');
 
     modal.style.display = 'flex';
     clearPredictionSampleDetail();
@@ -2166,7 +2181,7 @@ function renderIntelTab(match, details) {
     }
 
     if (tabHtml === '') {
-        tabHtml = `<div class="welcome-view"><h3>暂无情报预测数据</h3></div>`;
+        tabHtml = `<div class="welcome-view"><h3>暂无情报数据</h3><p>该赛事暂未提供赛前情报，不影响您查看伤停、交锋和指数。</p></div>`;
     }
     return tabHtml;
 }
@@ -2512,7 +2527,7 @@ function cleanHandicap(line) {
 function renderOddsTab(match, details) {
     const indexData = details.odds_index || [];
     if (indexData.length === 0) {
-        return `<div class="welcome-view"><h3>暂无详细指数数据</h3></div>`;
+        return `<div class="welcome-view"><h3>暂无指数数据</h3><p>该赛事暂未提供盘口指数，请稍后点击“刷新本场”重新同步。</p></div>`;
     }
 
     const companyToCid = {
@@ -2808,11 +2823,6 @@ function showDetailsLoading(match) {
             <div class="shimmer-box" style="height: 180px;"></div>
         </div>
     `;
-    const loadingHeader = container.querySelector('.details-vs-header');
-    if (refreshBtn && loadingHeader) {
-        loadingHeader.appendChild(refreshBtn);
-        refreshBtn.classList.add('in-match-header');
-    }
 }
 
 function renderNoMatchSelected() {
@@ -2820,7 +2830,8 @@ function renderNoMatchSelected() {
         <div class="welcome-view">
             <div class="animated-icon">📅</div>
             <h3>当前日期暂无赛事</h3>
-            <p>请在左侧侧边栏中选择其他日期以查看比赛日程。</p>
+            <p>该日期暂未同步到赛事，您可以刷新本日期或切换其他日期。</p>
+            <button class="btn-refresh empty-date-refresh" type="button" onclick="refreshData()">刷新本日期</button>
         </div>
     `;
 }

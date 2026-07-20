@@ -250,7 +250,7 @@ body {
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
-    padding: 1rem 1.5rem 1.5rem;
+    padding: 1rem;
 }
 
 .count-badge {
@@ -516,7 +516,7 @@ body {
     background-color: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-md);
-    padding: 0.85rem 1.15rem;
+    padding: 0.78rem 0.85rem;
     cursor: pointer;
     transition: var(--transition-smooth);
     position: relative;
@@ -2322,6 +2322,7 @@ body {
 .btn-batch-ai,
 .batch-ai-selection button,
 .batch-result-toggle,
+.batch-retry-cro,
 .batch-retry-failed {
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
@@ -2467,6 +2468,9 @@ body {
     font-size: 0.74rem;
 }
 
+.batch-progress-quality { color: var(--color-success) !important; }
+.batch-progress-error { color: var(--color-danger) !important; max-width: 250px; }
+
 .batch-progress-phase {
     justify-items: end;
     color: var(--text-secondary);
@@ -2474,6 +2478,7 @@ body {
 }
 
 .batch-result-toggle,
+.batch-retry-cro,
 .batch-retry-failed {
     min-height: 28px;
     padding: 0.35rem 0.5rem;
@@ -3319,17 +3324,12 @@ body {
 }
 
 /* ==========================================================================
-   custom additions for shoelace layout adjustment
+   legacy responsive adjustments
    ========================================================================== */
 
 /* Active Tab indicator line for both desktop and mobile */
 .details-tab-bar > .detail-tab.active {
     position: relative !important;
-}
-.details-tab-bar > .detail-tab.active::part(base) {
-    border-bottom: 2.5px solid var(--sl-color-primary-600) !important;
-    color: var(--sl-color-primary-600) !important;
-    font-weight: 700 !important;
 }
 
 /* Desktop: Position the refresh button on the far right of the Tab Bar */
@@ -3341,30 +3341,8 @@ body {
     margin: 0 !important;
     display: inline-flex !important;
 }
-.details-tab-bar > #btn-refresh-match::part(base) {
-    min-height: 32px !important;
-    height: 32px !important;
-    padding-inline: 0.65rem !important;
-    border: 1px solid #d8d6ff !important;
-    background: #f7f7ff !important;
-    color: var(--sl-color-primary-700) !important;
-    border-radius: 7px !important;
-}
 
 /* Ensure calendar button has the correct square size on both desktop and mobile */
-.calendar-picker-btn::part(base) {
-    width: 36px !important;
-    height: 36px !important;
-    min-width: 36px !important;
-    min-height: 36px !important;
-    border-radius: 8px !important;
-    border: 1px solid var(--border-color) !important;
-    background: #f6f8fc !important;
-    color: var(--text-secondary) !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
 
 /* Icon dimensions wrapper */
 .calendar-picker-btn > svg,
@@ -3376,29 +3354,8 @@ body {
 }
 
 /* Mobile: style the refresh button as a circular button in the top-right header */
-.btn-refresh-detail.in-mobile-header::part(base) {
-    width: 36px !important;
-    height: 36px !important;
-    min-width: 36px !important;
-    min-height: 36px !important;
-    border: 1px solid var(--border-color) !important;
-    background: var(--bg-body-secondary) !important;
-    border-radius: 50% !important;
-    color: var(--text-secondary) !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
 
 /* Center icon-only controls in their own slots instead of their host box */
-.calendar-picker-btn::part(label),
-.btn-refresh-detail::part(label) {
-    width: 100%;
-    height: 100%;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-}
 
 /* Normalized Welcome View for Tab content pages */
 .tab-content > .welcome-view {
@@ -3504,4 +3461,242 @@ body {
         min-height: 200px !important;
         padding: 1.5rem 1rem !important;
     }
+}
+
+/* ========================================================================== */
+/* Bootstrap-native application overrides: one responsive source of truth.   */
+/* ========================================================================== */
+
+.btn-refresh-mobile { display: none; }
+
+.match-card.batch-selection-mode {
+    display: grid;
+    grid-template-columns: 38px minmax(62px, auto) minmax(0, 1fr) auto;
+    gap: 0.7rem;
+    padding-left: 0.75rem;
+}
+
+.match-card.batch-selection-mode .batch-match-select {
+    position: static;
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0;
+    margin: 0;
+    font-size: 0;
+    color: var(--color-primary);
+}
+
+.match-card.batch-selection-mode .batch-match-checkbox {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    cursor: pointer;
+}
+
+.match-card.batch-selection-mode .batch-match-select span { display: none; }
+
+.match-card.batch-selection-mode .match-time-col,
+.match-card.batch-selection-mode .match-status-col-vertical,
+.match-card.batch-selection-mode .match-teams-col-vertical { min-width: 0; }
+
+.match-card.batch-selection-mode .team-name { max-width: none; }
+
+@media (max-width: 780px) {
+    .navbar { min-height: 58px !important; padding: 0.75rem 1rem !important; }
+    .navbar .nav-actions { display: none !important; }
+    .brand-subtitle { display: inline !important; font-size: 0.72rem !important; }
+
+    .mobile-detail-header {
+        display: grid !important;
+        grid-template-columns: minmax(88px, auto) minmax(0, 1fr) 36px !important;
+        align-items: center !important;
+        gap: 0.45rem !important;
+        min-height: 56px !important;
+        padding: 0.65rem 0.8rem !important;
+    }
+
+    .mobile-match-title {
+        position: static !important;
+        transform: none !important;
+        width: auto !important;
+        max-width: none !important;
+        min-width: 0 !important;
+        text-align: center !important;
+        font-size: 0.82rem !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    .btn-mobile-back {
+        min-width: 0;
+        width: fit-content;
+        padding: 0.35rem 0.55rem !important;
+        white-space: nowrap;
+    }
+
+    .btn-refresh-mobile {
+        display: inline-flex !important;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        background: var(--bg-body-secondary);
+        color: var(--color-primary);
+        cursor: pointer;
+    }
+
+    .btn-refresh-mobile:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-refresh-mobile.refreshing .bi { animation: spin 0.85s linear infinite; }
+
+    .details-vs-header > #btn-refresh-match { display: none !important; }
+
+    .match-card.batch-selection-mode {
+        grid-template-columns: 30px 58px minmax(0, 1fr) 60px;
+        gap: 0.45rem;
+        padding: 0.65rem 0.55rem;
+    }
+
+    .match-card.batch-selection-mode .match-time-col { min-width: 0; }
+    .match-card.batch-selection-mode .m-league { max-width: 58px; }
+    .match-card.batch-selection-mode .match-status-col-vertical { min-width: 0; }
+
+    .details-body { padding: 0.85rem !important; }
+    .welcome-view { min-height: 42vh; padding: 2rem 1rem; }
+
+    .modal-backdrop {
+        align-items: stretch;
+        justify-content: stretch;
+        padding: 0;
+    }
+
+    .config-dialog .modal-container,
+    .backtest-dialog .modal-container,
+    .batch-analysis-dialog .modal-container {
+        width: 100%;
+        max-width: none;
+        min-height: 100%;
+        max-height: 100%;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+    }
+
+    .batch-analysis-dialog .modal-container {
+        min-height: min(78vh, 680px);
+        align-self: flex-end;
+        border-radius: 18px 18px 0 0;
+    }
+
+    .modal-body { max-height: none; flex: 1 1 auto; }
+}
+
+/* Desktop refresh lives in the tab strip and never changes the tab layout. */
+@media (min-width: 781px) {
+    .details-tab-bar {
+        position: relative;
+        padding-right: 146px;
+    }
+
+    .details-tab-bar > #btn-refresh-match {
+        position: absolute !important;
+        right: 18px;
+        top: 50%;
+        transform: translateY(-50%);
+        display: none !important;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0.35rem 0.65rem;
+        border: 1px solid #d8d6ff;
+        border-radius: 7px;
+        background: #f7f7ff;
+        color: var(--color-primary);
+        white-space: nowrap;
+    }
+
+    .details-tab-bar > #btn-refresh-match.is-visible { display: inline-flex !important; }
+}
+
+.empty-date-refresh { margin-top: 0.75rem; }
+
+/* Reserve a narrow leading rail on every fixture so selection mode never
+   reflows the time, teams, score, or status columns. */
+.match-card {
+    display: grid;
+    grid-template-columns: 22px minmax(54px, auto) minmax(0, 1fr) minmax(58px, auto);
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.match-card .batch-match-select {
+    position: static;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    margin: 0;
+    font-size: 0;
+}
+
+.match-card .batch-match-select {
+    opacity: 1;
+    transform: scale(1);
+    transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.match-card .batch-match-select.is-idle {
+    opacity: 0;
+    transform: scale(0.82);
+    pointer-events: none;
+}
+
+.match-card .batch-match-checkbox { width: 18px; height: 18px; margin: 0; }
+.match-card .batch-match-select span { display: none; }
+.match-card .match-time-col,
+.match-card .match-teams-col-vertical,
+.match-card .match-status-col-vertical { min-width: 0; }
+.match-card .match-status-col-vertical {
+    width: 58px;
+    min-width: 58px;
+    justify-self: end;
+    align-items: center;
+}
+
+.match-card .extra-scores {
+    width: 100%;
+    justify-content: center !important;
+}
+.match-card .team-name { max-width: none; }
+
+.match-card.batch-selection-mode {
+    grid-template-columns: 22px minmax(54px, auto) minmax(0, 1fr) minmax(58px, auto);
+    gap: 0.45rem;
+    padding-left: 0.78rem;
+}
+
+.match-card.batch-selection-mode .batch-match-select {
+    width: 22px;
+    font-size: 0;
+}
+
+@media (max-width: 780px) {
+    /* ID selector is required here to override the desktop tab-strip rule. */
+    .details-tab-bar > #btn-refresh-match { display: none !important; }
+
+    .match-card,
+    .match-card.batch-selection-mode {
+        grid-template-columns: 22px 52px minmax(0, 1fr) 56px;
+        gap: 0.45rem;
+        padding: 0.65rem 0.55rem;
+    }
+
+    .match-card .m-league { max-width: 56px; }
+    .match-card .status-chip { padding-inline: 0.35rem; }
+    .match-card .extra-scores { justify-content: flex-end !important; }
 }
