@@ -194,6 +194,7 @@ function refreshData() {
         .then(res => {
             btn.classList.remove('btn-loading');
             btn.disabled = false;
+            setMobileNavActive('home');
 
             if (res.success) {
                 allMatches = res.data;
@@ -212,6 +213,7 @@ function refreshData() {
         .catch(err => {
             btn.classList.remove('btn-loading');
             btn.disabled = false;
+            setMobileNavActive('home');
             showErrorState("同步请求失败，请检查连接。");
             console.error(err);
         });
@@ -696,6 +698,7 @@ window.openBatchAnalysisModal = openBatchAnalysisModal;
 function closeBatchAnalysisModal() {
     const modal = document.getElementById('batch-analysis-modal');
     if (modal) modal.style.display = 'none';
+    setMobileNavActive('home');
 }
 window.closeBatchAnalysisModal = closeBatchAnalysisModal;
 
@@ -801,6 +804,9 @@ function renderBatchAiProgress(batch) {
         const quality = item.data_quality
             ? `<small class="batch-progress-quality">数据校验：情报 ${item.data_quality.checks?.intelligence ? '✓' : '—'} · 阵容 ${item.data_quality.checks?.lineup_injuries ? '✓' : '—'} · 交锋 ${item.data_quality.checks?.history ? '✓' : '—'} · 战绩 ${item.data_quality.checks?.recent_form ? '✓' : '—'} · 指数 ${escapeBatchProgressText(item.data_quality.odds_companies || 0)} 家</small>`
             : '';
+        const warningMsg = (item.data_quality && item.data_quality.odds_warning)
+            ? `<small class="batch-progress-warning" style="color: #d97706; font-size: 0.72rem; display: block; margin-top: 2px;">⚠️ ${escapeBatchProgressText(item.data_quality.odds_warning)}</small>`
+            : '';
         const ticketKey = `${batch.id}:${item.match_id}`;
         const ticketView = batchExecutionTickets[ticketKey];
         const resultAction = ['completed', 'cached'].includes(status)
@@ -819,6 +825,7 @@ function renderBatchAiProgress(batch) {
                 <div class="batch-progress-phase">
                     <span>${escapeBatchProgressText(item.phase || '等待处理')}</span>
                     ${quality}
+                    ${warningMsg}
                     ${error}
                     ${resultAction || retryAction}
                 </div>
@@ -979,6 +986,7 @@ function closeMobileDetails() {
     if (detailsPanel) {
         detailsPanel.classList.remove('slide-in');
     }
+    setMobileNavActive('home');
 }
 
 function setMobileNavActive(name) {
@@ -1233,6 +1241,7 @@ function closeAiConfigModal() {
     if (modal) {
         modal.style.display = 'none';
     }
+    setMobileNavActive('home');
 }
 window.closeAiConfigModal = closeAiConfigModal;
 
@@ -1616,6 +1625,7 @@ function closePredictionBacktestModal() {
     const modal = document.getElementById('prediction-backtest-modal');
     if (modal) modal.style.display = 'none';
     clearPredictionSampleDetail();
+    setMobileNavActive('home');
 }
 window.closePredictionBacktestModal = closePredictionBacktestModal;
 

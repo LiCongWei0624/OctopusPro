@@ -27,7 +27,8 @@ AI_VERSION_TIMEOUT_SECONDS = 100
 CRO_TIMEOUT_SECONDS = 100
 BATCH_MATCH_TIMEOUT_SECONDS = 360
 BATCH_HEARTBEAT_TIMEOUT_SECONDS = 420
-MIN_REQUIRED_ODDS_COMPANIES = 12
+MIN_REQUIRED_ODDS_COMPANIES = 1
+RECOMMENDED_ODDS_COMPANIES = 6
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
@@ -882,6 +883,11 @@ def _detail_quality_report(details):
     recent = details.get('recent_results')
     odds = details.get('odds_index')
 
+    odds_count = len(odds) if isinstance(odds, list) else 0
+    odds_warning = None
+    if MIN_REQUIRED_ODDS_COMPANIES <= odds_count < RECOMMENDED_ODDS_COMPANIES:
+        odds_warning = f"赔率样本较少（仅 {odds_count} 家），已继续分析"
+
     checks = {
         'intelligence': isinstance(pros_cons, dict) and all(key in pros_cons for key in ('home', 'away')),
         'lineup_injuries': isinstance(injuries, dict) and all(key in injuries for key in ('home', 'away')),
@@ -896,7 +902,7 @@ def _detail_quality_report(details):
         'lineup_injuries': '伤停与阵容',
         'history': '历史交锋',
         'recent_form': '近期战绩',
-        'odds_snapshot': '12 家赔率指数',
+        'odds_snapshot': f'最少 {MIN_REQUIRED_ODDS_COMPANIES} 家赔率指数',
     }
     missing = [key for key, passed in checks.items() if not passed]
     return {
@@ -904,7 +910,8 @@ def _detail_quality_report(details):
         'checks': checks,
         'missing': missing,
         'missing_labels': [labels[key] for key in missing],
-        'odds_companies': len(odds) if isinstance(odds, list) else 0,
+        'odds_companies': odds_count,
+        'odds_warning': odds_warning,
     }
 
 
