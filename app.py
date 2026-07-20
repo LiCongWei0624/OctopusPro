@@ -17,6 +17,13 @@ from prediction_tracker import init_database, prediction_detail, record_predicti
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
+@app.after_request
+def add_no_cache_headers(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate, max-age=0'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
 AI_ANALYSIS_CACHE_VERSION = 4
@@ -68,7 +75,7 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 1. 近 3-5 轮攻防效率与竞技状态 (权重 30%)
 2. 主客场环境差异与硬实力底盘 (权重 30%)
 3. 伤停、红牌与战术克制 (权重 20%)
-4. 战意与赛程密集度 (权重 20%)
+4. 战意与赛程密集度 (权重 20%，必须结合【五、 联赛积分榜对比】分析战意分差与夺冠/保级驱动力(识别升班马属性)；结合【七、 半全场胜负统计】评估落后翻盘/领先被逆转率；结合【六、 进球时间段分布】评估进防能力与下半场体能；对比伤停名单，评估是否有核心主力缺阵及折损率；对比近10场对手的积分榜排名，计算两队面对强队(上游)和弱队(下游)时的得失球差异，分析其硬仗与虐菜表现)
 
 ### Step 2: 赔率隐含概率与资金动能审计
 1. **还原抽水（Margin）**：计算初盘与即时盘的还原率，剔除博彩公司的利润抽水，还原两队的纯市场隐含概率。
@@ -95,6 +102,9 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 
 #### 一、 基本面骨架与核心变量加权
 - **特征加权评分**：状态( /30) | 主客场( /30) | 伤停克制( /20) | 战意赛程( /20)
+- **积分战意与半全场纠偏**：[结合积分榜分差与半全场逆转率，对主客队真实拉力进行细节纠偏，指出是否具备升班马背景]
+- **主力缺阵与攻防折损率**：[对比伤停名单，核算核心射手/防守主力缺席对攻防能力的定量折损]
+- **进球节奏与强弱交手审计**：[分析不同时段进球集中度与得失球率；对比近10场面对积分榜上游(强队)和下游(弱队)的场均得失球差异，提炼虐菜/硬仗表现]
 - **核心量化拉力点**：[直接融合有利与不利情报，客观描述对比赛走势影响最大的关键基本面变量]
 
 #### 二、 盘口语言解码：隐含概率与风控审计
@@ -642,11 +652,18 @@ def get_match_details():
         try:
             with open(cache_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            if not data.get('odds_index'):
-                # A finished-match snapshot is otherwise permanent. Do not
-                # preserve an incomplete odds response from a transient WAF
-                # or upstream failure; refetch it when the fixture is opened.
-                data = None
+            has_odds = data.get('odds_index') and len(data['odds_index']) > 0
+            has_standings = data.get('standings') is not None
+            has_goal_dist = data.get('goal_distribution') is not None
+            
+            # 若比赛未完场，必须确保赔率、积分、进球分布全部存在，否则判定为残缺缓存直接失效重新拉取
+            if not is_finished:
+                if not has_odds or not has_standings or not has_goal_dist:
+                    data = None
+            else:
+                # 已完场赛事，仅校验是否存在赔率指数
+                if not has_odds:
+                    data = None
             if data is not None:
                 return jsonify({'success': True, 'data': data})
         except Exception as e:
@@ -1648,6 +1665,47 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
     context_lines.append(f"客队近期战绩：")
     for idx, match in enumerate(recent_away[:10]):
         context_lines.append(f"- {match.get('date', '')} {match.get('home', '')} {match.get('score', '')} {match.get('away', '')} (赛事: {match.get('competition', '')}, 结果: {match.get('result', '')})")
+
+    context_lines.append(f"\n【五、 联赛积分榜对比】")
+    standings = details.get('standings', [])
+    if isinstance(standings, list) and standings:
+        for row in standings:
+            context_lines.append(f"- 排名 #{row.get('position', '-')} | 球队: {row.get('team_name', '未知')} | 赛: {row.get('total', 0)} | 胜/平/负: {row.get('won', 0)}/{row.get('draw', 0)}/{row.get('loss', 0)} | 得/失球: {row.get('goals_for', 0)}:{row.get('goals_against', 0)} | 积分: {row.get('points', 0)}")
+    else:
+        context_lines.append("- 暂无联赛积分榜数据")
+
+    context_lines.append(f"\n【六、 进球时间段分布】")
+    goal_dist = details.get('goal_distribution', {})
+    if isinstance(goal_dist, dict) and (goal_dist.get('home') or goal_dist.get('away')):
+        def format_goal_slots(all_data):
+            if not all_data or 'scored' not in all_data:
+                return "暂无"
+            slots_str = []
+            slots = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90']
+            scored_raw = all_data.get('scored', [])
+            for idx, arr in enumerate(scored_raw[:6]):
+                val = arr[0] if isinstance(arr, list) and len(arr) > 0 else arr
+                slots_str.append(f"{slots[idx]}分({val}球)")
+            return " | ".join(slots_str)
+        
+        context_lines.append(f"- 主队进球分布：{format_goal_slots(goal_dist.get('home', {}).get('all'))}")
+        context_lines.append(f"- 客队进球分布：{format_goal_slots(goal_dist.get('away', {}).get('all'))}")
+    else:
+        context_lines.append("- 暂无进球时间段分布数据")
+
+    context_lines.append(f"\n【七、 半全场胜负统计 (近10场)】")
+    half_full = details.get('half_full_stats', [])
+    if isinstance(half_full, list) and half_full:
+        half_full_strs = []
+        for item in half_full:
+            if item.get('total', 0) > 0:
+                half_full_strs.append(f"{item.get('label', '')}({item.get('total')}次)")
+        if half_full_strs:
+            context_lines.append(f"- 历史半全场分布: " + " | ".join(half_full_strs))
+        else:
+            context_lines.append("- 暂无非零频次的半全场历史数据")
+    else:
+        context_lines.append("- 暂无半全场胜负统计数据")
 
     odds_index = details.get('odds_index', [])
     context_lines.append(f"\n【赔率指数初始与即时变盘水位数据】")

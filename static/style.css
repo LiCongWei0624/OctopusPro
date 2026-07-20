@@ -4005,3 +4005,75 @@ textarea:focus-visible {
     box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.25) !important;
     border-color: var(--color-primary) !important;
 }
+
+/* 高密度积分与进球分布表格样式 (Compact Table Grid) */
+.compact-data-card {
+    padding: 0.85rem 1rem !important;
+    margin-bottom: 0.85rem !important;
+}
+
+.table-responsive-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.standings-compact-table,
+.goal-dist-table {
+    width: 100%;
+    min-width: 320px;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.standings-compact-table th,
+.goal-dist-table th {
+    background-color: var(--bg-body-secondary);
+    color: var(--text-secondary);
+    padding: 0.45rem 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border-bottom: 1.5px solid var(--border-color);
+}
+
+.standings-compact-table td,
+.goal-dist-table td {
+    padding: 0.45rem 0.55rem;
+    border-bottom: 1px solid var(--border-light);
+    line-height: 1.2;
+}
+
+.highlight-team-tr {
+    background-color: var(--color-primary-glow) !important;
+    font-weight: 700;
+}
+
+.highlight-goal-td {
+    background-color: rgba(79, 70, 229, 0.1) !important;
+    color: var(--color-primary) !important;
+    font-weight: 700;
+    border-radius: 4px;
+}
+
+.rank-pill {
+    display: inline-block;
+    padding: 0.1rem 0.35rem;
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--text-primary);
+    border-radius: 6px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+@media (max-width: 780px) {
+    .standings-compact-table,
+    .goal-dist-table {
+        font-size: 0.75rem;
+    }
+    .standings-compact-table th,
+    .standings-compact-table td,
+    .goal-dist-table th,
+    .goal-dist-table td {
+        padding: 0.35rem 0.4rem;
+    }
+}

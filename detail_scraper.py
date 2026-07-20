@@ -753,6 +753,74 @@ def parse_swot(soup):
             
     return pros_cons
 
+def parse_extra_analytics(decrypted_json, soup_analysis):
+    """
+    <summary>
+    解析积分榜(standings)、进球时间段(goal_distribution)、半全场(half_full_stats)及赛程密度(future_schedule)
+    适配雷速原生解密 JSON 字段 (table, distribution_data, double_result_data)。
+    </summary>
+    """
+    standings = []
+    goal_distribution = None
+    half_full_stats = []
+    future_schedule = []
+
+    if isinstance(decrypted_json, dict):
+        # 1. 积分榜 table -> tables -> rows
+        raw_table = decrypted_json.get('table')
+        if isinstance(raw_table, list) and len(raw_table) > 0:
+            sub_tables = raw_table[0].get('tables')
+            if isinstance(sub_tables, list) and len(sub_tables) > 0:
+                rows = sub_tables[0].get('rows')
+                if isinstance(rows, list):
+                    teams_dict = decrypted_json.get('teams') if isinstance(decrypted_json.get('teams'), dict) else {}
+                    for r in rows:
+                        tid = str(r.get('team_id', ''))
+                        team_info = teams_dict.get(tid) or {}
+                        raw_name = team_info.get('name', f'球队{tid}')
+                        team_name = decode_escape_string(raw_name) if '%u' in str(raw_name) else str(raw_name)
+                        standings.append({
+                            'team_id': tid,
+                            'team_name': team_name,
+                            'position': r.get('position', '-'),
+                            'points': r.get('points', 0),
+                            'total': r.get('total', 0),
+                            'won': r.get('won', 0),
+                            'draw': r.get('draw', 0),
+                            'loss': r.get('loss', 0),
+                            'goals_for': r.get('goals', 0),
+                            'goals_against': r.get('goals_against', 0)
+                        })
+
+        # 2. 半全场胜负 double_result_data
+        raw_double = decrypted_json.get('double_result_data')
+        if isinstance(raw_double, dict):
+            ten = raw_double.get('all_ten') or raw_double.get('same_team_ten')
+            if isinstance(ten, list):
+                for item in ten:
+                    if isinstance(item, list) and len(item) >= 5:
+                        label_raw = str(item[4])
+                        label = decode_escape_string(label_raw) if '%u' in label_raw else label_raw
+                        half_full_stats.append({
+                            'label': label,
+                            'home_win': item[0],
+                            'draw': item[1],
+                            'away_win': item[2],
+                            'total': item[3]
+                        })
+
+        # 3. 进球时间段分布 distribution_data
+        raw_dist = decrypted_json.get('distribution_data')
+        if isinstance(raw_dist, dict):
+            goal_distribution = raw_dist
+
+    return {
+        'standings': standings if len(standings) > 0 else None,
+        'goal_distribution': goal_distribution,
+        'half_full_stats': half_full_stats if len(half_full_stats) > 0 else None,
+        'future_schedule': future_schedule
+    }
+
 SALT = "uHhANonwd4UdpzOdsUqUsnl5PjurM877"
 
 def get_analysis_via_playwright(match_id):
@@ -1050,13 +1118,23 @@ console.log(encrypt('{payload_str}'));
             if 'sec-fetch-user' in headers:
                 del headers['sec-fetch-user']
             
-            cj = GLOBAL_CJ
-            opener = GLOBAL_OPENER
+            cj = GLOBAL_ODDS_CJ
+            opener = GLOBAL_ODDS_OPENER
             
             try:
                 html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
                 res_json = json.loads(html)
-                
+            except Exception as first_err:
+                print(f"[get_real_odds] First attempt for match {match_id} failed ({first_err}), retrying with WAF Node solver...")
+                try:
+                    solve_waf_via_node(url_api, host_name, cj)
+                    html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
+                    res_json = json.loads(html)
+                except Exception as retry_err:
+                    print("[get_real_odds] Retry failed:", retry_err)
+                    res_json = {}
+
+            try:
                 if 'data' in res_json and res_json['data']:
                     data_val = res_json['data']
                     if isinstance(data_val, str):
@@ -1079,7 +1157,7 @@ console.log(encrypt('{payload_str}'));
                         is_live = status in {2, 3, 4, 5, 7, 10}
                         odds_data = parse_odds_json_to_list(decrypted_json, is_live=is_live)
             except Exception as e:
-                print("Failed to get real odds from API:", e)
+                print("Failed to decode real odds JSON:", e)
 
     # 移除 Playwright 网页端指数兜底，保持纯接口方案
     return odds_data
@@ -1409,6 +1487,7 @@ def get_complete_match_details(match_id, home_name, away_name):
             print(f"Error during shujufenxi JS decryption, fallback to BeautifulSoup parser: {e_dec}")
             
         trend_data = parse_trends(soup_analysis)
+        extra_analytics = parse_extra_analytics(decrypted_json, soup_analysis)
         
         # 如果 Playwright 获取到的数据为空，我们再 fallback 到 BeautifulSoup 提取作为兜底
         if h2h_data is None:
@@ -1424,6 +1503,7 @@ def get_complete_match_details(match_id, home_name, away_name):
             h2h_data = {'has_history': False, 'matches': []}
         if recent_data is None:
             recent_data = {'home': [], 'away': []}
+        extra_analytics = {'standings': None, 'goal_distribution': None, 'half_full_stats': None, 'future_schedule': None}
         
     print(f"Scraping SWOT page: {url_swot}")
     try:
@@ -1495,7 +1575,11 @@ def get_complete_match_details(match_id, home_name, away_name):
         'injuries': injury_data,
         'trends': trend_data,
         'pros_cons': swot_data,
-        'odds_index': odds_index
+        'odds_index': odds_index,
+        'standings': extra_analytics.get('standings'),
+        'goal_distribution': extra_analytics.get('goal_distribution'),
+        'half_full_stats': extra_analytics.get('half_full_stats'),
+        'future_schedule': extra_analytics.get('future_schedule')
     }
 
 def get_odds_detail_via_api(match_id, cid, type_val):

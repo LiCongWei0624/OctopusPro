@@ -24,6 +24,27 @@ let latestBatchProgress = null;
 let batchExecutionTickets = {};
 const MAX_BATCH_SELECTION = 6;
 
+// 全页最先执行：死死锁定 Tab 标题为“对决 & 数据”，彻底消除任何强缓存导致的文字闪动
+(function lockTabTitlesImmediately() {
+    const applyLock = () => {
+        const historyBtn = Array.from(document.querySelectorAll('.detail-tab')).find(t => {
+            const attr = t.getAttribute('onclick');
+            return attr && attr.includes("'history'");
+        });
+        if (historyBtn) {
+            const fullSpan = historyBtn.querySelector('.tab-text-full');
+            const shortSpan = historyBtn.querySelector('.tab-text-short');
+            if (fullSpan) fullSpan.textContent = '对决 & 数据';
+            if (shortSpan) shortSpan.textContent = '数据';
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', applyLock);
+    } else {
+        applyLock();
+    }
+})();
+
 function showAppNotice(message, variant = 'primary') {
     const host = document.getElementById('app-notice-host');
     if (!host || !message) return;
@@ -1057,6 +1078,18 @@ function loadMatchDetails(match) {
             if (res.success) {
                 cacheMatchDetails(match.id, res.data);
                 renderMatchDetails(match, res.data);
+
+                // 首次拉取若因 WAF 延迟导致 odds_index 暂空，后台静默发起一次强制补充刷新，无需用户手动点“刷新本场”
+                if (!res.data.odds_index || res.data.odds_index.length === 0) {
+                    fetch(`/api/match_details?id=${match.id}&home=${encodeURIComponent(match.home_team)}&away=${encodeURIComponent(match.away_team)}&force=true`)
+                        .then(r => r.json())
+                        .then(r2 => {
+                            if (r2.success && r2.data.odds_index && r2.data.odds_index.length > 0) {
+                                cacheMatchDetails(match.id, r2.data);
+                                renderMatchDetails(match, r2.data);
+                            }
+                        }).catch(e => {});
+                }
             } else {
                 renderDetailsError(res.error || "获取比赛详情失败。");
             }
@@ -1093,6 +1126,18 @@ function switchDetailTab(tabName) {
 // Render Complete Match Details
 function renderMatchDetails(match, details) {
     const container = document.getElementById('details-content');
+    // 动态纠正 Tab 标题文本（解决浏览器强缓存问题）
+    const historyBtn = Array.from(document.querySelectorAll('.detail-tab')).find(t => {
+        const attr = t.getAttribute('onclick');
+        return attr && attr.includes("'history'");
+    });
+    if (historyBtn) {
+        const fullSpan = historyBtn.querySelector('.tab-text-full');
+        const shortSpan = historyBtn.querySelector('.tab-text-short');
+        if (fullSpan) fullSpan.textContent = '对决 & 数据';
+        if (shortSpan) shortSpan.textContent = '数据';
+    }
+
     // Show refresh button since details exist
     const refreshBtn = document.getElementById('btn-refresh-match');
     container.innerHTML = '';
@@ -2196,8 +2241,117 @@ function renderIntelTab(match, details) {
     return tabHtml;
 }
 
+function renderStandingsTableMarkup(standings, homeTeam, awayTeam) {
+    if (!Array.isArray(standings) || standings.length === 0) return '';
+    return `
+        <div class="details-card compact-data-card">
+            <div class="details-card-title">📊 联赛积分对比榜</div>
+            <div class="table-responsive-wrapper">
+                <table class="table-panel standings-compact-table">
+                    <thead>
+                        <tr>
+                            <th>球队</th>
+                            <th style="text-align:center;">排名</th>
+                            <th style="text-align:center;">赛</th>
+                            <th style="text-align:center;">胜/平/负</th>
+                            <th style="text-align:center;">得/失球</th>
+                            <th style="text-align:center;">积分</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${standings.map(row => `
+                            <tr class="${(row.team_name || '').includes(homeTeam) || (row.team_name || '').includes(awayTeam) ? 'highlight-team-tr' : ''}">
+                                <td class="bold-td">${row.team_name || '球队'}</td>
+                                <td style="text-align:center;"><span class="rank-pill">#${row.position || '-'}</span></td>
+                                <td style="text-align:center;">${row.total || '-'}</td>
+                                <td style="text-align:center;">${row.won || 0}/${row.draw || 0}/${row.loss || 0}</td>
+                                <td style="text-align:center;">${row.goals_for || 0}:${row.goals_against || 0}</td>
+                                <td style="text-align:center; font-weight:700; color:var(--color-primary);">${row.points || 0}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+function renderGoalDistributionMarkup(goalDist, homeTeam, awayTeam) {
+    if (!goalDist || (!goalDist.home && !goalDist.away)) return '';
+    const slots = ['0-15', '16-30', '31-45', '46-60', '61-75', '76-90'];
+    
+    // 解析主队进球数
+    let homeScored = [0, 0, 0, 0, 0, 0];
+    if (goalDist.home && goalDist.home.all && Array.isArray(goalDist.home.all.scored)) {
+        homeScored = goalDist.home.all.scored.map(arr => (Array.isArray(arr) ? arr[0] : (arr || 0)));
+    } else if (Array.isArray(goalDist.home)) {
+        homeScored = goalDist.home;
+    }
+
+    // 解析客队进球数
+    let awayScored = [0, 0, 0, 0, 0, 0];
+    if (goalDist.away && goalDist.away.all && Array.isArray(goalDist.away.all.scored)) {
+        awayScored = goalDist.away.all.scored.map(arr => (Array.isArray(arr) ? arr[0] : (arr || 0)));
+    } else if (Array.isArray(goalDist.away)) {
+        awayScored = goalDist.away;
+    }
+
+    return `
+        <div class="details-card compact-data-card">
+            <div class="details-card-title">⏱️ 进球时间段分布 (分钟)</div>
+            <div class="table-responsive-wrapper">
+                <table class="table-panel goal-dist-table">
+                    <thead>
+                        <tr>
+                            <th>球队</th>
+                            ${slots.map(s => `<th style="text-align:center;">${s}'</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td class="bold-td">${homeTeam}</td>
+                            ${homeScored.map(val => `<td style="text-align:center;" class="${val > 0 ? 'highlight-goal-td' : ''}">${val}球</td>`).join('')}
+                        </tr>
+                        <tr>
+                            <td class="bold-td">${awayTeam}</td>
+                            ${awayScored.map(val => `<td style="text-align:center;" class="${val > 0 ? 'highlight-goal-td' : ''}">${val}球</td>`).join('')}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+function renderHalfFullMatrixMarkup(halfFullStats) {
+    if (!Array.isArray(halfFullStats) || halfFullStats.length === 0) return '';
+    return `
+        <div class="details-card compact-data-card">
+            <div class="details-card-title">⚽ 半全场胜负统计 (近10场)</div>
+            <div class="table-responsive-wrapper">
+                <table class="table-panel standings-compact-table">
+                    <thead>
+                        <tr>
+                            ${halfFullStats.map(item => `<th style="text-align:center;">${item.label}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            ${halfFullStats.map(item => `<td style="text-align:center; font-weight:700; ${item.total > 0 ? 'color:var(--color-primary); font-size:0.88rem;' : ''}">${item.total}次</td>`).join('')}
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
 function renderHistoryTab(match, details) {
     let tabHtml = '';
+
+    // 0. Standings & Analytics Compact Tables
+    tabHtml += renderStandingsTableMarkup(details.standings, match.home_team, match.away_team);
+    tabHtml += renderGoalDistributionMarkup(details.goal_distribution, match.home_team, match.away_team);
+    tabHtml += renderHalfFullMatrixMarkup(details.half_full_stats);
 
     // 1. H2H Section
     tabHtml += `<div class="details-card">`;
