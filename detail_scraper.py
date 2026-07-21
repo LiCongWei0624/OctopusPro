@@ -929,17 +929,31 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
             continue
             
         handicap_data = {
+            "available": bool(asia_item),
             "initial_line": "0",
             "instant_line": "0",
+            "home_initial_line": 0.0,
+            "away_initial_line": 0.0,
+            "home_instant_line": 0.0,
+            "away_instant_line": 0.0,
+            "direction_source": "unavailable",
             "initial": [1.0, 1.0],
             "instant": [1.0, 1.0],
             "trends": [0, 0]
         }
         if asia_item:
             try:
-                is_home_strong = True
-                if eu_item and 'f' in eu_item and len(eu_item['f']) >= 3:
-                    is_home_strong = float(eu_item['f'][0]) < float(eu_item['f'][2])
+                def home_line_from_europe(raw_line, home_odds, away_odds):
+                    """Express the Asian line as the signed handicap applied to home.
+
+                    The upstream Asian feed does not use a reliable sign convention
+                    across companies.  The accompanying 1X2 quote identifies which
+                    side is favoured; the raw line remains available for display.
+                    """
+                    magnitude = abs(float(raw_line))
+                    if magnitude < 1e-9:
+                        return 0.0
+                    return -magnitude if float(home_odds) < float(away_odds) else magnitude
                     
                 # 初始盘口
                 init_raw_line_val = float(asia_item['f'][1])
@@ -954,6 +968,11 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
                 # quote.  It is only valid for a dedicated live flow.
                 use_r = is_live and 'r' in asia_item and isinstance(asia_item['r'], list) and len(asia_item['r']) >= 2 and len(asia_item['r'][0]) >= 3
                 target_array = asia_item['r'] if use_r else asia_item['n']
+
+                eu_target = eu_item.get('r') if is_live and isinstance(eu_item, dict) and isinstance(eu_item.get('r'), list) else eu_item.get('n') if isinstance(eu_item, dict) else None
+                initial_home_line = home_line_from_europe(
+                    init_raw_line_val, eu_item['f'][0], eu_item['f'][2]
+                ) if eu_item and len(eu_item.get('f', [])) >= 3 else -abs(init_raw_line_val)
                 
                 # 即时/走地盘口
                 inst_raw_line_val = float(target_array[0][1])
@@ -963,10 +982,19 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
                     inst_line_str = f"-{abs(inst_raw_line_val)}"
                 else:
                     inst_line_str = f"{abs(inst_raw_line_val)}"
-                    
+
+                instant_home_line = home_line_from_europe(
+                    inst_raw_line_val, eu_target[0][0], eu_target[0][2]
+                ) if isinstance(eu_target, list) and eu_target and len(eu_target[0]) >= 3 else -abs(inst_raw_line_val)
+
                 handicap_data = {
                     "initial_line": init_line_str,
                     "instant_line": inst_line_str,
+                    "home_initial_line": initial_home_line,
+                    "away_initial_line": -initial_home_line,
+                    "home_instant_line": instant_home_line,
+                    "away_instant_line": -instant_home_line,
+                    "direction_source": "european_odds" if eu_item else "raw_line_fallback",
                     "initial": [float(asia_item['f'][0]), float(asia_item['f'][2])],
                     "instant": [float(target_array[0][0]), float(target_array[0][2])],
                     "trends": [int(target_array[1][0]), int(target_array[1][2])]
@@ -993,6 +1021,7 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
                 print(f"Error parsing europe for cid {cid}: {ex}")
                 
         over_under_data = {
+            "available": bool(bs_item),
             "initial_line": "0",
             "instant_line": "0",
             "initial": [1.0, 1.0],

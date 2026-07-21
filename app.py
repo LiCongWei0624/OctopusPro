@@ -4,6 +4,7 @@ import json
 import os
 import datetime
 import hashlib
+import math
 import re
 import tempfile
 import threading
@@ -26,7 +27,8 @@ def add_no_cache_headers(response):
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
-AI_ANALYSIS_CACHE_VERSION = 4
+AI_ANALYSIS_CACHE_VERSION = 6
+STRATEGY_VERSION = 'dual-market-v2'
 MAX_BATCH_ANALYSIS_SIZE = 6
 BATCH_CONCURRENT_MATCHES = 6
 BATCH_DETAIL_CONCURRENCY = 2
@@ -36,6 +38,9 @@ BATCH_MATCH_TIMEOUT_SECONDS = 360
 BATCH_HEARTBEAT_TIMEOUT_SECONDS = 420
 MIN_REQUIRED_ODDS_COMPANIES = 1
 RECOMMENDED_ODDS_COMPANIES = 6
+TREND_MARKETS = {"1": "让球", "3": "大小球"}
+TREND_FETCH_MAX_ATTEMPTS = 3
+TREND_FETCH_RETRY_DELAY_SECONDS = 1
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
@@ -126,18 +131,14 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 
 #### 四、 📊 操盘手终极研判结论（量化期望值排序）
 
-##### 1. 胜平负方向（按投资回报期望值从高到低排序）
-- **【核心首选】**：[选项] | **隐含概率**：[即时概率] | **期望值逻辑**：[理由]
-- **【防守对冲】**：[选项] | **隐含概率**：[即时概率] | **期望值逻辑**：[理由]
-
-##### 2. 亚洲让球盘推荐
+##### 1. 亚洲让球盘推荐
 - **【最佳价值切入】**：[具体临场盘口与方向] | **预期回报形态**：[严格遵循标准让球盘清算规则] | **风控逻辑**：[基于资金动能或防守价值的理由]
 
-##### 3. 总进球数（大小球）推荐
+##### 2. 总进球数（大小球）推荐
 - **【最佳价值切入】**：[大球或小球 + 临场盘口] | **风控逻辑**：[理由]
 - **【高频进球区间】**：[进球数区间]
 
-##### 4. 精准波胆（比分）概率排序
+##### 3. 精准波胆（比分）概率排序
 - [高频比分1] | 沙盘推演：[局势定格模拟]
 - [高频比分2] | 沙盘推演：[局势定格模拟]
 
@@ -152,10 +153,10 @@ CRO_SYSTEM_PROMPT = """# Role: 量化基金首席风险官（CRO）& 终极决�
 你负责管理博彩量化精算团队。你的任务是审核下属三个精算师小组提交的3份独立赛事研判报告。你需要剔除冲突噪音、提炼核心共识、计算数学期望交集，最终输出一张没有任何歧义、绝对可以直接执行的“终极下注流水平衡单”，彻底攻克前端决策过载问题，释放量化基金的真实狙击破坏力。
 
 ## ⚠️ 终极柔性聚合规则（最高准则）：
-1. **共识归纳（交集提取）**：深度比对3份报告中的所有推荐选项。如果某个玩法方向（如：客队让球不败、全场大球）在2份或3份报告中同时作为核心推荐出现，直接判定为【核心共识项】。同时交叉比对三版在"主力折损率"、"强弱交手表现"和"进球节奏类型"上的判定是否一致，若出现分歧则以数据更详实的版本为准。
+1. **共识归纳（证据去重）**：深度比对3份报告中的推荐与证据来源。同一模型基于同一份赔率、战绩或伤停数据得到相同结论，只能算一份证据，绝不能因 2 份或 3 份文本重复就判定为【核心共识项】或提高置信度。只有当基本面、去水市场概率、反方审计三类证据分别支持同一方向，才可标为核心项；必须同时列出反方证据。
 2. **多维冲突软化协议（拒绝盲目熔断，精准识别诱盘）**：
-   - **亚洲让球盘软化**：若下属小组对让球方向发生对立分歧，**CRO严禁盲目硬熔断**。必须穿透审查各报告对【三道反诱盘过滤器】的审计结论。若发现某一方向被判定为触发了高水、欧亚脱节或风控墙抗拒的“虚假诱盘”，CRO必须展现决策力，**强行剔除该诱盘泡沫方向，果断采信反向的防守/对冲盘口作为最终执行主单**。只有在三方数据完全清白、纯资金拉锯且方向对立时，方可寻找共同防御分母或执行熔断。
-   - **大小球玩法软化**：大小球玩法若出现大/小方向的完全对立分歧，必须执行【降档收敛协议】：将大/小争议转化为容错率极强的【中置高频进球区间（如 2-3 球 或 2-4 球）】作为对冲子单留存，严禁空仓逃避。
+   - **亚洲让球盘软化**：若下属小组对让球方向发生对立分歧，不得把“高水、欧亚脱节或机构差异”视为自动反向信号。只有可观察的赔率变化与至少两项直接基本面证据共同支持时才采信该方向；否则降级为低置信观察，不得强行反手。
+   - **大小球玩法软化**：大小球出现大/小方向完全对立时，不得把争议强行转化为中置进球区间或对冲单。必须保留分歧、降低置信度；缺乏独立量化优势时不输出该市场的主推荐。
 3. **精算清算校验**：严格复核各报告的亚盘表述。必须明确整数让球盘口（如 +1、+2 等）在刚好净胜对应球数时的结算结果为“走水保本（退还本金）”，纠正 any 关于整数盘“赢半/输半”的业余常识笔误。
 4. **资金下注指引（Staking Plan）**：必须使用2%固定均注防线模型。以1个标准单位（Unit）为基准，根据共识与动能强度，给出精确的资金分配比例。
 
@@ -186,22 +187,28 @@ CRO_SYSTEM_PROMPT = """# Role: 量化基金首席风险官（CRO）& 终极决�
 - **执行纪律提示**：[明确风控线，严格遵守仓位纪律]"""
 
 PREDICTION_POLICY = """这是足球预测链路。输入会明确标记为“赛前分析”或“滚球分析”，必须严格按该模式判断：
+0. **市场中性与反偏置铁律（优先于所有角色设定）**：先以去水后的即时赔率作为市场基线，再比较基本面证据。不得因为“高水、退盘、未跟盘、机构差异、热门”就默认反选平局、受让方或小球；这些现象只能降低某一方向的置信度，不能单独构成反向推荐理由。
 1. 赛前分析不得使用走地赔率、已结束比分或赛后数据；滚球分析可以使用输入中的当前比分与走地盘口，但不得把它们表述为赛前证据。
-2. 盘口高水、未跟盘或机构间差异只能作为不确定性证据，绝不能自动反向推荐受让方或小球；必须同时列出支持与反对该方向的实际数据。
-3. 情报、伤停、交锋或赔率缺失时，明确标记缺失并降低置信度，但仍按产品要求给出方向。
-4. 不得编造资金流、庄家意图、EV 百分比、xG 或历史统计。让球和大小球必须使用输入中存在的具体盘口。
-5. **置信度校准铁律**：仅当以下条件同时满足时方可标注 high 置信度：(a) 赔率方向与基本面完全一致；(b) 三道反诱盘过滤器全部通过；(c) 核心数据维度无缺失。若任一条件不满足，最高只能标注 medium。数据大面积缺失时只能标注 low。"""
+2. 仅分析和输出亚洲让球、大小球两个市场；不得输出胜平负推荐、平局对冲或将胜平负写入 prediction_record。每个市场必须同时列出：市场基线方向、推荐方向、推荐概率、该方向的反方证据。只有推荐概率相对去水市场概率存在明确增量，才可称为 Value 或正 EV；无法计算时不得编造 EV。
+3. **反向方向准入门槛**：
+   - 平局：不得因“机构安全阀”或低比分叙事直接推荐；必须同时具备明确的平局基本面证据和相对市场平局概率的定量优势。
+   - 受让方：不得仅因上盘高水、退盘或“诱上”推荐；必须同时具备至少两项直接基本面证据，并说明为何盘口让步不足以覆盖这些证据。
+   - 小球：不得仅因降盘、低水、历史小球率或“诱大”推荐；必须同时审计双方近期进攻、失球和进球时段，并明确大球的反方风险。
+4. 三个分析版本使用同一数据和同一模型，结论相同不是独立验证。CRO 只能把一致性当作摘要，不得把“2/3 共识”单独升级为高置信度或强制下注依据；证据来源重叠时按单一证据处理。
+5. 情报、伤停、交锋或赔率缺失时，明确标记缺失并降低置信度；缺失赔率时不得使用盘口语言给出强结论。若任一市场没有可验证的概率优势，必须明确选择 no_bet；不得为了填满执行单而给出方向。
+6. 不得编造资金流、庄家意图、EV 百分比、xG 或历史统计。只能描述输入中可观察到的赔率变化，不能将其表述为“机构真实意图”或“聪明资金”。让球和大小球必须使用输入中存在的具体盘口。
+7. **置信度校准铁律**：仅当以下条件同时满足时方可标注 high 置信度：(a) 赔率方向与基本面完全一致；(b) 推荐方向相对去水市场概率有明确量化优势；(c) 核心数据维度无缺失；(d) 存在充分的反方证据审计。若任一条件不满足，最高只能标注 medium。数据大面积缺失时只能标注 low。"""
 
 ANALYST_OUTPUT_LIMIT = """输出应是可执行的分析摘要，而非逐项复述原始数据：
-1. 只保留影响结论的证据、反方证据、三个市场结论和风险条件；避免重复解释相同盘口。
+1. 只保留影响结论的证据、反方证据、两个市场结论和风险条件；避免重复解释相同盘口。
 2. 使用简洁的 Markdown，全文不超过 1,600 个汉字或等量内容。
 3. 不得输出思维链、内部推演过程或与结论无关的泛泛说明。"""
 
 TRACKING_OUTPUT_CONTRACT = """报告最后必须附上唯一一个 JSON 代码块，供赛后自动结算，格式严格如下：
 ```json
-{"prediction_record":{"one_x_two":"home|draw|away","asian_handicap":{"team":"home|away","line":-0.25},"over_under":{"side":"over|under","line":2.5},"confidence":"high|medium|low"}}
+{"prediction_record":{"status":"bet|no_bet","asian_handicap":{"team":"home|away","line":-0.25}|null,"over_under":{"side":"over|under","line":2.5}|null,"confidence":"high|medium|low","reason":"简短依据"}}
 ```
-让球 `line` 是推荐球队获得的让球值：主队让 0.25 写 team=home、line=-0.25；客队受让 0.25 写 team=away、line=0.25。只能填入输入中存在的盘口。"""
+只分析和结算让球、大小球，严禁附带胜平负字段。若两市场均无量化优势，写 status=no_bet，两个市场均为 null；no_bet 不进入赢盘率。若 status=bet，至少推荐一个市场。让球 `line` 是推荐球队获得的让球值：主队让 0.25 写 team=home、line=-0.25；客队受让 0.25 写 team=away、line=0.25。只能填入输入中存在的盘口。"""
 
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
@@ -466,16 +473,61 @@ def merge_date_matches(date_str, mobile_matches, desktop_matches):
     return formatted_new_matches
     
 CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'ai_config.json')
+DEFAULT_TRACKING_COHORT_ID = 'dual-market-v2-validation-1'
+DEFAULT_TRACKING_COHORT_NAME = '双市场 v2 - 验证批次 1'
+
+
+def _tracking_cohort_state(config):
+    """Normalize persistent backtest cohorts without changing the strategy."""
+    cohorts = config.get('tracking_cohorts') if isinstance(config, dict) else None
+    if not isinstance(cohorts, list):
+        cohorts = []
+    normalized = []
+    seen = set()
+    for cohort in cohorts:
+        cohort_id = str(cohort.get('id', '')).strip() if isinstance(cohort, dict) else ''
+        name = str(cohort.get('name', '')).strip() if isinstance(cohort, dict) else ''
+        if cohort_id and name and cohort_id not in seen:
+            normalized.append({'id': cohort_id, 'name': name, 'strategy_version': STRATEGY_VERSION})
+            seen.add(cohort_id)
+    if not normalized:
+        normalized.append({
+            'id': DEFAULT_TRACKING_COHORT_ID,
+            'name': DEFAULT_TRACKING_COHORT_NAME,
+            'strategy_version': STRATEGY_VERSION,
+        })
+    active_id = str(config.get('active_tracking_cohort', '')).strip() if isinstance(config, dict) else ''
+    if active_id not in {cohort['id'] for cohort in normalized}:
+        active_id = normalized[-1]['id']
+    return normalized, active_id
+
+
+def _read_config_file():
+    if not os.path.exists(CONFIG_FILE):
+        return {}
+    try:
+        with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file:
+            data = json.load(config_file)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _attach_tracking_cohort_state(config):
+    cohorts, active_id = _tracking_cohort_state(config)
+    config['tracking_cohorts'] = cohorts
+    config['active_tracking_cohort'] = active_id
+    return config
 
 @app.route('/api/ai_config', methods=['GET'])
 def get_ai_config():
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-            # 若系统提示词读取出为空，自动填充默认值，确保配置页面能正常展示
-            if not config.get('system_prompt'):
-                config['system_prompt'] = DEFAULT_SYSTEM_PROMPT
+            config = _attach_tracking_cohort_state(_read_config_file())
+            # Strategy prompts are versioned in code so UI edits cannot leave
+            # batch and single-match analysis on incompatible prompt versions.
+            config['system_prompt'] = DEFAULT_SYSTEM_PROMPT
+            config['strategy_version'] = STRATEGY_VERSION
             # The browser only needs the configuration shape.  Returning the
             # stored provider key to any unauthenticated visitor exposed it.
             safe_config = config.copy()
@@ -488,8 +540,10 @@ def get_ai_config():
         'api_key': '',
         'api_base': 'https://opencode.ai/zen/v1',
         'model_name': 'deepseek-v4-flash-free',
-        'system_prompt': DEFAULT_SYSTEM_PROMPT
+        'system_prompt': DEFAULT_SYSTEM_PROMPT,
+        'strategy_version': STRATEGY_VERSION,
     }
+    _attach_tracking_cohort_state(default_config)
     return jsonify({'success': True, 'data': default_config})
 
 @app.route('/api/ai_config', methods=['POST'])
@@ -498,13 +552,9 @@ def save_ai_config():
     if not data:
         return jsonify({'success': False, 'error': '提交内容为空。'})
     
-    existing_key = ''
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                existing_key = json.load(f).get('api_key', '')
-        except Exception:
-            pass
+    existing_config = _read_config_file()
+    existing_key = existing_config.get('api_key', '')
+    cohorts, active_cohort = _tracking_cohort_state(existing_config)
 
     config = {
         # A blank field means “keep the server-side key”, so editing only the
@@ -512,7 +562,10 @@ def save_ai_config():
         'api_key': data.get('api_key', '').strip() or existing_key,
         'api_base': data.get('api_base', 'https://opencode.ai/zen/v1'),
         'model_name': data.get('model_name', 'minimax-m2.5-free'),
-        'system_prompt': data.get('system_prompt', '')
+        'system_prompt': DEFAULT_SYSTEM_PROMPT,
+        'strategy_version': STRATEGY_VERSION,
+        'tracking_cohorts': cohorts,
+        'active_tracking_cohort': active_cohort,
     }
     
     try:
@@ -521,6 +574,34 @@ def save_ai_config():
         return jsonify({'success': True, 'message': "Config saved successfully"})
     except Exception as e:
         return jsonify({'success': False, 'error': f"Write config error: {str(e)}"})
+
+
+@app.route('/api/prediction_backtest/cohorts', methods=['POST'])
+def create_prediction_backtest_cohort():
+    """Start a fresh comparison cohort while retaining all prior samples."""
+    config = _read_config_file()
+    cohorts, _ = _tracking_cohort_state(config)
+    next_number = len(cohorts) + 1
+    cohort_id = f'dual-market-v2-validation-{next_number}'
+    while any(cohort['id'] == cohort_id for cohort in cohorts):
+        next_number += 1
+        cohort_id = f'dual-market-v2-validation-{next_number}'
+    cohort = {
+        'id': cohort_id,
+        'name': f'双市场 v2 - 验证批次 {next_number}',
+        'strategy_version': STRATEGY_VERSION,
+    }
+    cohorts.append(cohort)
+    config['tracking_cohorts'] = cohorts
+    config['active_tracking_cohort'] = cohort_id
+    config['strategy_version'] = STRATEGY_VERSION
+    config['system_prompt'] = DEFAULT_SYSTEM_PROMPT
+    try:
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as config_file:
+            json.dump(config, config_file, ensure_ascii=False, indent=2)
+        return jsonify({'success': True, 'data': {'cohort': cohort, 'active_cohort': cohort_id}})
+    except Exception as error:
+        return jsonify({'success': False, 'error': f'创建统计批次失败: {str(error)}'})
 
 @app.route('/')
 def index():
@@ -784,6 +865,141 @@ def get_cached_odds_detail(match_id, cid):
     return all_tables if has_cache else None
 
 
+def _trend_companies_from_odds(odds_index):
+    """Return the companies actually present in this fixture's odds snapshot."""
+    companies = []
+    failures = []
+    seen = set()
+    for item in odds_index if isinstance(odds_index, list) else []:
+        company_name = str(item.get('company', '')).strip()
+        cid = item.get('cid')
+        if not company_name or cid in (None, ''):
+            failures.append(f'{company_name or "未知公司"}: 缺少公司 cid，无法获取变盘历史')
+            continue
+        cid = str(cid)
+        if cid in seen:
+            continue
+        seen.add(cid)
+        companies.append((company_name, cid))
+    return companies, failures
+
+
+def _trend_markets_for_company(odds_item):
+    """Return market types that this company actually quotes for the fixture.
+
+    New snapshots explicitly mark absent markets.  Older snapshots did not, so
+    preserve their conservative behaviour until a fresh detail snapshot exists.
+    """
+    markets = []
+    handicap = odds_item.get('handicap', {}) if isinstance(odds_item, dict) else {}
+    totals = odds_item.get('over_under', {}) if isinstance(odds_item, dict) else {}
+    if handicap.get('available', True):
+        markets.append('1')
+    if totals.get('available', True):
+        markets.append('3')
+    return markets
+
+
+def _valid_trend_history(candidate):
+    if not isinstance(candidate, list) or not candidate:
+        return False
+    return any(
+        isinstance(row, dict)
+        and _number(row.get('line')) is not None
+        and _number(row.get('home')) is not None
+        and _number(row.get('away')) is not None
+        for row in candidate
+    )
+
+
+def _refresh_required_trend_history(match_id, odds_index):
+    """Fetch fresh handicap and totals trends for every company in this fixture.
+
+    Each company/market pair is retried before the fixture is rejected. Existing
+    cache files are removed before a fresh request, so stale trend data cannot
+    silently qualify a batch analysis.
+    """
+    failures = []
+    refreshed = 0
+    companies, company_failures = _trend_companies_from_odds(odds_index)
+    failures.extend(company_failures)
+    markets_by_cid = {
+        str(item.get('cid')): _trend_markets_for_company(item)
+        for item in odds_index if isinstance(item, dict) and item.get('cid') not in (None, '')
+    }
+    expected = sum(len(markets_by_cid.get(cid, [])) for _, cid in companies)
+    if not companies:
+        return False, '赔率快照中没有可用于趋势抓取的公司', {
+            'required': expected, 'refreshed': refreshed, 'failures': failures, 'complete': False,
+        }
+
+    for company_name, cid in companies:
+        for type_val in markets_by_cid.get(cid, []):
+            market_name = TREND_MARKETS[type_val]
+            cache_path = os.path.join(CACHE_DIR, f'odds_detail_{match_id}_{cid}_{type_val}.json')
+            try:
+                if os.path.exists(cache_path):
+                    os.remove(cache_path)
+            except OSError as error:
+                failures.append(f'{company_name}{market_name}: 旧缓存清理失败 {error}')
+                continue
+            data = None
+            last_error = ''
+            for attempt in range(1, TREND_FETCH_MAX_ATTEMPTS + 1):
+                try:
+                    candidate = get_odds_detail_via_playwright(match_id, cid, type_val)
+                except Exception as error:
+                    candidate = None
+                    last_error = str(error)
+                else:
+                    if _valid_trend_history(candidate):
+                        data = candidate
+                        break
+                    last_error = candidate.get('error', '返回为空') if isinstance(candidate, dict) else '返回为空'
+                if attempt < TREND_FETCH_MAX_ATTEMPTS:
+                    time.sleep(TREND_FETCH_RETRY_DELAY_SECONDS)
+
+            if data is None:
+                failures.append(
+                    f'{company_name}{market_name}: 连续 {TREND_FETCH_MAX_ATTEMPTS} 次获取失败 ({last_error})'
+                )
+                continue
+
+            temp_path = None
+            try:
+                fd, temp_path = tempfile.mkstemp(prefix='odds_detail_', suffix='.json', dir=CACHE_DIR)
+                with os.fdopen(fd, 'w', encoding='utf-8') as cache_file:
+                    json.dump(data, cache_file, ensure_ascii=False)
+                    cache_file.flush()
+                    os.fsync(cache_file.fileno())
+                os.replace(temp_path, cache_path)
+                temp_path = None
+                refreshed += 1
+            except OSError as error:
+                failures.append(f'{company_name}{market_name}: 缓存写入失败 {error}')
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.unlink(temp_path)
+
+    quality = {
+        'required': expected,
+        'refreshed': refreshed,
+        'failures': failures,
+        'complete': bool(expected) and not failures,
+        'companies': [name for name, _ in companies],
+        'markets_by_company': {
+            name: [TREND_MARKETS[type_val] for type_val in markets_by_cid.get(cid, [])]
+            for name, cid in companies
+        },
+        'attempts_per_market': TREND_FETCH_MAX_ATTEMPTS,
+    }
+    if not expected:
+        return False, '赔率快照中没有可用的让球或大小球市场', quality
+    if failures:
+        return False, f"变盘历史未完整获取（{refreshed}/{expected}）：{'；'.join(failures)}", quality
+    return True, '', quality
+
+
 def has_final_output(text):
     """A completed reasoning stream must contain content after its <think> block."""
     if not isinstance(text, str):
@@ -873,19 +1089,25 @@ def _load_ai_runtime_config():
     api_base = "https://opencode.ai/zen/v1"
     model_name = "minimax-m2.5-free"
     system_prompt = ""
+    tracking_cohorts = []
+    active_tracking_cohort = DEFAULT_TRACKING_COHORT_ID
     if os.path.exists(CONFIG_FILE):
         try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
+            cfg = _read_config_file()
             api_key = cfg.get('api_key', '')
             api_base = cfg.get('api_base', api_base)
             model_name = cfg.get('model_name', model_name)
-            system_prompt = cfg.get('system_prompt', '')
+            tracking_cohorts, active_tracking_cohort = _tracking_cohort_state(cfg)
         except Exception:
             pass
 
-    if not system_prompt:
-        system_prompt = DEFAULT_SYSTEM_PROMPT
+    if not tracking_cohorts:
+        tracking_cohorts, active_tracking_cohort = _tracking_cohort_state({})
+    active_cohort = next(
+        cohort for cohort in tracking_cohorts if cohort['id'] == active_tracking_cohort
+    )
+
+    system_prompt = DEFAULT_SYSTEM_PROMPT
     if not api_key:
         return False, '请先在顶部“AI配置中心”中配置您的 API Key。', None
     return True, '', {
@@ -893,6 +1115,8 @@ def _load_ai_runtime_config():
         'api_base': api_base.rstrip('/'),
         'model_name': model_name,
         'system_prompt': system_prompt,
+        'tracking_cohort_id': active_cohort['id'],
+        'tracking_cohort_name': active_cohort['name'],
     }
 
 
@@ -1087,15 +1311,32 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                         continue
 
                     with _batch_ai_tasks_lock:
+                        item['prepare_phase'] = (
+                            f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
+                        )
+                        item['heartbeat_at'] = time.time()
+                    trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
+                        item['match_id'], details.get('odds_index', [])
+                    )
+                    snapshot['trend_quality'] = trend_quality
+                    if not trends_ok:
+                        with _batch_ai_tasks_lock:
+                            item['status'] = 'failed'
+                            item['error'] = trend_error
+                        continue
+
+                    with _batch_ai_tasks_lock:
                         item['status'] = 'validating'
-                        item['prepare_phase'] = '数据完整性校验通过，正在构建独立分析上下文'
+                        item['prepare_phase'] = '详情和全部变盘历史校验通过，正在构建独立分析上下文'
                         item['data_quality'] = snapshot.get('quality', {})
+                        item['trend_quality'] = trend_quality
                         item['snapshot_hash'] = snapshot.get('hash', '')
                         item['snapshot_captured_at'] = snapshot.get('captured_at', '')
                         item['heartbeat_at'] = time.time()
 
                     success, error, context_str = build_match_prompt_context(
-                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'], details=details
+                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'],
+                        details=details, trend_quality=trend_quality
                     )
                     if not success:
                         with _batch_ai_tasks_lock:
@@ -1119,6 +1360,12 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                         'fixture_date': item['fixture_date'],
                         'fixture_status': item['fixture_status'],
                         'analysis_mode': item['analysis_mode'],
+                        'strategy_version': STRATEGY_VERSION,
+                        'tracking_cohort_id': runtime_config['tracking_cohort_id'],
+                        'tracking_cohort_name': runtime_config['tracking_cohort_name'],
+                        'market_catalog': _instant_market_catalog(
+                            details, _build_probability_baseline(details, item['home_team'], item['away_team'])
+                        ),
                     }
                     task_key = f"{batch_id}:{item['match_id']}:{uuid.uuid4().hex}"
                     with _batch_ai_tasks_lock:
@@ -1258,14 +1505,29 @@ def _prepare_batch_item(batch_id, item):
     if not success:
         return False, error, None, None
     with _batch_ai_tasks_lock:
-        item['status'] = 'validating'
-        item['prepare_phase'] = '数据校验通过，正在构建独立分析上下文'
+        item['status'] = 'preparing'
+        item['prepare_phase'] = f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
         item['data_quality'] = snapshot.get('quality', {})
         item['snapshot_hash'] = snapshot.get('hash', '')
         item['snapshot_captured_at'] = snapshot.get('captured_at', '')
         item['heartbeat_at'] = time.time()
+    trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
+        item['match_id'], details.get('odds_index', [])
+    )
+    snapshot['trend_quality'] = trend_quality
+    snapshot['market_catalog'] = _instant_market_catalog(
+        details, _build_probability_baseline(details, item['home_team'], item['away_team'])
+    )
+    if not trends_ok:
+        return False, trend_error, None, snapshot
+    with _batch_ai_tasks_lock:
+        item['status'] = 'validating'
+        item['prepare_phase'] = '详情与全部变盘历史校验通过，正在构建独立分析上下文'
+        item['trend_quality'] = trend_quality
+        item['heartbeat_at'] = time.time()
     success, error, context_str = build_match_prompt_context(
-        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'], details=details
+        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'],
+        details=details, trend_quality=trend_quality
     )
     return success, error, context_str, snapshot
 
@@ -1310,6 +1572,10 @@ def _run_batch_ai_analysis_v2(batch_id, runtime_config):
                     'match_id': item['match_id'], 'home_team': item['home_team'], 'away_team': item['away_team'],
                     'kickoff': item['kickoff'], 'competition': item['competition'], 'fixture_date': item['fixture_date'],
                     'fixture_status': item['fixture_status'], 'analysis_mode': item['analysis_mode'],
+                    'strategy_version': STRATEGY_VERSION,
+                    'tracking_cohort_id': runtime_config['tracking_cohort_id'],
+                    'tracking_cohort_name': runtime_config['tracking_cohort_name'],
+                    'market_catalog': snapshot.get('market_catalog'),
                 }
                 with _batch_ai_tasks_lock:
                     item['task_key'] = task_key
@@ -1577,7 +1843,274 @@ def batch_ai_analysis_result():
         return jsonify({'success': False, 'error': f'读取最终执行单失败：{str(error)}'}), 500
 
 
-def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', details=None):
+def _number(value):
+    match = re.search(r'-?\d+(?:\.\d+)?', str(value or ''))
+    return float(match.group()) if match else None
+
+
+def _recent_goal_rates(matches, team_name, league_average):
+    weighted_for = weighted_against = total_weight = 0.0
+    for index, match in enumerate((matches or [])[:10]):
+        score = str(match.get('score', '')).replace(':', '-')
+        parts = score.split('-', 1)
+        if len(parts) != 2:
+            continue
+        try:
+            home_goals, away_goals = int(parts[0].strip()), int(parts[1].strip())
+        except ValueError:
+            continue
+        weight = 0.88 ** index
+        if match.get('home', '') == team_name:
+            goals_for, goals_against = home_goals, away_goals
+        elif match.get('away', '') == team_name:
+            goals_for, goals_against = away_goals, home_goals
+        else:
+            continue
+        weighted_for += goals_for * weight
+        weighted_against += goals_against * weight
+        total_weight += weight
+    # Four league-average pseudo-games prevent a short recent run from dominating.
+    denominator = total_weight + 4.0
+    return (
+        (weighted_for + league_average * 4.0) / denominator,
+        (weighted_against + league_average * 4.0) / denominator,
+    )
+
+
+def _poisson_probability(value, mean):
+    return math.exp(-mean) * (mean ** value) / math.factorial(value)
+
+
+def _settlement_expectation(values):
+    return sum(probability * (1 if margin > 0 else -1 if margin < 0 else 0) for margin, probability in values)
+
+
+def _water_to_decimal(water):
+    water = _number(water)
+    return 1.0 + water if water is not None and 0.01 <= water <= 3.0 else None
+
+
+def _fair_two_way_probabilities(first_water, second_water):
+    first_decimal = _water_to_decimal(first_water)
+    second_decimal = _water_to_decimal(second_water)
+    if not first_decimal or not second_decimal:
+        return None, None
+    first_raw = 1.0 / first_decimal
+    second_raw = 1.0 / second_decimal
+    total = first_raw + second_raw
+    return first_raw / total, second_raw / total
+
+
+def _instant_market_catalog(details, baseline=None):
+    """Return only executable current lines from this snapshot.
+
+    Handicap lines use the normalized convention adopted by the tracking record:
+    a negative number means that selected team gives goals, a positive number
+    means it receives goals.  This lets the tracker reject an AI-invented line.
+    """
+    catalog = {
+        'asian_handicap': {'home': [], 'away': [], 'quotes': []},
+        'over_under': {'line': [], 'quotes': []},
+    }
+    for item in details.get('odds_index', []) if isinstance(details, dict) else []:
+        handicap = item.get('handicap', {})
+        home_line = _number(handicap.get('home_instant_line'))
+        away_line = _number(handicap.get('away_instant_line'))
+        if handicap.get('available', True) and home_line is not None and away_line is not None:
+            catalog['asian_handicap']['home'].append(round(home_line, 2))
+            catalog['asian_handicap']['away'].append(round(away_line, 2))
+            home_water, away_water = (handicap.get('instant') or [None, None])[:2]
+            home_probability, away_probability = _fair_two_way_probabilities(home_water, away_water)
+            for team, line, water, probability in (
+                ('home', home_line, home_water, home_probability),
+                ('away', away_line, away_water, away_probability),
+            ):
+                decimal_odds = _water_to_decimal(water)
+                if decimal_odds:
+                    catalog['asian_handicap']['quotes'].append({
+                        'company': item.get('company', ''), 'cid': str(item.get('cid', '')),
+                        'team': team, 'line': round(line, 2), 'water': round(float(water), 3),
+                        'decimal_odds': round(decimal_odds, 3),
+                        'market_probability': round(probability, 5) if probability is not None else None,
+                    })
+        totals = item.get('over_under', {})
+        total_line = _number(totals.get('instant_line'))
+        if totals.get('available', True) and total_line is not None:
+            catalog['over_under']['line'].append(round(total_line, 2))
+            over_water, under_water = (totals.get('instant') or [None, None])[:2]
+            over_probability, under_probability = _fair_two_way_probabilities(over_water, under_water)
+            for side, water, probability in (
+                ('over', over_water, over_probability),
+                ('under', under_water, under_probability),
+            ):
+                decimal_odds = _water_to_decimal(water)
+                if decimal_odds:
+                    catalog['over_under']['quotes'].append({
+                        'company': item.get('company', ''), 'cid': str(item.get('cid', '')),
+                        'side': side, 'line': round(total_line, 2), 'water': round(float(water), 3),
+                        'decimal_odds': round(decimal_odds, 3),
+                        'market_probability': round(probability, 5) if probability is not None else None,
+                    })
+    for market in catalog.values():
+        for key in ('home', 'away', 'line'):
+            if key in market:
+                market[key] = sorted(set(market[key]))
+    if baseline:
+        for quote in catalog['asian_handicap']['quotes']:
+            value = baseline['handicap_expected_value'](quote['line'], quote['team'], quote['water'])
+            quote['baseline_ev'] = round(value, 5) if value is not None else None
+        for quote in catalog['over_under']['quotes']:
+            value = baseline['total_expected_value'](quote['line'], quote['side'], quote['water'])
+            quote['baseline_ev'] = round(value, 5) if value is not None else None
+    return catalog
+
+
+def _build_probability_baseline(details, home, away):
+    """Return a transparent, league-shrunk scoring baseline without claiming xG."""
+    standings = details.get('standings') if isinstance(details, dict) else []
+    totals = [row.get('total', 0) or 0 for row in standings or []]
+    goals_for = [row.get('goals_for', 0) or 0 for row in standings or []]
+    total_matches = sum(totals) / 2
+    league_average = sum(goals_for) / total_matches if total_matches else 2.6
+    league_average = min(4.2, max(1.6, league_average))
+
+    recent = details.get('recent_results', {}) if isinstance(details, dict) else {}
+    home_for, home_against = _recent_goal_rates(recent.get('home', []), home, league_average)
+    away_for, away_against = _recent_goal_rates(recent.get('away', []), away, league_average)
+    home_mean = min(4.5, max(0.35, ((home_for + away_against) / 2) * 1.05))
+    away_mean = min(4.5, max(0.35, ((away_for + home_against) / 2) * 0.95))
+
+    score_probabilities = {}
+    for home_goals in range(9):
+        for away_goals in range(9):
+            score_probabilities[(home_goals, away_goals)] = (
+                _poisson_probability(home_goals, home_mean) * _poisson_probability(away_goals, away_mean)
+            )
+    normalizer = sum(score_probabilities.values())
+    score_probabilities = {score: probability / normalizer for score, probability in score_probabilities.items()}
+
+    def total_expectation(line, side):
+        split_lines = (line - 0.25, line + 0.25) if round(line * 4) % 2 else (line,)
+        expected = 0.0
+        for split_line in split_lines:
+            values = []
+            for (home_goals, away_goals), probability in score_probabilities.items():
+                margin = home_goals + away_goals - split_line
+                values.append(((margin if side == 'over' else -margin), probability))
+            expected += _settlement_expectation(values) / len(split_lines)
+        return expected
+
+    def handicap_expectation(team_line, team):
+        split_lines = (team_line - 0.25, team_line + 0.25) if round(team_line * 4) % 2 else (team_line,)
+        expected = 0.0
+        for split_line in split_lines:
+            values = []
+            for (home_goals, away_goals), probability in score_probabilities.items():
+                diff = home_goals - away_goals if team == 'home' else away_goals - home_goals
+                values.append((diff + split_line, probability))
+            expected += _settlement_expectation(values) / len(split_lines)
+        return expected
+
+    def settlement_ev(margins, water):
+        water = _number(water)
+        if water is None:
+            return None
+        return sum(
+            probability * (water if margin > 0 else -1.0 if margin < 0 else 0.0)
+            for margin, probability in margins
+        )
+
+    def total_expected_value(line, side, water):
+        split_lines = (line - 0.25, line + 0.25) if round(line * 4) % 2 else (line,)
+        expected = 0.0
+        for split_line in split_lines:
+            margins = [
+                ((home_goals + away_goals - split_line) * (1 if side == 'over' else -1), probability)
+                for (home_goals, away_goals), probability in score_probabilities.items()
+            ]
+            value = settlement_ev(margins, water)
+            if value is None:
+                return None
+            expected += value / len(split_lines)
+        return expected
+
+    def handicap_expected_value(team_line, team, water):
+        split_lines = (team_line - 0.25, team_line + 0.25) if round(team_line * 4) % 2 else (team_line,)
+        expected = 0.0
+        for split_line in split_lines:
+            margins = [
+                ((home_goals - away_goals if team == 'home' else away_goals - home_goals) + split_line, probability)
+                for (home_goals, away_goals), probability in score_probabilities.items()
+            ]
+            value = settlement_ev(margins, water)
+            if value is None:
+                return None
+            expected += value / len(split_lines)
+        return expected
+
+    return {
+        'league_average': round(league_average, 2),
+        'home_mean': round(home_mean, 2),
+        'away_mean': round(away_mean, 2),
+        'total_mean': round(home_mean + away_mean, 2),
+        'total_expectation': total_expectation,
+        'handicap_expectation': handicap_expectation,
+        'total_expected_value': total_expected_value,
+        'handicap_expected_value': handicap_expected_value,
+    }
+
+
+def _goal_phase_features(details):
+    """Summarize timing and half/full data without inventing predictive weights."""
+    goal_distribution = details.get('goal_distribution', {}) if isinstance(details, dict) else {}
+    features = {}
+    for side in ('home', 'away'):
+        source = goal_distribution.get(side, {}).get('all', {}) if isinstance(goal_distribution, dict) else {}
+        scored = source.get('scored', []) if isinstance(source, dict) else []
+        conceded = source.get('conceded', []) if isinstance(source, dict) else []
+        scored_counts = [int(_number(row[0] if isinstance(row, list) and row else row) or 0) for row in scored[:6]]
+        conceded_counts = [int(_number(row[0] if isinstance(row, list) and row else row) or 0) for row in conceded[:6]]
+        if len(scored_counts) == 6:
+            features[f'{side}_early_scored_share'] = round(sum(scored_counts[:3]) / max(1, sum(scored_counts)), 3)
+            features[f'{side}_late_scored_share'] = round(sum(scored_counts[3:]) / max(1, sum(scored_counts)), 3)
+        if len(conceded_counts) == 6:
+            features[f'{side}_late_conceded_share'] = round(sum(conceded_counts[3:]) / max(1, sum(conceded_counts)), 3)
+
+    half_full = details.get('half_full_stats', []) if isinstance(details, dict) else []
+    total = 0
+    second_half_reversal = 0
+    for item in half_full if isinstance(half_full, list) else []:
+        count = sum(_number(item.get(key)) or 0 for key in ('home_win', 'draw', 'away_win'))
+        total += count
+        if str(item.get('label', '')) in {'胜负', '负胜', '平胜', '平负'}:
+            second_half_reversal += count
+    if total:
+        features['half_full_change_rate'] = round(second_half_reversal / total, 3)
+    return features
+
+
+def _trend_summary(rows):
+    """Extract observable path facts, never an inferred bookmaker intention."""
+    rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if not rows:
+        return None
+    newest, oldest = rows[0], rows[-1]
+    newest_line = _number(newest.get('line'))
+    oldest_line = _number(oldest.get('line'))
+    newest_home = _number(newest.get('home'))
+    oldest_home = _number(oldest.get('home'))
+    newest_away = _number(newest.get('away'))
+    oldest_away = _number(oldest.get('away'))
+    return {
+        'updates': len(rows),
+        'line_change': round(newest_line - oldest_line, 3) if newest_line is not None and oldest_line is not None else None,
+        'home_water_change': round(newest_home - oldest_home, 3) if newest_home is not None and oldest_home is not None else None,
+        'away_water_change': round(newest_away - oldest_away, 3) if newest_away is not None and oldest_away is not None else None,
+        'latest_time': str(newest.get('change_time', '')),
+    }
+
+
+def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', details=None, trend_quality=None):
     """Build one immutable match-specific prompt from a validated snapshot."""
     if details is None:
         details_cache_file = _detail_cache_path(match_id)
@@ -1625,6 +2158,11 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
         missing_dims.append("历史交锋")
     if missing_dims:
         context_lines.append(f"⚠️ 数据完整度警告: 以下维度缺失 → {', '.join(missing_dims)}。涉及缺失维度的分析结论应自动降低置信度，并在报告中标注[数据缺失]。")
+    if isinstance(trend_quality, dict) and trend_quality.get('failures'):
+        context_lines.append(
+            f"⚠️ 变盘历史完整度警告: 已获取 {trend_quality.get('refreshed', 0)}/{trend_quality.get('required', 0)} 份让球/大小球历史。"
+            "缺失公司的走势不得被推断或用旧数据替代；本场不得标注 high 置信度。"
+        )
 
     context_lines.append(f"【一、 比赛基本信息】")
     context_lines.append(f"- 赛事性质：{details.get('competition', '') or comp_name or '未知赛事'}")
@@ -1853,7 +2391,60 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
     else:
         context_lines.append("- 暂无半全场胜负统计数据")
 
+    phase_features = _goal_phase_features(details)
+    if phase_features:
+        context_lines.append("- 固定阶段特征: " + " | ".join(
+            f"{key}={value:.1%}" for key, value in sorted(phase_features.items())
+        ))
+
     odds_index = details.get('odds_index', [])
+    baseline = _build_probability_baseline(details, home, away)
+    context_lines.append(f"\n【八、 后端进球概率基线（固定算法，非 xG）】")
+    context_lines.append(
+        f"- 联赛场均总进球: {baseline['league_average']} | 主队进球均值: {baseline['home_mean']} | "
+        f"客队进球均值: {baseline['away_mean']} | 本场总进球均值: {baseline['total_mean']}"
+    )
+    market_catalog = _instant_market_catalog(details, baseline)
+    handicap_pairs = sorted({
+        (round(home_line, 2), round(away_line, 2))
+        for item in odds_index
+        for home_line, away_line in [
+            (_number(item.get('handicap', {}).get('home_instant_line')),
+             _number(item.get('handicap', {}).get('away_instant_line')))
+        ]
+        if item.get('handicap', {}).get('available', True)
+        and home_line is not None and away_line is not None
+    })
+    total_lines = sorted({
+        line for item in odds_index
+        if item.get('over_under', {}).get('available', True)
+        and (line := _number(item.get('over_under', {}).get('instant_line'))) is not None
+    })
+    for home_line, away_line in handicap_pairs[:4]:
+        home_score = baseline['handicap_expectation'](home_line, 'home')
+        away_score = baseline['handicap_expectation'](away_line, 'away')
+        context_lines.append(
+            f"- 让球: 主队 {home_line:+g}={home_score:+.3f} | 客队 {away_line:+g}={away_score:+.3f}"
+        )
+    for line in total_lines[:4]:
+        over_score = baseline['total_expectation'](line, 'over')
+        under_score = baseline['total_expectation'](line, 'under')
+        context_lines.append(
+            f"- 大小球 {line}: 基线结算倾向 大={over_score:+.3f} | 小={under_score:+.3f}"
+        )
+    priced_quotes = market_catalog['asian_handicap']['quotes'] + market_catalog['over_under']['quotes']
+    positive_quotes = [quote for quote in priced_quotes if (quote.get('baseline_ev') or 0) > 0]
+    if positive_quotes:
+        context_lines.append("- 可执行价格校验（仅下列报价的固定基线 EV 为正，其他方向必须 no_bet）:")
+        for quote in sorted(positive_quotes, key=lambda item: item['baseline_ev'], reverse=True)[:8]:
+            side = quote.get('team', quote.get('side', ''))
+            context_lines.append(
+                f"  * {quote['company']} | {side} {quote['line']:+g} | 水位 {quote['water']:.3f} "
+                f"| 去水市场概率 {quote['market_probability']:.1%} | 固定基线 EV {quote['baseline_ev']:+.3f}"
+            )
+    else:
+        context_lines.append("- 可执行价格校验: 没有任何即时报价在固定基线下为正 EV，本场必须 no_bet。")
+    context_lines.append("- 该基线仅由近期实际比分与联赛均值推导；若与伤停或完整变盘证据冲突，必须降低置信度或 no_bet。若推荐方向与此基线相反，必须 no_bet。")
     context_lines.append(f"\n【赔率指数初始与即时变盘水位数据（按公司分组）】")
     for item in odds_index:
         company = item.get('company')
@@ -1865,39 +2456,60 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
         h = item.get('handicap', {})
         h_init = h.get('initial', [1.0, 1.0])
         h_inst = h.get('instant', [1.0, 1.0])
+        home_initial_line = _number(h.get('home_initial_line'))
+        away_initial_line = _number(h.get('away_initial_line'))
+        home_instant_line = _number(h.get('home_instant_line'))
+        away_instant_line = _number(h.get('away_instant_line'))
+        home_initial_label = f'{home_initial_line:+g}' if home_initial_line is not None else '缺失'
+        away_initial_label = f'{away_initial_line:+g}' if away_initial_line is not None else '缺失'
+        home_instant_label = f'{home_instant_line:+g}' if home_instant_line is not None else '缺失'
+        away_instant_label = f'{away_instant_line:+g}' if away_instant_line is not None else '缺失'
         # 大小球
         ou = item.get('over_under', {})
         ou_init = ou.get('initial', [1.0, 1.0])
         ou_inst = ou.get('instant', [1.0, 1.0])
         context_lines.append(f"▸ {company}:")
         context_lines.append(f"  欧指: 初盘 主胜{eu_init[0]} 平{eu_init[1]} 客胜{eu_init[2]} → 即时 主胜{eu_inst[0]} 平{eu_inst[1]} 客胜{eu_inst[2]}")
-        context_lines.append(f"  让球: 初盘 {h.get('initial_line', '')} (主水{h_init[0]}/客水{h_init[1]}) → 即时 {h.get('instant_line', '')} (主水{h_inst[0]}/客水{h_inst[1]})")
+        context_lines.append(
+            f"  让球: 初盘 主队 {home_initial_label}/客队 {away_initial_label} "
+            f"(主水{h_init[0]}/客水{h_init[1]}) → 即时 主队 {home_instant_label}/客队 {away_instant_label} "
+            f"(主水{h_inst[0]}/客水{h_inst[1]})"
+        )
         context_lines.append(f"  大小球: 初盘 {ou.get('initial_line', '')} (大{ou_init[0]}/小{ou_init[1]}) → 即时 {ou.get('instant_line', '')} (大{ou_inst[0]}/小{ou_inst[1]})")
 
-    all_companies = [
-        ("36*", "2"), ("皇*", "3"), ("立*", "5"), ("澳*", "7"),
-        ("威***", "9"), ("易**", "10"), ("韦*", "11"), ("Inter*", "13"),
-        ("12*", "14"), ("利*", "15"), ("盈*", "16"), ("18**", "17")
-    ]
-    for company_name, cid in all_companies:
+    trend_companies, _ = _trend_companies_from_odds(odds_index)
+    odds_by_cid = {
+        str(item.get('cid')): item for item in odds_index
+        if isinstance(item, dict) and item.get('cid') not in (None, '')
+    }
+    for company_name, cid in trend_companies:
         try:
             cached_trend = get_cached_odds_detail(match_id, cid)
             if cached_trend:
                 all_tables = cached_trend
                 if all_tables and len(all_tables) >= 3:
-                    table_names = ["让球 (Handicap)", "胜平负 (1X2)", "大小球 (Over/Under)"]
-                    for tbl_idx, rows in enumerate(all_tables[:3]):
-                        t_name = table_names[tbl_idx]
+                    for type_val in _trend_markets_for_company(odds_by_cid.get(cid, {})):
+                        market_name = TREND_MARKETS[type_val]
+                        tbl_idx = int(type_val) - 1
+                        rows = all_tables[tbl_idx]
+                        t_name = f"{market_name} ({'Handicap' if type_val == '1' else 'Over/Under'})"
                         context_lines.append(f"- {company_name} {t_name} 变盘路径 (按时间倒序，最近 10 次变盘):")
                         if not rows:
                             context_lines.append("  (暂无该项变盘明细)")
                             continue
+                        summary = _trend_summary(rows)
+                        if summary:
+                            facts = [f"变更 {summary['updates']} 次"]
+                            if summary['line_change'] is not None:
+                                facts.append(f"盘口变化 {summary['line_change']:+g}")
+                            if summary['home_water_change'] is not None:
+                                facts.append(f"上/大水变化 {summary['home_water_change']:+.3f}")
+                            if summary['away_water_change'] is not None:
+                                facts.append(f"下/小水变化 {summary['away_water_change']:+.3f}")
+                            context_lines.append("  可观察路径摘要: " + " | ".join(facts))
                         for r in rows[:10]:
                             time_str = r.get('change_time', '')
-                            if tbl_idx == 1:
-                                context_lines.append(f"  * 时间: {time_str} | 主胜 {r.get('home')} | 平局 {r.get('draw')} | 客胜 {r.get('away')}")
-                            else:
-                                context_lines.append(f"  * 时间: {time_str} | 盘口 {r.get('line')} | 上/大 {r.get('home')} | 下/小 {r.get('away')}")
+                            context_lines.append(f"  * 时间: {time_str} | 盘口 {r.get('line')} | 上/大 {r.get('home')} | 下/小 {r.get('away')}")
         except Exception:
             pass
 
@@ -1910,15 +2522,16 @@ _VERSION_PERSPECTIVES = [
     "请针对以下赛事数据进行深度量化研判。本次研判要求以 Step 1 基本面为主驱动力（权重 60%），"
     "重点审计近期攻防效率、主力折损、强弱交手表现和战意驱动力，"
     "赔率盘口作为辅助校验维度。找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
-    # 版本2：盘口资金主导（侧重赔率变盘动能驱动结论）
-    "请针对以下赛事数据进行深度量化研判。本次研判要求以 Step 2 赔率资金动能为主驱动力（权重 60%），"
-    "重点审计各机构变盘路径、水位位移趋势与三道反诱盘过滤器的触发情况，"
-    "基本面作为辅助校验维度。找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
-    # 版本3：逆向魔鬼代言人（强制从冷门/反方切入）
-    "请针对以下赛事数据进行深度量化研判。本次研判要求以【逆向魔鬼代言人】视角切入：\n"
-    "1. 强制先假设市场热门方向是错误的，从反方证据出发寻找冷门价值；\n"
-    "2. 重点审计被前两版可能忽略的平局价值、深盘受让方护盘和冷门小球机会；\n"
-    "3. 最终结论可以与热门一致，但必须经过反方论证后的二次确认。\n"
+    # 版本2：市场基线审计（先计算价格，再判断是否存在偏差）
+    "请针对以下赛事数据进行深度量化研判。本次研判要求以 Step 2 的去水市场概率为基线，"
+    "逐项核验初盘与即时盘的可观察变化，并量化基本面对市场基线的支持或反对。"
+    "不得猜测资金流、机构意图或诱盘；盘口变化不足以单独推出反向结论。"
+    "只有存在可说明的概率增量时才推荐，否则明确写无量化优势：\n\n{context_str}",
+    # 版本3：证伪审计（检验热门与反热门，不预设任何一方错误）
+    "请针对以下赛事数据进行深度量化研判。本次研判要求以【证伪审计】视角切入：\n"
+    "1. 同时检验市场热门方向、平局、受让方、小球的支持与反对证据，严禁预设热门必错；\n"
+    "2. 平局、受让方或小球只有在相对去水市场概率存在明确优势，且有直接基本面证据时才可推荐；\n"
+    "3. 若证据无法区分方向，明确写无量化优势，不要用冷门叙事填补结论。\n"
     "找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
 ]
 
@@ -1943,6 +2556,12 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         "temperature": 0.25 + (version_idx * 0.15),
         "stream": True
     }
+    if task_key in ai_tasks:
+        ai_tasks[task_key].setdefault('analyst_inputs', [None, None, None])[version_idx] = {
+            'version': version_idx + 1,
+            'messages': payload['messages'],
+            'temperature': payload['temperature'],
+        }
     
     import requests
     r = requests.post(url, headers=headers, json=payload, timeout=AI_VERSION_TIMEOUT_SECONDS, stream=True)
@@ -2018,6 +2637,11 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         "temperature": 0.1,
         "stream": True
     }
+    if task_key in ai_tasks:
+        ai_tasks[task_key]['cro_input'] = {
+            'messages': payload['messages'],
+            'temperature': payload['temperature'],
+        }
     import requests
     r = requests.post(url, headers=headers, json=payload, timeout=CRO_TIMEOUT_SECONDS, stream=True)
     if r.status_code != 200:
@@ -2080,6 +2704,8 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
             'reports': ['', '', ''],
             'status_list': ['processing', 'processing', 'processing'],
             'final_ticket': '',
+            'analyst_inputs': [None, None, None],
+            'cro_input': None,
             'started_at': time.time(),
             'heartbeat_at': time.time(),
             'snapshot_hash': (snapshot or {}).get('hash', ''),
@@ -2142,6 +2768,9 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                 'analysis_mode': analysis_mode,
                 'reports': final_reports,
                 'final_ticket': final_ticket,
+                'analysis_input': context_str,
+                'analyst_inputs': ai_tasks[task_key].get('analyst_inputs', []),
+                'cro_input': ai_tasks[task_key].get('cro_input'),
                 'snapshot_hash': (snapshot or {}).get('hash', ''),
                 'snapshot_captured_at': (snapshot or {}).get('captured_at', ''),
             }, cache_f, ensure_ascii=False, indent=2)
@@ -2204,27 +2833,14 @@ def match_ai_analysis():
         return jsonify({'success': False, 'error': '仅支持未开赛、待定或进行中的赛事分析；已结束、取消或推迟赛事不能生成新报告。'})
     analysis_mode = 'live' if match_status in LIVE_STATUSES else 'prematch'
         
-    # 1. 读取 AI 配置
-    api_key = ""
-    api_base = "https://opencode.ai/zen/v1"
-    model_name = "minimax-m2.5-free"
-    system_prompt = ""
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                cfg = json.load(f)
-                api_key = cfg.get('api_key', '')
-                api_base = cfg.get('api_base', 'https://opencode.ai/zen/v1')
-                model_name = cfg.get('model_name', 'minimax-m2.5-free')
-                system_prompt = cfg.get('system_prompt', '')
-        except Exception:
-            pass
-            
-    if not system_prompt:
-        system_prompt = DEFAULT_SYSTEM_PROMPT
-            
-    if not api_key:
-        return jsonify({'success': False, 'error': '请先在顶部“AI配置中心”中配置您的 API Key。'})
+    # 1. Read the fixed strategy and its active statistics cohort together.
+    config_ok, config_error, runtime_config = _load_ai_runtime_config()
+    if not config_ok:
+        return jsonify({'success': False, 'error': config_error})
+    api_key = runtime_config['api_key']
+    api_base = runtime_config['api_base']
+    model_name = runtime_config['model_name']
+    system_prompt = runtime_config['system_prompt']
         
     ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
     
@@ -2269,8 +2885,24 @@ def match_ai_analysis():
         except:
             pass
             
-    # 4. 获取最新的详情和盘口并构建上下文
-    success, err_msg, context_str = build_match_prompt_context(match_id, home, away, analysis_mode)
+    # 4. Single analysis follows the same data gate as batch analysis.
+    success, err_msg, details, snapshot = _prepare_analysis_snapshot(
+        match_id, home, away, force_refresh=True
+    )
+    if not success:
+        return jsonify({'success': False, 'error': err_msg})
+    trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
+        match_id, details.get('odds_index', [])
+    )
+    if not trends_ok:
+        return jsonify({'success': False, 'error': trend_error})
+    snapshot['trend_quality'] = trend_quality
+    snapshot['market_catalog'] = _instant_market_catalog(
+        details, _build_probability_baseline(details, home, away)
+    )
+    success, err_msg, context_str = build_match_prompt_context(
+        match_id, home, away, analysis_mode, details=details, trend_quality=trend_quality
+    )
     if not success:
         return jsonify({'success': False, 'error': err_msg})
         
@@ -2294,8 +2926,14 @@ def match_ai_analysis():
                 'fixture_date': match_metadata.get('date', ''),
                 'fixture_status': match_status,
                 'analysis_mode': analysis_mode,
+                'strategy_version': STRATEGY_VERSION,
+                'tracking_cohort_id': runtime_config['tracking_cohort_id'],
+                'tracking_cohort_name': runtime_config['tracking_cohort_name'],
+                'market_catalog': snapshot['market_catalog'],
             },
             analysis_mode,
+            None,
+            snapshot,
         )
     )
     t.daemon = True
@@ -2372,7 +3010,13 @@ def prediction_backtest():
     try:
         matches, matches_by_id = load_match_store()
         settled = settle_finished_predictions(PREDICTION_DB_FILE, matches)
-        data = prediction_summary(PREDICTION_DB_FILE)
+        cohorts, active_cohort_id = _tracking_cohort_state(_read_config_file())
+        requested_cohort_id = request.args.get('cohort_id', '').strip()
+        selected_cohort_id = requested_cohort_id or active_cohort_id
+        data = prediction_summary(
+            PREDICTION_DB_FILE, cohort_id=selected_cohort_id,
+            cohort_definitions=cohorts,
+        )
         _enrich_prediction_samples(data.get('recent', []), matches_by_id)
         return jsonify({'success': True, 'newly_settled': settled, 'data': data})
     except Exception as e:

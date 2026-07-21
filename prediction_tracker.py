@@ -69,37 +69,112 @@ def _prediction_record_from_text(report):
     return found[-1] if found else None
 
 
-def _normalise_prediction(record):
+def _line_is_offered(line, offered_lines):
+    return not offered_lines or any(abs(float(line) - float(offered)) < 1e-6 for offered in offered_lines)
+
+
+def _snapshot_quote(market_catalog, market, side_key, side, line):
+    quotes = (market_catalog or {}).get(market, {}).get('quotes', [])
+    matching = [
+        quote for quote in quotes
+        if quote.get(side_key) == side and abs(float(quote.get('line', 999)) - float(line)) < 1e-6
+    ]
+    if not matching:
+        return None
+    # The middle price avoids treating one company as a representative market.
+    quote = sorted(matching, key=lambda item: float(item.get('water', 0)))[len(matching) // 2]
+    return {
+        'company': quote.get('company', ''),
+        'cid': str(quote.get('cid', '')),
+        'water': float(quote['water']),
+        'decimal_odds': float(quote['decimal_odds']),
+        'market_probability': quote.get('market_probability'),
+        'baseline_ev': quote.get('baseline_ev'),
+    }
+
+
+def _normalise_prediction(record, market_catalog=None):
     if not isinstance(record, dict):
         return None
     one_x_two = record.get('one_x_two')
     handicap = record.get('asian_handicap')
     over_under = record.get('over_under')
     confidence = record.get('confidence', 'low')
+    status = record.get('status', 'bet')
 
-    if one_x_two not in {'home', 'draw', 'away'}:
+    # New predictions track only Asian handicap and totals. Keep the optional
+    # legacy 1X2 field readable so previously stored reports remain settleable.
+    if one_x_two is not None and one_x_two not in {'home', 'draw', 'away'}:
         return None
-    if not isinstance(handicap, dict) or handicap.get('team') not in {'home', 'away'}:
-        return None
-    if not isinstance(over_under, dict) or over_under.get('side') not in {'over', 'under'}:
-        return None
-    try:
-        handicap_line = float(handicap['line'])
-        total_line = float(over_under['line'])
-    except (KeyError, TypeError, ValueError):
+    if status not in {'bet', 'no_bet'}:
         return None
     if confidence not in {'high', 'medium', 'low'}:
         confidence = 'low'
-    return {
-        'one_x_two': one_x_two,
-        'asian_handicap': {'team': handicap['team'], 'line': handicap_line},
-        'over_under': {'side': over_under['side'], 'line': total_line},
+    normalised = {
+        'status': status,
         'confidence': confidence,
+        'reason': str(record.get('reason', '')).strip()[:240],
     }
+    if status == 'no_bet':
+        if handicap is not None or over_under is not None:
+            return None
+        return normalised
+
+    if isinstance(handicap, dict):
+        if handicap.get('team') not in {'home', 'away'}:
+            return None
+        try:
+            normalised['asian_handicap'] = {
+                'team': handicap['team'], 'line': float(handicap['line']),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        offered = (market_catalog or {}).get('asian_handicap', {}).get(handicap['team'], [])
+        if not _line_is_offered(normalised['asian_handicap']['line'], offered):
+            return None
+        quote = _snapshot_quote(
+            market_catalog, 'asian_handicap', 'team', handicap['team'], normalised['asian_handicap']['line']
+        )
+        if quote:
+            normalised['asian_handicap']['quote'] = quote
+    elif handicap is not None:
+        return None
+
+    if isinstance(over_under, dict):
+        if over_under.get('side') not in {'over', 'under'}:
+            return None
+        try:
+            normalised['over_under'] = {
+                'side': over_under['side'], 'line': float(over_under['line']),
+            }
+        except (KeyError, TypeError, ValueError):
+            return None
+        offered = (market_catalog or {}).get('over_under', {}).get('line', [])
+        if not _line_is_offered(normalised['over_under']['line'], offered):
+            return None
+        quote = _snapshot_quote(
+            market_catalog, 'over_under', 'side', over_under['side'], normalised['over_under']['line']
+        )
+        if quote:
+            normalised['over_under']['quote'] = quote
+    elif over_under is not None:
+        return None
+
+    if not any(market in normalised for market in ('asian_handicap', 'over_under')):
+        return None
+    if one_x_two is not None:
+        normalised['one_x_two'] = one_x_two
+    return normalised
 
 
 def record_prediction(db_path, metadata, model_name, system_prompt, context, final_report):
-    record = _normalise_prediction(_prediction_record_from_text(final_report))
+    record = _normalise_prediction(
+        _prediction_record_from_text(final_report), metadata.get('market_catalog')
+    )
+    if record:
+        record['strategy_version'] = metadata.get('strategy_version', 'legacy')
+        record['tracking_cohort_id'] = metadata.get('tracking_cohort_id', record['strategy_version'])
+        record['tracking_cohort_name'] = metadata.get('tracking_cohort_name', '')
     with closing(sqlite3.connect(db_path)) as conn:
         # A backtest sample represents one fixture at one decision point. Re-running
         # the same report must not inflate its apparent accuracy.
@@ -142,43 +217,50 @@ def _quarter_lines(line):
     return [line - 0.25, line + 0.25] if abs(quarter) % 2 else [line]
 
 
-def _settle_values(values):
+def _settle_values(values, win_return=1.0, quoted=False):
     units = []
+    settlement_units = []
     for value in values:
-        units.append(1.0 if value > 1e-9 else -1.0 if value < -1e-9 else 0.0)
+        settlement_units.append(1.0 if value > 1e-9 else -1.0 if value < -1e-9 else 0.0)
+        units.append(win_return if value > 1e-9 else -1.0 if value < -1e-9 else 0.0)
     unit_return = sum(units) / len(units)
-    if unit_return >= 0.99:
+    settlement_return = sum(settlement_units) / len(settlement_units)
+    if settlement_return >= 0.99:
         outcome = 'win'
-    elif unit_return > 0.01:
+    elif settlement_return > 0.01:
         outcome = 'half_win'
-    elif unit_return <= -0.99:
+    elif settlement_return <= -0.99:
         outcome = 'loss'
-    elif unit_return < -0.01:
+    elif settlement_return < -0.01:
         outcome = 'half_loss'
     else:
         outcome = 'push'
-    return {'outcome': outcome, 'unit_return': unit_return}
+    return {'outcome': outcome, 'unit_return': unit_return, 'quoted': quoted}
 
 
 def _settle_prediction(prediction, home_goals, away_goals):
-    one_x_two = prediction['one_x_two']
-    actual = 'home' if home_goals > away_goals else 'away' if away_goals > home_goals else 'draw'
-    handicap = prediction['asian_handicap']
-    team_diff = home_goals - away_goals if handicap['team'] == 'home' else away_goals - home_goals
-    handicap_result = _settle_values([team_diff + line for line in _quarter_lines(handicap['line'])])
-    totals = prediction['over_under']
-    goals = home_goals + away_goals
-    if totals['side'] == 'over':
-        total_values = [goals - line for line in _quarter_lines(totals['line'])]
-    else:
-        total_values = [line - goals for line in _quarter_lines(totals['line'])]
-    totals_result = _settle_values(total_values)
-    return {
-        'score': f'{home_goals}-{away_goals}',
-        'one_x_two': {'outcome': 'win' if one_x_two == actual else 'loss'},
-        'asian_handicap': handicap_result,
-        'over_under': totals_result,
-    }
+    result = {'score': f'{home_goals}-{away_goals}'}
+    handicap = prediction.get('asian_handicap')
+    if handicap:
+        team_diff = home_goals - away_goals if handicap['team'] == 'home' else away_goals - home_goals
+        quote = handicap.get('quote') or {}
+        result['asian_handicap'] = _settle_values(
+            [team_diff + line for line in _quarter_lines(handicap['line'])],
+            float(quote.get('water', 1.0)), bool(quote),
+        )
+    totals = prediction.get('over_under')
+    if totals:
+        goals = home_goals + away_goals
+        quote = totals.get('quote') or {}
+        if totals['side'] == 'over':
+            total_values = [goals - line for line in _quarter_lines(totals['line'])]
+        else:
+            total_values = [line - goals for line in _quarter_lines(totals['line'])]
+        result['over_under'] = _settle_values(total_values, float(quote.get('water', 1.0)), bool(quote))
+    if prediction.get('one_x_two') in {'home', 'draw', 'away'}:
+        actual = 'home' if home_goals > away_goals else 'away' if away_goals > home_goals else 'draw'
+        result['one_x_two'] = {'outcome': 'win' if prediction['one_x_two'] == actual else 'loss'}
+    return result
 
 
 def settle_finished_predictions(db_path, matches):
@@ -206,9 +288,28 @@ def settle_finished_predictions(db_path, matches):
     return settled
 
 
-def summary(db_path, limit=None):
-    markets = {'one_x_two': [], 'asian_handicap': [], 'over_under': []}
+def _cohort_identity(prediction):
+    prediction = prediction or {}
+    cohort_id = str(prediction.get('tracking_cohort_id', '')).strip()
+    cohort_name = str(prediction.get('tracking_cohort_name', '')).strip()
+    if cohort_id:
+        return cohort_id, cohort_name or cohort_id
+    if prediction.get('strategy_version') == 'dual-market-v2':
+        return 'dual-market-v2-unassigned', '双市场 v2（未分批旧记录）'
+    return 'legacy', '历史记录（旧策略）'
+
+
+def summary(db_path, limit=None, cohort_id=None, cohort_definitions=None):
+    markets = {'asian_handicap': [], 'over_under': []}
     recent = []
+    cohort_catalog = {}
+    for cohort in cohort_definitions or []:
+        if not isinstance(cohort, dict):
+            continue
+        defined_id = str(cohort.get('id', '')).strip()
+        defined_name = str(cohort.get('name', '')).strip()
+        if defined_id and defined_name:
+            cohort_catalog[defined_id] = defined_name
     with closing(sqlite3.connect(db_path)) as conn:
         query = '''
             SELECT id, match_id, home_team, away_team, kickoff, analysis_mode, created_at,
@@ -229,53 +330,104 @@ def summary(db_path, limit=None):
             'competition': row[7], 'fixture_date': row[8], 'fixture_status': row[9],
             'prediction': prediction, 'result': result,
         })
-        if result:
-            for market in markets:
-                markets[market].append(result[market])
+        sample_cohort_id, sample_cohort_name = _cohort_identity(prediction)
+        cohort_catalog.setdefault(sample_cohort_id, sample_cohort_name)
+        recent[-1]['tracking_cohort_id'] = sample_cohort_id
+        recent[-1]['tracking_cohort_name'] = sample_cohort_name
 
+    selected_cohort_id = cohort_id if cohort_id in cohort_catalog else None
+    if selected_cohort_id:
+        recent = [sample for sample in recent if sample['tracking_cohort_id'] == selected_cohort_id]
+
+    breakdowns = {
+        'strategy': {'asian_handicap': {}, 'over_under': {}},
+        'line': {'asian_handicap': {}, 'over_under': {}},
+        'competition': {'asian_handicap': {}, 'over_under': {}},
+    }
+    for sample in recent:
+        prediction = sample['prediction'] or {}
+        result = sample['result'] or {}
+        for market in markets:
+            if not result.get(market):
+                continue
+            markets[market].append(result[market])
+            prediction_market = prediction.get(market, {})
+            strategy_key = ' | '.join([
+                prediction.get('strategy_version', 'legacy'),
+                sample['analysis_mode'] or 'prematch',
+                prediction.get('confidence', 'low'),
+            ])
+            line = prediction_market.get('line')
+            line_key = f'{line:+g}' if isinstance(line, (int, float)) else 'unknown'
+            competition_key = sample['competition'] or 'unclassified'
+            for kind, key in (
+                ('strategy', strategy_key), ('line', line_key), ('competition', competition_key),
+            ):
+                breakdowns[kind][market].setdefault(key, []).append(result[market])
+
+    recommended = [sample for sample in recent if sample['prediction'] and sample['prediction'].get('status', 'bet') == 'bet']
+    no_bet = [sample for sample in recent if sample['prediction'] and sample['prediction'].get('status') == 'no_bet']
     overview = {
-        'window_size': len(rows),
-        'tracked': sum(row[10] is not None for row in rows),
-        'settled': sum(row[11] is not None for row in rows),
-        'pending': sum(row[10] is not None and row[11] is None for row in rows),
-        'untracked': sum(row[10] is None for row in rows),
+        'window_size': len(recent),
+        'tracked': sum(sample['prediction'] is not None for sample in recent),
+        'recommended': len(recommended),
+        'no_bet': len(no_bet),
+        'settled': sum(sample['result'] is not None for sample in recommended),
+        'pending': sum(sample['result'] is None for sample in recommended),
+        'untracked': sum(sample['prediction'] is None for sample in recent),
     }
     by_mode = {}
-    for row in rows:
-        mode = row[5] or 'prematch'
+    for sample in recent:
+        mode = sample['analysis_mode'] or 'prematch'
         bucket = by_mode.setdefault(mode, {'total': 0, 'tracked': 0, 'settled': 0})
         bucket['total'] += 1
-        bucket['tracked'] += row[10] is not None
-        bucket['settled'] += row[11] is not None
+        bucket['tracked'] += sample['prediction'] is not None
+        bucket['settled'] += sample['result'] is not None
 
-    metrics = {}
     hit_points = {'win': 1.0, 'half_win': 0.5, 'push': 0.0, 'half_loss': 0.0, 'loss': 0.0}
-    for market, outcomes in markets.items():
+
+    def metric_for(outcomes):
         outcome_counts = {
             outcome: sum(item.get('outcome') == outcome for item in outcomes)
             for outcome in hit_points
         }
-        if market == 'one_x_two':
-            wins = outcome_counts['win']
-            metrics[market] = {
-                'settled': len(outcomes), 'wins': wins,
-                'losses': outcome_counts['loss'],
-                'hit_rate': round(wins / len(outcomes), 4) if outcomes else None,
-            }
-            continue
         points = sum(hit_points[item['outcome']] for item in outcomes)
-        units = sum(item['unit_return'] for item in outcomes)
-        metrics[market] = {
+        decisive = sum(item.get('outcome') != 'push' for item in outcomes)
+        priced_outcomes = [item for item in outcomes if item.get('quoted')]
+        return {
             'settled': len(outcomes),
-            'hit_rate': round(points / len(outcomes), 4) if outcomes else None,
-            'settlement_units': round(units, 2),
+            'decisive': decisive,
+            'hit_rate': round(points / decisive, 4) if decisive else None,
+            'effective_wins': round(points, 2),
+            'priced_settled': len(priced_outcomes),
+            'roi': round(sum(item['unit_return'] for item in priced_outcomes) / len(priced_outcomes), 4) if priced_outcomes else None,
             'wins': outcome_counts['win'],
             'half_wins': outcome_counts['half_win'],
             'pushes': outcome_counts['push'],
             'half_losses': outcome_counts['half_loss'],
             'losses': outcome_counts['loss'],
         }
-    return {'overview': overview, 'by_mode': by_mode, 'metrics': metrics, 'recent': recent}
+
+    metrics = {market: metric_for(outcomes) for market, outcomes in markets.items()}
+    breakdown_metrics = {
+        kind: {
+            market: [
+                {'key': key, **metric_for(outcomes)}
+                for key, outcomes in sorted(groups.items())
+            ]
+            for market, groups in markets_by_group.items()
+        }
+        for kind, markets_by_group in breakdowns.items()
+    }
+    return {
+        'overview': overview, 'by_mode': by_mode, 'metrics': metrics,
+        'breakdowns': breakdown_metrics, 'recent': recent,
+        'cohorts': [
+            {'id': known_id, 'name': known_name, 'selected': known_id == selected_cohort_id}
+            for known_id, known_name in cohort_catalog.items()
+        ],
+        'selected_cohort_id': selected_cohort_id,
+    }
 
 
 def prediction_detail(db_path, prediction_id):

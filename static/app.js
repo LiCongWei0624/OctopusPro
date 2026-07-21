@@ -1388,6 +1388,7 @@ function formatBacktestDateTime(isoString) {
 let backtestSamples = [];
 let backtestFilters = { date: 'all', competition: 'all', status: 'all', query: '' };
 let expandedBacktestSampleId = null;
+let activeBacktestCohortId = '';
 
 function escapeBacktestHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, char => ({
@@ -1416,6 +1417,16 @@ function formatOverUnderPrediction(overUnder) {
     return `${overUnder.side === 'over' ? '大' : '小'} ${overUnder.line ?? '--'}`;
 }
 
+function formatPredictionQuote(market) {
+    const quote = market?.quote;
+    if (!quote || quote.water === undefined) return '--';
+    const probability = quote.market_probability === null || quote.market_probability === undefined
+        ? '--' : `${(Number(quote.market_probability) * 100).toFixed(1)}%`;
+    const expectedValue = quote.baseline_ev === null || quote.baseline_ev === undefined
+        ? '--' : `${Number(quote.baseline_ev) >= 0 ? '+' : ''}${Number(quote.baseline_ev).toFixed(3)}`;
+    return `${quote.company || '市场中位报价'} 水位 ${Number(quote.water).toFixed(3)} · 市场概率 ${probability} · 基线 EV ${expectedValue}`;
+}
+
 function backtestOutcomeLabel(market, outcome) {
     if (!outcome) return '待结算';
     if (market === 'one_x_two') return outcome === 'win' ? '命中' : '未中';
@@ -1432,8 +1443,8 @@ function backtestOutcomeClass(outcome) {
 function backtestPredictionMarkup(sample) {
     const prediction = sample.prediction;
     if (!prediction) return '<span class="backtest-market-pick muted">未保存结构化预测</span>';
+    if (prediction.status === 'no_bet') return '<span class="backtest-market-pick muted">弃选</span>';
     const picks = [
-        ['胜平负', formatPredictionSide(prediction.one_x_two, sample.home_team, sample.away_team)],
         ['让球', formatAsianHandicapPrediction(prediction.asian_handicap, sample.home_team, sample.away_team)],
         ['大小球', formatOverUnderPrediction(prediction.over_under)],
     ].filter(([, value]) => value && value !== '--');
@@ -1444,7 +1455,6 @@ function backtestSettlementMarkup(sample) {
     if (!sample.result) return '<span class="backtest-market-result pending">待比赛完赛结算</span>';
     const result = sample.result;
     const outcomes = [
-        ['胜平负', result.one_x_two?.outcome],
         ['让球', result.asian_handicap?.outcome],
         ['大小球', result.over_under?.outcome],
     ].filter(([, outcome]) => outcome);
@@ -1471,7 +1481,6 @@ function finalTicketPredictionMarkup(report, fixture = null) {
     const home = fixture?.home_team || selectedMatch?.home_team || '主队';
     const away = fixture?.away_team || selectedMatch?.away_team || '客队';
     const picks = [
-        ['胜平负', formatPredictionSide(prediction.one_x_two, home, away)],
         ['让球', formatAsianHandicapPrediction(prediction.asian_handicap, home, away)],
         ['大小球', formatOverUnderPrediction(prediction.over_under)],
     ].filter(([, value]) => value && value !== '--');
@@ -1485,6 +1494,7 @@ function formatSettlementOutcome(outcome) {
 
 function predictionSampleStatus(sample) {
     if (!sample.prediction) return { label: '未追踪', className: 'untracked' };
+    if (sample.prediction.status === 'no_bet') return { label: '弃选', className: 'untracked' };
     if (!sample.result) return { label: '待结算', className: 'pending' };
     return { label: '已结算', className: 'settled' };
 }
@@ -1604,15 +1614,22 @@ function predictionSampleDetailMarkup(sample) {
     const result = sample.result;
     const home = sample.home_team || '主队';
     const away = sample.away_team || '客队';
-    const predictionRows = prediction ? [
-        ['胜平负', formatPredictionSide(prediction.one_x_two, home, away)],
+    const predictionRows = prediction?.status === 'no_bet' ? [
+        ['策略状态', '弃选'],
+        ['原因', prediction.reason || '未达到固定版的推荐阈值'],
+        ['置信度', ({ high: '高', medium: '中', low: '低' })[prediction.confidence] || '低']
+    ] : prediction ? [
         ['亚洲让球', formatAsianHandicapPrediction(prediction.asian_handicap, home, away)],
+        ['让球报价', formatPredictionQuote(prediction.asian_handicap)],
         ['大小球', formatOverUnderPrediction(prediction.over_under)],
+        ['大小球报价', formatPredictionQuote(prediction.over_under)],
         ['置信度', ({ high: '高', medium: '中', low: '低' })[prediction.confidence] || '低']
     ] : [['结构化预测', '该报告未返回有效 prediction_record']];
-    const settlementRows = result ? [
+    const settlementRows = prediction?.status === 'no_bet' ? [
+        ['结算状态', '本场弃选，不计入赢盘率'],
+        ['最终比分', result?.score || '--']
+    ] : result ? [
         ['最终比分', result.score || '--'],
-        ['胜平负结算', formatSettlementOutcome(result.one_x_two?.outcome)],
         ['亚洲让球结算', `${formatSettlementOutcome(result.asian_handicap?.outcome)}${result.asian_handicap?.unit_return !== undefined ? ` (${result.asian_handicap.unit_return > 0 ? '+' : ''}${result.asian_handicap.unit_return} 单位)` : ''}`],
         ['大小球结算', `${formatSettlementOutcome(result.over_under?.outcome)}${result.over_under?.unit_return !== undefined ? ` (${result.over_under.unit_return > 0 ? '+' : ''}${result.over_under.unit_return} 单位)` : ''}`],
         ['结算时间', formatBacktestDateTime(sample.settled_at)]
@@ -1685,37 +1702,66 @@ function renderPredictionBacktest(data) {
 
     const overview = data.overview || {};
     const metrics = data.metrics || {};
+    const breakdowns = data.breakdowns || {};
+    const cohorts = data.cohorts || [];
+    activeBacktestCohortId = data.selected_cohort_id || cohorts.find(cohort => cohort.selected)?.id || '';
     backtestSamples = data.recent || [];
     backtestFilters = { date: 'all', competition: 'all', status: 'all', query: '' };
     expandedBacktestSampleId = null;
     const cards = [
-        ['独立样本', `${overview.tracked || 0} / ${overview.window_size || 0}`, '已写入可结算结构化预测'],
-        ['已结算', `${overview.settled || 0}`, '具备最终比分的样本'],
+        ['分析记录', `${overview.tracked || 0} / ${overview.window_size || 0}`, '已写入结构化分析记录'],
+        ['实际推荐', `${overview.recommended || 0}`, '至少包含一个让球或大小球建议'],
+        ['弃选', `${overview.no_bet || 0}`, '未达到固定版推荐阈值'],
+        ['已结算', `${overview.settled || 0}`, '实际推荐且具备最终比分'],
         ['待结算', `${overview.pending || 0}`, '比赛尚未结束或未同步结果'],
         ['未追踪', `${overview.untracked || 0}`, '报告未返回有效 prediction_record'],
     ];
 
     const marketCards = [
-        ['胜平负', metrics.one_x_two, '命中率'],
-        ['让球', metrics.asian_handicap, '赢盘率'],
-        ['大小球', metrics.over_under, '赢盘率'],
+        ['让球', metrics.asian_handicap, '有效赢盘率'],
+        ['大小球', metrics.over_under, '有效赢盘率'],
     ];
     const marketDetail = (label, metric) => {
         if (!metric || !metric.settled) return '暂无已结算样本';
-        if (label === '胜平负') return `命中 ${metric.wins || 0} / ${metric.settled} 场 · 未中 ${metric.losses || 0} 场`;
-        return `全赢 ${metric.wins || 0} · 赢半 ${metric.half_wins || 0} · 走水 ${metric.pushes || 0} · 输半 ${metric.half_losses || 0} · 全输 ${metric.losses || 0}`;
+        const roi = metric.roi === null || metric.roi === undefined
+            ? '' : ` · 实际价格样本 ${metric.priced_settled} · ROI ${(metric.roi * 100).toFixed(1)}%`;
+        return `有效赢盘 ${metric.effective_wins || 0} · 全赢 ${metric.wins || 0} · 赢半 ${metric.half_wins || 0} · 走水 ${metric.pushes || 0} · 输半 ${metric.half_losses || 0} · 全输 ${metric.losses || 0} · 有效样本 ${metric.decisive || 0}${roi}`;
     };
+    const strategyRows = ['asian_handicap', 'over_under'].flatMap(market =>
+        (breakdowns.strategy?.[market] || []).filter(row => row.settled).map(row => ({ market, ...row }))
+    );
+    const strategyBreakdownMarkup = strategyRows.length ? `
+        <section class="backtest-section">
+            <div class="backtest-section-heading"><h4>策略分层</h4><span>只与相同策略版本、模式及置信度的样本比较</span></div>
+            <div class="backtest-sample-table-wrap">
+                <table class="backtest-sample-table backtest-breakdown-table">
+                    <thead><tr><th>市场</th><th>策略 / 模式 / 置信度</th><th>已结算</th><th>有效赢盘</th><th>有效赢盘率</th></tr></thead>
+                    <tbody>${strategyRows.map(row => `<tr><td>${row.market === 'asian_handicap' ? '让球' : '大小球'}</td><td>${escapeBacktestHtml(row.key)}</td><td>${row.settled}</td><td>${row.effective_wins}</td><td>${formatBacktestRate(row.hit_rate)}</td></tr>`).join('')}</tbody>
+                </table>
+            </div>
+        </section>` : '';
+    const cohortOptions = cohorts.map(cohort =>
+        `<option value="${escapeBacktestHtml(cohort.id)}" ${cohort.id === activeBacktestCohortId ? 'selected' : ''}>${escapeBacktestHtml(cohort.name)}</option>`
+    ).join('');
 
     container.innerHTML = `
         <section class="backtest-summary-grid">
             ${cards.map(([label, value, hint]) => `<article class="backtest-stat"><span>${label}</span><strong>${value}</strong><small>${hint}</small></article>`).join('')}
         </section>
+        <section class="backtest-section backtest-cohort-section">
+            <div class="backtest-section-heading"><h4>统计批次</h4><span>每个批次独立计算，不混入其他版本样本</span></div>
+            <div class="backtest-cohort-actions">
+                <label class="backtest-filter-control"><span>当前批次</span><select onchange="setBacktestCohort(this.value)">${cohortOptions}</select></label>
+                <button type="button" class="backtest-new-cohort" onclick="createBacktestCohort()">新建统计批次</button>
+            </div>
+        </section>
         <section class="backtest-section">
             <div class="backtest-section-heading"><h4>市场表现</h4><span>仅统计已结算样本</span></div>
             <div class="backtest-market-grid">
-                ${marketCards.map(([label, metric, rateLabel]) => `<article class="backtest-market"><span>${label}</span><strong>${formatBacktestRate(metric && metric.hit_rate)}</strong><small>${rateLabel} · ${marketDetail(label, metric)}</small>${label !== '胜平负' && metric && metric.settled ? '<i>赢半按 0.5 场计入赢盘率；走水不计入</i>' : ''}${metric && metric.settlement_units !== undefined ? `<em>净结算单位 ${metric.settlement_units > 0 ? '+' : ''}${metric.settlement_units}</em>` : ''}</article>`).join('')}
+                ${marketCards.map(([label, metric, rateLabel]) => `<article class="backtest-market"><span>${label}</span><strong>${formatBacktestRate(metric && metric.hit_rate)}</strong><small>${rateLabel} · ${marketDetail(label, metric)}</small>${metric && metric.settled ? '<i>赢半按 0.5 场计入赢盘率；走水不计入。未记录实际成交水位，故不展示收益。</i>' : ''}</article>`).join('')}
             </div>
         </section>
+        ${strategyBreakdownMarkup}
         <section class="backtest-section">
             <div class="backtest-section-heading"><h4>样本明细</h4><span>点击查看赛前输入、预测及赛果结算</span></div>
             <div id="backtest-sample-filters" class="backtest-sample-filters"></div>
@@ -1728,16 +1774,12 @@ function renderPredictionBacktest(data) {
     renderBacktestSampleTable();
 }
 
-function openPredictionBacktestModal() {
-    const modal = document.getElementById('prediction-backtest-modal');
+function loadPredictionBacktest(cohortId = activeBacktestCohortId) {
     const container = document.getElementById('prediction-backtest-content');
-    if (!modal || !container) return;
-    setMobileNavActive('backtest');
-
-    modal.style.display = 'flex';
-    clearPredictionSampleDetail();
+    if (!container) return;
+    const query = cohortId ? `?cohort_id=${encodeURIComponent(cohortId)}` : '';
     container.innerHTML = '<p class="backtest-loading">正在同步已完场比赛并计算回测...</p>';
-    fetch('/api/prediction_backtest')
+    fetch(`/api/prediction_backtest${query}`)
         .then(res => res.json())
         .then(res => {
             if (res.success) renderPredictionBacktest(res.data);
@@ -1746,6 +1788,39 @@ function openPredictionBacktestModal() {
         .catch(() => {
             container.innerHTML = '<p class="backtest-empty">无法读取回测数据，请稍后重试。</p>';
         });
+}
+
+function setBacktestCohort(cohortId) {
+    activeBacktestCohortId = cohortId;
+    loadPredictionBacktest(cohortId);
+}
+window.setBacktestCohort = setBacktestCohort;
+
+function createBacktestCohort() {
+    const container = document.getElementById('prediction-backtest-content');
+    if (container) container.innerHTML = '<p class="backtest-loading">正在新建独立统计批次...</p>';
+    fetch('/api/prediction_backtest/cohorts', { method: 'POST' })
+        .then(res => res.json())
+        .then(res => {
+            if (!res.success) throw new Error(res.error || '创建失败');
+            activeBacktestCohortId = res.data.active_cohort;
+            loadPredictionBacktest(activeBacktestCohortId);
+        })
+        .catch(error => {
+            if (container) container.innerHTML = `<p class="backtest-empty">无法新建统计批次：${escapeBacktestHtml(error.message || '未知错误')}</p>`;
+        });
+}
+window.createBacktestCohort = createBacktestCohort;
+
+function openPredictionBacktestModal() {
+    const modal = document.getElementById('prediction-backtest-modal');
+    const container = document.getElementById('prediction-backtest-content');
+    if (!modal || !container) return;
+    setMobileNavActive('backtest');
+
+    modal.style.display = 'flex';
+    clearPredictionSampleDetail();
+    loadPredictionBacktest();
 }
 window.openPredictionBacktestModal = openPredictionBacktestModal;
 
