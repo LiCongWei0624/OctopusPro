@@ -2223,6 +2223,7 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
     recent = details.get('recent_results', {})
     recent_home = recent.get('home', []) if isinstance(recent, dict) else []
     recent_away = recent.get('away', []) if isinstance(recent, dict) else []
+    standings = details.get('standings', [])
     # 构建积分榜球队名 → 排名的映射，用于标注近期战绩中对手的实力档次
     standings_rank_map = {}
     total_teams_in_league = 0

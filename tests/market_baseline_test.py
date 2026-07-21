@@ -1,5 +1,6 @@
 import math
 import unittest
+from unittest.mock import patch
 
 import app
 
@@ -81,6 +82,43 @@ class MarketBaselineTests(unittest.TestCase):
         low_price = baseline['handicap_expected_value'](-0.25, 'home', 0.6)
         high_price = baseline['handicap_expected_value'](-0.25, 'home', 1.2)
         self.assertLess(low_price, high_price)
+
+    def test_prompt_context_initializes_standings_before_recent_form_annotations(self):
+        details = {
+            'competition': 'Test League',
+            'standings': [
+                {'team_name': 'Home', 'position': 1, 'total': 20, 'goals_for': 32},
+                {'team_name': 'Away', 'position': 4, 'total': 20, 'goals_for': 24},
+            ],
+            'recent_results': {
+                'home': [{'home': 'Home', 'away': 'Away', 'score': '2-1', 'result': '胜'}],
+                'away': [{'home': 'Home', 'away': 'Away', 'score': '2-1', 'result': '负'}],
+            },
+            'odds_index': [{
+                'company': 'Test Book', 'cid': 1,
+                'handicap': {
+                    'available': True, 'home_initial_line': -0.25, 'away_initial_line': 0.25,
+                    'home_instant_line': -0.25, 'away_instant_line': 0.25,
+                    'initial': [0.9, 0.9], 'instant': [0.9, 0.9],
+                },
+                'over_under': {
+                    'available': True, 'initial_line': 2.5, 'instant_line': 2.5,
+                    'initial': [0.9, 0.9], 'instant': [0.9, 0.9],
+                },
+                'europe': {'initial': [2.0, 3.2, 3.6], 'instant': [2.0, 3.2, 3.6]},
+            }],
+        }
+
+        with patch.object(app, 'load_match_store', return_value=([], {})), \
+             patch.object(app, '_trend_companies_from_odds', return_value=([], [])):
+            success, error, context = app.build_match_prompt_context(
+                '101', 'Home', 'Away', details=details, trend_quality={'complete': True},
+            )
+
+        self.assertTrue(success, error)
+        self.assertIn('Home', context)
+        self.assertIn('Test Book', context)
+        self.assertIn('EV', context)
 
 
 if __name__ == '__main__':
