@@ -1010,11 +1010,17 @@ def _refresh_required_trend_history(match_id, odds_index):
                 if temp_path and os.path.exists(temp_path):
                     os.unlink(temp_path)
 
+    coverage_ratio = (refreshed / expected) if expected > 0 else 0.0
+    complete = (expected > 0) and (refreshed == expected)
+    degraded = (not complete) and (refreshed >= 1) and (coverage_ratio >= 0.55 or refreshed >= 8)
+
     quality = {
         'required': expected,
         'refreshed': refreshed,
         'failures': failures,
-        'complete': bool(expected) and not failures,
+        'complete': complete,
+        'degraded': degraded,
+        'coverage_ratio': round(coverage_ratio, 3),
         'companies': [name for name, _ in companies],
         'markets_by_company': {
             name: [TREND_MARKETS[type_val] for type_val in markets_by_cid.get(cid, [])]
@@ -1024,8 +1030,8 @@ def _refresh_required_trend_history(match_id, odds_index):
     }
     if not expected:
         return False, '赔率快照中没有可用的让球或大小球市场', quality
-    if failures:
-        return False, f"变盘历史未完整获取（{refreshed}/{expected}）：{'；'.join(failures)}", quality
+    if not complete and not degraded:
+        return False, f"变盘历史未达到极小降级门槛（{refreshed}/{expected}，覆盖率 {coverage_ratio:.1%} < 55.0%）：{'；'.join(failures)}", quality
     return True, '', quality
 
 
@@ -1050,6 +1056,34 @@ def extract_final_output(text):
         return stripped
     closing_index = stripped.rfind('</think>')
     return stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
+
+
+def validate_report_recommendation_consistency(report_text):
+    """Validate directional, line, odds, and EV consistency in analyst reports.
+
+    Returns (is_valid, warning_message).
+    """
+    body = extract_final_output(report_text)
+    if not body:
+        return True, ''
+
+    # Check for direct contradiction between EV analysis team preference vs recommendation team
+    # Example: text says "真实期望值在[客/下盘]" but recommendation says "【最佳价值切入】：[主队]"
+    ev_away_match = re.search(r'真实期望值在[：:\s]*(?:客队|客|下盘)', body)
+    ev_home_match = re.search(r'真实期望值在[：:\s]*(?:主队|主|上盘)', body)
+
+    rec_section = re.search(r'亚洲让球盘推荐.*?(?=总进球数|\Z)', body, re.DOTALL)
+    if rec_section:
+        rec_text = rec_section.group(0)
+        rec_home = bool(re.search(r'【最佳价值切入】[：:\s]*[^\n]*(?:主|主队)', rec_text))
+        rec_away = bool(re.search(r'【最佳价值切入】[：:\s]*[^\n]*(?:客|客队)', rec_text))
+
+        if ev_away_match and rec_home and not rec_away:
+            return False, "分析论证明确指出‘真实期望值在客队/下盘’，但 Asian 让球盘推荐项却切入‘主队’，存在方向倒置冲突"
+        if ev_home_match and rec_away and not rec_home:
+            return False, "分析论证明确指出‘真实期望值在主队/上盘’，但 Asian 让球盘推荐项却切入‘客队’，存在方向倒置冲突"
+
+    return True, ''
 
 
 def _market_snapshot_hash(details):
@@ -1177,6 +1211,34 @@ def _persist_analysis_trace(match_id, task_key, model_name, analysis_mode):
     return trace_path
 
 
+def _persist_preparation_failure_trace(match_id, stage, error, details=None, trend_quality=None):
+    """Persist an audit trace for details or odds preparation failure before AI starts."""
+    trace_id = f"prep_failed_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    payload = {
+        'trace_version': 1,
+        'trace_id': trace_id,
+        'match_id': str(match_id),
+        'status': 'failed',
+        'phase': f'preparation_{stage}',
+        'error': str(error),
+        'finished_at': time.time(),
+        'details_available': bool(details),
+        'trend_quality': trend_quality or {},
+    }
+    os.makedirs(ANALYSIS_TRACE_DIR, exist_ok=True)
+    trace_path = _analysis_trace_path(match_id, trace_id)
+    temp_path = f'{trace_path}.tmp'
+    try:
+        with open(temp_path, 'w', encoding='utf-8') as trace_file:
+            json.dump(payload, trace_file, ensure_ascii=False, indent=2)
+            trace_file.flush()
+            os.fsync(trace_file.fileno())
+        os.replace(temp_path, trace_path)
+        return trace_path
+    except OSError:
+        return None
+
+
 def _persist_latest_batch_state(batch_id):
     """Persist the latest batch so a browser refresh can restore its progress view."""
     with _batch_ai_tasks_lock:
@@ -1229,10 +1291,14 @@ def _load_ai_runtime_config():
     system_prompt = ""
     tracking_cohorts = []
     active_tracking_cohort = DEFAULT_TRACKING_COHORT_ID
+    env_api_key = os.environ.get('LINSHU_AI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+    if env_api_key:
+        api_key = env_api_key.strip()
     if os.path.exists(CONFIG_FILE):
         try:
             cfg = _read_config_file()
-            api_key = cfg.get('api_key', '')
+            if not api_key:
+                api_key = cfg.get('api_key', '')
             api_base = cfg.get('api_base', api_base)
             model_name = cfg.get('model_name', model_name)
             tracking_cohorts, active_tracking_cohort = _tracking_cohort_state(cfg)
@@ -1641,6 +1707,7 @@ def _prepare_batch_item(batch_id, item):
         item['match_id'], item['home_team'], item['away_team'], force_refresh=True
     )
     if not success:
+        _persist_preparation_failure_trace(item['match_id'], 'details', error)
         return False, error, None, None
     with _batch_ai_tasks_lock:
         item['status'] = 'preparing'
@@ -1658,6 +1725,7 @@ def _prepare_batch_item(batch_id, item):
         details, _build_probability_baseline(details, item['home_team'], item['away_team'])
     )
     if not trends_ok:
+        _persist_preparation_failure_trace(item['match_id'], 'trend', trend_error, details=details, trend_quality=trend_quality)
         return False, trend_error, None, snapshot
     with _batch_ai_tasks_lock:
         item['status'] = 'validating'

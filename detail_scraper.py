@@ -221,16 +221,31 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
             except:
                 pass
             
-            # 2. 内部重试时，强行把刚刚算出来的 Cookie 写入 Header，确保重试绝对携带 Cookie
-            log_odds(f"fetch_html_with_bypass: Retrying request to {real_url} with new acw_sc__v2 WAF cookie...")
+            # 2. 内部重试时，自动在 URL 后挂载 alichlgref 参数（模拟阿里云 WAF reload 行为），并附带 acw_sc__v2 Cookie
+            ref_param = urllib.parse.quote(use_headers.get('Referer', 'https://m.leisu.com/'))
+            retry_url = f"{real_url}&alichlgref={ref_param}" if '?' in real_url else f"{real_url}?alichlgref={ref_param}"
+            log_odds(f"fetch_html_with_bypass: Retrying request to {retry_url} with new acw_sc__v2 WAF cookie...")
             use_headers['Cookie'] = f"acw_sc__v2={cookie_val}"
-            req2 = urllib.request.Request(real_url, headers=use_headers)
+            req2 = urllib.request.Request(retry_url, headers=use_headers)
             with opener.open(req2, timeout=10) as response2:
                 content_bytes2 = response2.read()
                 if response2.info().get('Content-Encoding') == 'gzip':
                     content_bytes2 = zlib.decompress(content_bytes2, 15 + 32)
                 html = content_bytes2.decode('utf-8')
                 log_odds(f"fetch_html_with_bypass: Retry successful! HTML length: {len(html)}")
+                if 'renderData' in html:
+                    log_odds(f"fetch_html_with_bypass: Secondary WAF challenge detected in retry response! Clearing cookie and retrying Node solver...")
+                    cj.clear()
+                    cookie_val2 = solve_waf_via_node(html, retry_url, user_agent)
+                    if cookie_val2:
+                        use_headers['Cookie'] = f"acw_sc__v2={cookie_val2}"
+                        req3 = urllib.request.Request(retry_url, headers=use_headers)
+                        with opener.open(req3, timeout=10) as response3:
+                            content_bytes3 = response3.read()
+                            if response3.info().get('Content-Encoding') == 'gzip':
+                                content_bytes3 = zlib.decompress(content_bytes3, 15 + 32)
+                            html = content_bytes3.decode('utf-8')
+                            log_odds(f"fetch_html_with_bypass: Secondary retry completed! HTML length: {len(html)}")
                 
         return html
     except Exception as e:
@@ -1163,7 +1178,7 @@ console.log(encrypt('{payload_str}'));
             except Exception as first_err:
                 print(f"[get_real_odds] First attempt for match {match_id} failed ({first_err}), retrying with WAF Node solver...")
                 try:
-                    solve_waf_via_node(url_api, host_name, cj)
+                    cj.clear()
                     html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
                     res_json = json.loads(html)
                 except Exception as retry_err:
@@ -1690,8 +1705,8 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         'sec-fetch-site': 'same-site'
     }
     
-    cj = GLOBAL_CJ
-    opener = GLOBAL_OPENER
+    cj = GLOBAL_ODDS_CJ
+    opener = GLOBAL_ODDS_OPENER
     
     # 从 session_cookies.json 里把高级指纹 Cookie 导入到 GLOBAL_CJ 里（实现 Cookie 物理合并共享！）
     cookie_file = os.path.join(os.path.dirname(__file__), 'session_cookies.json')
@@ -1864,8 +1879,12 @@ def get_odds_detail_via_html_pure(match_id, cid, type_val):
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
         if is_waf_challenge_response(html):
-            log_odds(f"get_odds_detail_via_html_pure: WAF challenge persisted for match={match_id}, cid={cid}, type={type_val}")
-            return {"error": "WAF challenge response persisted; no trend table returned"}
+            log_odds(f"get_odds_detail_via_html_pure: WAF challenge persisted for match={match_id}, cid={cid}, type={type_val}, clearing GLOBAL_ODDS_CJ and retrying once...")
+            GLOBAL_ODDS_CJ.clear()
+            html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
+            if is_waf_challenge_response(html):
+                log_odds(f"get_odds_detail_via_html_pure: WAF challenge STILL persisted for match={match_id}, cid={cid}, type={type_val}")
+                return {"error": "WAF challenge response persisted; no trend table returned"}
         return parse_trend_html_data(html, type_val)
     except Exception as e:
         log_odds(f"Pure HTML Scraper Error: {e}")

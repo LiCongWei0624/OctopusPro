@@ -43,8 +43,8 @@ class BatchTrendHistoryTests(unittest.TestCase):
                  patch.object(app, 'get_odds_detail_via_playwright', side_effect=fetch):
                 ok, error, quality = app._refresh_required_trend_history('101', odds_index)
 
-            self.assertFalse(ok)
-            self.assertIn('B大小球', error)
+            self.assertTrue(ok, "3/4 (75% >= 55%) 应当满足降级分析门禁允许通过")
+            self.assertTrue(quality['degraded'])
             self.assertEqual(quality['refreshed'], 3)
             self.assertEqual(len(quality['failures']), 1)
             self.assertFalse(quality['complete'])
