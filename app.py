@@ -31,7 +31,9 @@ AI_ANALYSIS_CACHE_VERSION = 6
 STRATEGY_VERSION = 'dual-market-v2'
 MAX_BATCH_ANALYSIS_SIZE = 6
 BATCH_CONCURRENT_MATCHES = 6
-BATCH_DETAIL_CONCURRENCY = 2
+# Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
+# time so a multi-match batch cannot multiply requests against that shared host.
+BATCH_DETAIL_CONCURRENCY = 1
 AI_VERSION_TIMEOUT_SECONDS = 100
 CRO_TIMEOUT_SECONDS = 100
 BATCH_MATCH_TIMEOUT_SECONDS = 360
@@ -40,18 +42,22 @@ MIN_REQUIRED_ODDS_COMPANIES = 1
 RECOMMENDED_ODDS_COMPANIES = 6
 TREND_MARKETS = {"1": "让球", "3": "大小球"}
 TREND_FETCH_MAX_ATTEMPTS = 3
-TREND_FETCH_RETRY_DELAY_SECONDS = 1
+TREND_FETCH_RETRY_DELAY_SECONDS = 3
+TREND_REQUEST_MIN_INTERVAL_SECONDS = 0.8
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
 TERMINAL_STATUSES = {8, 9, 11, 12}
 PREDICTION_DB_FILE = os.path.join(os.path.dirname(__file__), 'prediction_history.sqlite3')
 BATCH_STATE_FILE = os.path.join(CACHE_DIR, 'latest_batch_ai_state.json')
+ANALYSIS_TRACE_DIR = os.path.join(CACHE_DIR, 'analysis_traces')
 LIVE_DETAILS_CACHE_TTL_SECONDS = 90
 
 # Detail scraping shares the upstream anti-bot session. Keep this limiter global
 # so a batch cannot accidentally turn six fixtures into a WAF burst.
 _detail_prepare_semaphore = threading.BoundedSemaphore(BATCH_DETAIL_CONCURRENCY)
+_trend_request_lock = threading.Lock()
+_trend_next_request_at = 0.0
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -912,6 +918,19 @@ def _valid_trend_history(candidate):
     )
 
 
+def _fetch_trend_with_global_pacing(match_id, cid, type_val):
+    """Serialize WAF-protected odds calls across all batch workers."""
+    global _trend_next_request_at
+    with _trend_request_lock:
+        delay = _trend_next_request_at - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        try:
+            return get_odds_detail_via_playwright(match_id, cid, type_val)
+        finally:
+            _trend_next_request_at = time.monotonic() + TREND_REQUEST_MIN_INTERVAL_SECONDS
+
+
 def _refresh_required_trend_history(match_id, odds_index):
     """Fetch fresh handicap and totals trends for every company in this fixture.
 
@@ -947,7 +966,7 @@ def _refresh_required_trend_history(match_id, odds_index):
             last_error = ''
             for attempt in range(1, TREND_FETCH_MAX_ATTEMPTS + 1):
                 try:
-                    candidate = get_odds_detail_via_playwright(match_id, cid, type_val)
+                    candidate = _fetch_trend_with_global_pacing(match_id, cid, type_val)
                 except Exception as error:
                     candidate = None
                     last_error = str(error)
@@ -957,7 +976,7 @@ def _refresh_required_trend_history(match_id, odds_index):
                         break
                     last_error = candidate.get('error', '返回为空') if isinstance(candidate, dict) else '返回为空'
                 if attempt < TREND_FETCH_MAX_ATTEMPTS:
-                    time.sleep(TREND_FETCH_RETRY_DELAY_SECONDS)
+                    time.sleep(TREND_FETCH_RETRY_DELAY_SECONDS * attempt)
 
             if data is None:
                 failures.append(
@@ -1037,6 +1056,49 @@ batch_ai_tasks = {}
 _batch_ai_tasks_lock = threading.RLock()
 
 import concurrent.futures
+
+
+def _analysis_trace_path(match_id, trace_id):
+    return os.path.join(ANALYSIS_TRACE_DIR, f'{match_id}_{trace_id}.json')
+
+
+def _persist_analysis_trace(match_id, task_key, model_name, analysis_mode):
+    """Persist inspectable model I/O for both successful and failed runs.
+
+    The trace intentionally excludes HTTP headers and API keys. It stores only
+    prompts, provider-returned reasoning/content, timestamps, and errors.
+    """
+    task = ai_tasks.get(task_key, {})
+    trace_id = task.get('trace_id')
+    if not trace_id:
+        return None
+    payload = {
+        'trace_version': 1,
+        'trace_id': trace_id,
+        'match_id': str(match_id),
+        'analysis_mode': analysis_mode,
+        'model_name': model_name,
+        'status': task.get('status', 'unknown'),
+        'phase': task.get('phase', 'ai'),
+        'error': task.get('error', ''),
+        'started_at': task.get('started_at'),
+        'finished_at': time.time(),
+        'snapshot_hash': task.get('snapshot_hash', ''),
+        'analysis_input': task.get('analysis_input', ''),
+        'analyst_inputs': task.get('analyst_inputs', []),
+        'analyst_outputs': task.get('analyst_outputs', []),
+        'cro_input': task.get('cro_input'),
+        'cro_output': task.get('cro_output'),
+    }
+    os.makedirs(ANALYSIS_TRACE_DIR, exist_ok=True)
+    trace_path = _analysis_trace_path(match_id, trace_id)
+    temp_path = f'{trace_path}.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as trace_file:
+        json.dump(payload, trace_file, ensure_ascii=False, indent=2)
+        trace_file.flush()
+        os.fsync(trace_file.fileno())
+    os.replace(temp_path, trace_path)
+    return trace_path
 
 
 def _persist_latest_batch_state(batch_id):
@@ -2563,6 +2625,13 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             'messages': payload['messages'],
             'temperature': payload['temperature'],
         }
+        ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[version_idx] = {
+            'version': version_idx + 1,
+            'status': 'streaming',
+            'reasoning': '',
+            'content': '',
+            'started_at': time.time(),
+        }
     
     import requests
     r = requests.post(url, headers=headers, json=payload, timeout=AI_VERSION_TIMEOUT_SECONDS, stream=True)
@@ -2578,6 +2647,8 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         
     ai_output = ""
     in_reasoning = False
+    reasoning_output = ""
+    content_output = ""
     
     for line in r.iter_lines():
         if not line:
@@ -2599,12 +2670,14 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                         ai_output += "<think>\n"
                         in_reasoning = True
                     ai_output += reasoning
+                    reasoning_output += reasoning
                 else:
                     if in_reasoning:
                         ai_output += "\n</think>\n"
                         in_reasoning = False
                     if content:
                         ai_output += content
+                        content_output += content
                         
                 if ai_tasks.get(task_key, {}).get('status') == 'processing':
                     ai_tasks[task_key]['reports'][version_idx] = ai_output
@@ -2615,6 +2688,15 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         ai_output += "\n</think>\n"
         if ai_tasks.get(task_key, {}).get('status') == 'processing':
             ai_tasks[task_key]['reports'][version_idx] = ai_output
+
+    if task_key in ai_tasks:
+        ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[version_idx] = {
+            'version': version_idx + 1,
+            'status': 'completed',
+            'reasoning': reasoning_output,
+            'content': content_output,
+            'completed_at': time.time(),
+        }
         
     return ai_output
 
@@ -2643,6 +2725,12 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             'messages': payload['messages'],
             'temperature': payload['temperature'],
         }
+        ai_tasks[task_key]['cro_output'] = {
+            'status': 'streaming',
+            'reasoning': '',
+            'content': '',
+            'started_at': time.time(),
+        }
     import requests
     r = requests.post(url, headers=headers, json=payload, timeout=CRO_TIMEOUT_SECONDS, stream=True)
     if r.status_code != 200:
@@ -2657,6 +2745,8 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         
     ai_output = ""
     in_reasoning = False
+    reasoning_output = ""
+    content_output = ""
     for line in r.iter_lines():
         if not line:
             continue
@@ -2677,12 +2767,14 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
                         ai_output += "<think>\n"
                         in_reasoning = True
                     ai_output += reasoning
+                    reasoning_output += reasoning
                 else:
                     if in_reasoning:
                         ai_output += "\n</think>\n"
                         in_reasoning = False
                     if content:
                         ai_output += content
+                        content_output += content
                         
                 if ai_tasks.get(task_key, {}).get('status') == 'processing':
                     ai_tasks[task_key]['final_ticket'] = ai_output
@@ -2693,6 +2785,14 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         ai_output += "\n</think>\n"
         if ai_tasks.get(task_key, {}).get('status') == 'processing':
             ai_tasks[task_key]['final_ticket'] = ai_output
+
+    if task_key in ai_tasks:
+        ai_tasks[task_key]['cro_output'] = {
+            'status': 'completed',
+            'reasoning': reasoning_output,
+            'content': content_output,
+            'completed_at': time.time(),
+        }
         
     return ai_output
 
@@ -2706,10 +2806,14 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
             'status_list': ['processing', 'processing', 'processing'],
             'final_ticket': '',
             'analyst_inputs': [None, None, None],
+            'analyst_outputs': [None, None, None],
             'cro_input': None,
+            'cro_output': None,
             'started_at': time.time(),
             'heartbeat_at': time.time(),
             'snapshot_hash': (snapshot or {}).get('hash', ''),
+            'analysis_input': context_str,
+            'trace_id': uuid.uuid4().hex,
         }
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
@@ -2731,6 +2835,14 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                     sub_errors.append(str(sub_e))
                     ai_tasks[task_key]['status_list'][idx] = 'failed'
                     ai_tasks[task_key]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+                    ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[idx] = {
+                        'version': idx + 1,
+                        'status': 'failed',
+                        'reasoning': '',
+                        'content': '',
+                        'error': str(sub_e),
+                        'completed_at': time.time(),
+                    }
                     ai_tasks[task_key]['heartbeat_at'] = time.time()
         
         # 判断是否全都失败
@@ -2772,6 +2884,8 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                 'analysis_input': context_str,
                 'analyst_inputs': ai_tasks[task_key].get('analyst_inputs', []),
                 'cro_input': ai_tasks[task_key].get('cro_input'),
+                'trace_id': ai_tasks[task_key].get('trace_id'),
+                'trace_path': _analysis_trace_path(match_id, ai_tasks[task_key].get('trace_id')),
                 'snapshot_hash': (snapshot or {}).get('hash', ''),
                 'snapshot_captured_at': (snapshot or {}).get('captured_at', ''),
             }, cache_f, ensure_ascii=False, indent=2)
@@ -2800,7 +2914,20 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                 'final_ticket': existing.get('final_ticket', ''),
                 'phase': existing.get('phase', 'ai'),
                 'heartbeat_at': time.time(),
+                'started_at': existing.get('started_at'),
+                'snapshot_hash': existing.get('snapshot_hash', ''),
+                'analysis_input': existing.get('analysis_input', context_str),
+                'analyst_inputs': existing.get('analyst_inputs', [None, None, None]),
+                'analyst_outputs': existing.get('analyst_outputs', [None, None, None]),
+                'cro_input': existing.get('cro_input'),
+                'cro_output': existing.get('cro_output'),
+                'trace_id': existing.get('trace_id'),
             }
+    finally:
+        try:
+            _persist_analysis_trace(match_id, task_key, model_name, analysis_mode)
+        except Exception as trace_error:
+            print(f"Analysis trace persistence failed for match {match_id}: {trace_error}")
 
 @app.route('/api/match_ai_analysis', methods=['POST'])
 def match_ai_analysis():
