@@ -104,6 +104,8 @@ function checkAndLoadCachedReport(matchId) {
             if (res.success && (res.reports || res.text) && report) {
                 latestFinalTicket = res.final_ticket || '';
                 renderFullMarkdownReport(res.reports || res.text);
+            } else if (res.success && res.cache_state === 'stale' && report) {
+                report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">赔率快照已更新或报告已过期。请生成新的 AI 深度研判报告。</p>`;
             } else if (report) {
                 report.innerHTML = `<p style="color:var(--text-muted); font-style:italic;">请点击上方“一键生成 AI 深度研判报告”按钮启动分析。您也可以点击导航栏右上角的“AI配置”配置 API 密钥。</p>`;
             }

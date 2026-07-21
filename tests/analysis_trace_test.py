@@ -20,6 +20,8 @@ class AnalysisTraceTests(unittest.TestCase):
             'analysis_input': 'fixture context',
             'analyst_inputs': [{'messages': [{'role': 'user', 'content': 'prompt'}]}],
             'analyst_outputs': [{'status': 'failed', 'reasoning': 'checked data', 'content': '', 'error': 'timeout'}],
+            'reports': ['visible analyst report'],
+            'final_ticket': 'visible final report',
             'cro_input': None,
             'cro_output': None,
         }
@@ -33,7 +35,10 @@ class AnalysisTraceTests(unittest.TestCase):
 
             self.assertEqual(trace['status'], 'failed')
             self.assertEqual(trace['analysis_input'], 'fixture context')
-            self.assertEqual(trace['analyst_outputs'][0]['reasoning'], 'checked data')
+            self.assertNotIn('reasoning', trace['analyst_outputs'][0])
+            self.assertTrue(trace['analyst_outputs'][0]['reasoning_omitted'])
+            self.assertEqual(trace['analyst_reports'], ['visible analyst report'])
+            self.assertEqual(trace['final_report'], 'visible final report')
             self.assertNotIn('api_key', json.dumps(trace))
             self.assertNotIn('Authorization', json.dumps(trace))
         finally:

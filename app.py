@@ -4,6 +4,7 @@ import json
 import os
 import datetime
 import hashlib
+import functools
 import math
 import re
 import tempfile
@@ -27,17 +28,22 @@ def add_no_cache_headers(response):
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
-AI_ANALYSIS_CACHE_VERSION = 6
+AI_ANALYSIS_CACHE_VERSION = 7
 STRATEGY_VERSION = 'dual-market-v2'
 MAX_BATCH_ANALYSIS_SIZE = 6
 BATCH_CONCURRENT_MATCHES = 6
 # Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
 # time so a multi-match batch cannot multiply requests against that shared host.
 BATCH_DETAIL_CONCURRENCY = 1
-AI_VERSION_TIMEOUT_SECONDS = 100
-CRO_TIMEOUT_SECONDS = 100
-BATCH_MATCH_TIMEOUT_SECONDS = 360
-BATCH_HEARTBEAT_TIMEOUT_SECONDS = 420
+AI_VERSION_TIMEOUT_SECONDS = 300
+CRO_TIMEOUT_SECONDS = 240
+MODEL_CONNECT_TIMEOUT_SECONDS = 30
+MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
+MODEL_REQUEST_CONCURRENCY = 3
+MODEL_REQUEST_MAX_ATTEMPTS = 2
+MODEL_REQUEST_RETRY_DELAY_SECONDS = 1.5
+BATCH_MATCH_TIMEOUT_SECONDS = 5400
+BATCH_HEARTBEAT_TIMEOUT_SECONDS = 5700
 MIN_REQUIRED_ODDS_COMPANIES = 1
 RECOMMENDED_ODDS_COMPANIES = 6
 TREND_MARKETS = {"1": "让球", "3": "大小球"}
@@ -52,12 +58,14 @@ PREDICTION_DB_FILE = os.path.join(os.path.dirname(__file__), 'prediction_history
 BATCH_STATE_FILE = os.path.join(CACHE_DIR, 'latest_batch_ai_state.json')
 ANALYSIS_TRACE_DIR = os.path.join(CACHE_DIR, 'analysis_traces')
 LIVE_DETAILS_CACHE_TTL_SECONDS = 90
+PREMATCH_AI_CACHE_TTL_SECONDS = 90
 
 # Detail scraping shares the upstream anti-bot session. Keep this limiter global
 # so a batch cannot accidentally turn six fixtures into a WAF burst.
 _detail_prepare_semaphore = threading.BoundedSemaphore(BATCH_DETAIL_CONCURRENCY)
 _trend_request_lock = threading.Lock()
 _trend_next_request_at = 0.0
+_model_request_semaphore = threading.BoundedSemaphore(MODEL_REQUEST_CONCURRENCY)
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -773,6 +781,7 @@ def get_match_details():
         # a successful detail result.
         if not details.get('odds_index'):
             details['odds_index'] = get_real_odds(match_id)
+        _invalidate_ai_cache_if_market_changed(match_id, details)
         with open(cache_file, 'w', encoding='utf-8') as f:
             json.dump(details, f, ensure_ascii=False, indent=2)
         return jsonify({'success': True, 'data': details})
@@ -928,7 +937,8 @@ def _fetch_trend_with_global_pacing(match_id, cid, type_val):
         try:
             return get_odds_detail_via_playwright(match_id, cid, type_val)
         finally:
-            _trend_next_request_at = time.monotonic() + TREND_REQUEST_MIN_INTERVAL_SECONDS
+            import random
+            _trend_next_request_at = time.monotonic() + TREND_REQUEST_MIN_INTERVAL_SECONDS + random.uniform(0.1, 0.3)
 
 
 def _refresh_required_trend_history(match_id, odds_index):
@@ -1042,6 +1052,60 @@ def extract_final_output(text):
     return stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
 
 
+def _market_snapshot_hash(details):
+    """Hash the current odds snapshot so refreshed markets invalidate old reports."""
+    payload = (details or {}).get('odds_index', []) if isinstance(details, dict) else []
+    if isinstance(payload, list):
+        payload = sorted(
+            payload,
+            key=lambda row: (str(row.get('cid', '')), str(row.get('company', '')))
+            if isinstance(row, dict) else str(row),
+        )
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+
+def _is_reusable_analysis_cache(cache_data, analysis_mode, now=None):
+    """Only a recent pre-match report may be shown without a fresh snapshot."""
+    if not isinstance(cache_data, dict):
+        return False
+    if analysis_mode != 'prematch':
+        return False
+    if (
+        cache_data.get('analysis_version') != AI_ANALYSIS_CACHE_VERSION
+        or cache_data.get('analysis_mode') != analysis_mode
+        or not cache_data.get('snapshot_hash')
+        or not cache_data.get('market_snapshot_hash')
+        or not is_complete_analysis_cache(cache_data)
+    ):
+        return False
+    try:
+        captured_at = datetime.datetime.fromisoformat(cache_data['snapshot_captured_at'])
+    except (KeyError, TypeError, ValueError):
+        return False
+    age = (now or datetime.datetime.now()) - captured_at
+    return datetime.timedelta(0) <= age <= datetime.timedelta(seconds=PREMATCH_AI_CACHE_TTL_SECONDS)
+
+
+def _invalidate_ai_cache_if_market_changed(match_id, details):
+    """Discard a report when a refreshed detail response carries new odds."""
+    cache_path = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+    if not os.path.exists(cache_path):
+        return False
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as cache_file:
+            cache_data = json.load(cache_file)
+        if cache_data.get('market_snapshot_hash') == _market_snapshot_hash(details):
+            return False
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    try:
+        os.remove(cache_path)
+        return True
+    except OSError:
+        return False
+
+
 def is_complete_analysis_cache(cache_data):
     reports = cache_data.get('reports') if isinstance(cache_data, dict) else None
     return (
@@ -1065,19 +1129,29 @@ def _analysis_trace_path(match_id, trace_id):
 def _persist_analysis_trace(match_id, task_key, model_name, analysis_mode):
     """Persist inspectable model I/O for both successful and failed runs.
 
-    The trace intentionally excludes HTTP headers and API keys. It stores only
-    prompts, provider-returned reasoning/content, timestamps, and errors.
+    The trace excludes HTTP headers, API keys, and raw reasoning. It stores
+    prompts, visible report content, timestamps, and errors.
     """
     task = ai_tasks.get(task_key, {})
     trace_id = task.get('trace_id')
     if not trace_id:
         return None
+    def audit_output(output):
+        """Keep visible answers for review without retaining raw model reasoning."""
+        if not isinstance(output, dict):
+            return output
+        audit = dict(output)
+        if audit.pop('reasoning', ''):
+            audit['reasoning_omitted'] = True
+        return audit
+
     payload = {
         'trace_version': 1,
         'trace_id': trace_id,
         'match_id': str(match_id),
         'analysis_mode': analysis_mode,
         'model_name': model_name,
+        'output_capture': 'visible-content-only',
         'status': task.get('status', 'unknown'),
         'phase': task.get('phase', 'ai'),
         'error': task.get('error', ''),
@@ -1086,9 +1160,11 @@ def _persist_analysis_trace(match_id, task_key, model_name, analysis_mode):
         'snapshot_hash': task.get('snapshot_hash', ''),
         'analysis_input': task.get('analysis_input', ''),
         'analyst_inputs': task.get('analyst_inputs', []),
-        'analyst_outputs': task.get('analyst_outputs', []),
+        'analyst_outputs': [audit_output(output) for output in task.get('analyst_outputs', [])],
+        'analyst_reports': [extract_final_output(report) for report in task.get('reports', [])],
         'cro_input': task.get('cro_input'),
-        'cro_output': task.get('cro_output'),
+        'cro_output': audit_output(task.get('cro_output')),
+        'final_report': extract_final_output(task.get('final_ticket', '')),
     }
     os.makedirs(ANALYSIS_TRACE_DIR, exist_ok=True)
     trace_path = _analysis_trace_path(match_id, trace_id)
@@ -1252,6 +1328,7 @@ def _prepare_analysis_snapshot(match_id, home, away, force_refresh=True):
         'match_id': str(match_id),
         'quality': quality,
         'details': details,
+        'market_hash': _market_snapshot_hash(details),
     }
     snapshot_payload = json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=str)
     snapshot['hash'] = hashlib.sha256(snapshot_payload.encode('utf-8')).hexdigest()
@@ -1271,12 +1348,7 @@ def _has_reusable_prematch_cache(match_id):
     try:
         with open(ai_cache_file, 'r', encoding='utf-8') as f:
             cache_data = json.load(f)
-        return (
-            cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION
-            and cache_data.get('analysis_mode') == 'prematch'
-            and bool(cache_data.get('snapshot_hash'))
-            and is_complete_analysis_cache(cache_data)
-        )
+        return _is_reusable_analysis_cache(cache_data, 'prematch')
     except Exception:
         return False
 
@@ -1505,9 +1577,12 @@ def _run_batch_cro_retry(batch_id, match_id, task_key, runtime_config):
         ai_tasks[task_key]['phase'] = 'cro'
         ai_tasks[task_key]['status'] = 'processing'
         ai_tasks[task_key]['heartbeat_at'] = time.time()
-        final_ticket = run_cro_aggregation(
-            match_id, runtime_config['api_base'], runtime_config['api_key'],
-            runtime_config['model_name'], combined_reports, task_key,
+        final_ticket = _retry_model_operation(
+            lambda: run_cro_aggregation(
+                match_id, runtime_config['api_base'], runtime_config['api_key'],
+                runtime_config['model_name'], combined_reports, task_key,
+            ),
+            lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('final_ticket', ''))),
         )
         if not has_final_output(final_ticket):
             raise ValueError('CRO 未返回最终执行预测。')
@@ -1526,6 +1601,7 @@ def _run_batch_cro_retry(batch_id, match_id, task_key, runtime_config):
                     'reports': reports,
                     'final_ticket': final_ticket,
                     'snapshot_hash': item.get('snapshot_hash', ''),
+                    'market_snapshot_hash': item.get('market_snapshot_hash', ''),
                     'snapshot_captured_at': item.get('snapshot_captured_at', ''),
                 }, cache_file, ensure_ascii=False, indent=2)
             item['status'] = 'completed'
@@ -1571,6 +1647,7 @@ def _prepare_batch_item(batch_id, item):
         item['prepare_phase'] = f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
         item['data_quality'] = snapshot.get('quality', {})
         item['snapshot_hash'] = snapshot.get('hash', '')
+        item['market_snapshot_hash'] = snapshot.get('market_hash', '')
         item['snapshot_captured_at'] = snapshot.get('captured_at', '')
         item['heartbeat_at'] = time.time()
     trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
@@ -2598,6 +2675,36 @@ _VERSION_PERSPECTIVES = [
     "找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
 ]
 
+
+def _with_model_request_slot(function):
+    """Limit simultaneous provider streams across all single and batch tasks."""
+    @functools.wraps(function)
+    def wrapped(*args, **kwargs):
+        with _model_request_semaphore:
+            return function(*args, **kwargs)
+    return wrapped
+
+
+def _retry_model_operation(operation, has_visible_output):
+    """Retry transient provider failures only when no report text was received."""
+    import requests
+
+    retryable_errors = (
+        TimeoutError,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.ReadTimeout,
+        requests.exceptions.SSLError,
+    )
+    for attempt in range(1, MODEL_REQUEST_MAX_ATTEMPTS + 1):
+        try:
+            return operation()
+        except retryable_errors:
+            if has_visible_output() or attempt == MODEL_REQUEST_MAX_ATTEMPTS:
+                raise
+            time.sleep(MODEL_REQUEST_RETRY_DELAY_SECONDS * attempt)
+
+
+@_with_model_request_slot
 def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key=None):
     global ai_tasks
     task_key = task_key or str(match_id)
@@ -2631,14 +2738,23 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             'reasoning': '',
             'content': '',
             'started_at': time.time(),
+            'first_event_at': None,
+            'first_visible_content_at': None,
+            'reasoning_received': False,
         }
     
     import requests
-    r = requests.post(url, headers=headers, json=payload, timeout=AI_VERSION_TIMEOUT_SECONDS, stream=True)
+    r = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
+        stream=True,
+    )
     if r.status_code != 200:
         err_text = ""
         try:
-            for line in r.iter_lines():
+            for line in r.iter_lines(chunk_size=1):
                 if line:
                     err_text += line.decode('utf-8')
         except:
@@ -2646,11 +2762,13 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
     ai_output = ""
-    in_reasoning = False
-    reasoning_output = ""
+    reasoning_omitted = False
     content_output = ""
+    stream_deadline = time.monotonic() + AI_VERSION_TIMEOUT_SECONDS
     
-    for line in r.iter_lines():
+    for line in r.iter_lines(chunk_size=1):
+        if time.monotonic() > stream_deadline:
+            raise TimeoutError(f'Analyst stream exceeded {AI_VERSION_TIMEOUT_SECONDS} seconds without completing')
         if not line:
             continue
         line_str = line.decode('utf-8').strip()
@@ -2664,42 +2782,45 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                 
                 reasoning = delta.get('reasoning_content', '')
                 content = delta.get('content', '')
+                output_state = ai_tasks.get(task_key, {}).get('analyst_outputs', [None, None, None])[version_idx]
+                if isinstance(output_state, dict):
+                    event_time = time.time()
+                    output_state['first_event_at'] = output_state.get('first_event_at') or event_time
+                    output_state['last_event_at'] = event_time
                 
                 if reasoning:
-                    if not in_reasoning:
-                        ai_output += "<think>\n"
-                        in_reasoning = True
-                    ai_output += reasoning
-                    reasoning_output += reasoning
-                else:
-                    if in_reasoning:
-                        ai_output += "\n</think>\n"
-                        in_reasoning = False
-                    if content:
-                        ai_output += content
-                        content_output += content
+                    reasoning_omitted = True
+                    if isinstance(output_state, dict):
+                        output_state['reasoning_received'] = True
+                if content:
+                    ai_output += content
+                    content_output += content
+                    if isinstance(output_state, dict):
+                        output_state['first_visible_content_at'] = output_state.get('first_visible_content_at') or event_time
+                        output_state['content'] = content_output
                         
                 if ai_tasks.get(task_key, {}).get('status') == 'processing':
                     ai_tasks[task_key]['reports'][version_idx] = ai_output
             except Exception:
                 pass
                 
-    if in_reasoning:
-        ai_output += "\n</think>\n"
-        if ai_tasks.get(task_key, {}).get('status') == 'processing':
-            ai_tasks[task_key]['reports'][version_idx] = ai_output
-
     if task_key in ai_tasks:
+        previous_output = ai_tasks[task_key].get('analyst_outputs', [None, None, None])[version_idx] or {}
         ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[version_idx] = {
             'version': version_idx + 1,
             'status': 'completed',
-            'reasoning': reasoning_output,
+            'reasoning': '',
+            'reasoning_omitted': reasoning_omitted,
             'content': content_output,
             'completed_at': time.time(),
+            'first_event_at': previous_output.get('first_event_at'),
+            'first_visible_content_at': previous_output.get('first_visible_content_at'),
+            'reasoning_received': previous_output.get('reasoning_received', False),
         }
         
     return ai_output
 
+@_with_model_request_slot
 def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key=None):
     global ai_tasks
     task_key = task_key or str(match_id)
@@ -2730,13 +2851,22 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             'reasoning': '',
             'content': '',
             'started_at': time.time(),
+            'first_event_at': None,
+            'first_visible_content_at': None,
+            'reasoning_received': False,
         }
     import requests
-    r = requests.post(url, headers=headers, json=payload, timeout=CRO_TIMEOUT_SECONDS, stream=True)
+    r = requests.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
+        stream=True,
+    )
     if r.status_code != 200:
         err_text = ""
         try:
-            for line in r.iter_lines():
+            for line in r.iter_lines(chunk_size=1):
                 if line:
                     err_text += line.decode('utf-8')
         except:
@@ -2744,10 +2874,12 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
     ai_output = ""
-    in_reasoning = False
-    reasoning_output = ""
+    reasoning_omitted = False
     content_output = ""
-    for line in r.iter_lines():
+    stream_deadline = time.monotonic() + CRO_TIMEOUT_SECONDS
+    for line in r.iter_lines(chunk_size=1):
+        if time.monotonic() > stream_deadline:
+            raise TimeoutError(f'CRO stream exceeded {CRO_TIMEOUT_SECONDS} seconds without completing')
         if not line:
             continue
         line_str = line.decode('utf-8').strip()
@@ -2761,37 +2893,39 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
                 
                 reasoning = delta.get('reasoning_content', '')
                 content = delta.get('content', '')
+                output_state = ai_tasks.get(task_key, {}).get('cro_output')
+                if isinstance(output_state, dict):
+                    event_time = time.time()
+                    output_state['first_event_at'] = output_state.get('first_event_at') or event_time
+                    output_state['last_event_at'] = event_time
                 
                 if reasoning:
-                    if not in_reasoning:
-                        ai_output += "<think>\n"
-                        in_reasoning = True
-                    ai_output += reasoning
-                    reasoning_output += reasoning
-                else:
-                    if in_reasoning:
-                        ai_output += "\n</think>\n"
-                        in_reasoning = False
-                    if content:
-                        ai_output += content
-                        content_output += content
+                    reasoning_omitted = True
+                    if isinstance(output_state, dict):
+                        output_state['reasoning_received'] = True
+                if content:
+                    ai_output += content
+                    content_output += content
+                    if isinstance(output_state, dict):
+                        output_state['first_visible_content_at'] = output_state.get('first_visible_content_at') or event_time
+                        output_state['content'] = content_output
                         
                 if ai_tasks.get(task_key, {}).get('status') == 'processing':
                     ai_tasks[task_key]['final_ticket'] = ai_output
             except Exception:
                 pass
                 
-    if in_reasoning:
-        ai_output += "\n</think>\n"
-        if ai_tasks.get(task_key, {}).get('status') == 'processing':
-            ai_tasks[task_key]['final_ticket'] = ai_output
-
     if task_key in ai_tasks:
+        previous_output = ai_tasks[task_key].get('cro_output') or {}
         ai_tasks[task_key]['cro_output'] = {
             'status': 'completed',
-            'reasoning': reasoning_output,
+            'reasoning': '',
+            'reasoning_omitted': reasoning_omitted,
             'content': content_output,
             'completed_at': time.time(),
+            'first_event_at': previous_output.get('first_event_at'),
+            'first_visible_content_at': previous_output.get('first_visible_content_at'),
+            'reasoning_received': previous_output.get('reasoning_received', False),
         }
         
     return ai_output
@@ -2816,11 +2950,20 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
             'trace_id': uuid.uuid4().hex,
         }
         
+        def run_version_with_retry(version_idx):
+            return _retry_model_operation(
+                lambda: run_single_version(
+                    version_idx, match_id, api_base, api_key, model_name,
+                    system_prompt, context_str, task_key,
+                ),
+                lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('reports', ['', '', ''])[version_idx])),
+            )
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
                 executor.submit(
-                    run_single_version, 
-                    i, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key
+                    run_version_with_retry,
+                    i,
                 ): i for i in range(3)
             }
             sub_errors = []
@@ -2835,13 +2978,17 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                     sub_errors.append(str(sub_e))
                     ai_tasks[task_key]['status_list'][idx] = 'failed'
                     ai_tasks[task_key]['reports'][idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+                    previous_output = ai_tasks[task_key].get('analyst_outputs', [None, None, None])[idx] or {}
                     ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[idx] = {
                         'version': idx + 1,
                         'status': 'failed',
                         'reasoning': '',
-                        'content': '',
+                        'content': previous_output.get('content', ''),
                         'error': str(sub_e),
                         'completed_at': time.time(),
+                        'first_event_at': previous_output.get('first_event_at'),
+                        'first_visible_content_at': previous_output.get('first_visible_content_at'),
+                        'reasoning_received': previous_output.get('reasoning_received', False),
                     }
                     ai_tasks[task_key]['heartbeat_at'] = time.time()
         
@@ -2867,7 +3014,10 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
         # 串行调用大模型进行收敛层聚合
         ai_tasks[task_key]['phase'] = 'cro'
         ai_tasks[task_key]['heartbeat_at'] = time.time()
-        final_ticket = run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key)
+        final_ticket = _retry_model_operation(
+            lambda: run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key),
+            lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('final_ticket', ''))),
+        )
         if not has_final_output(final_ticket):
             raise Exception("CRO 只返回了思考过程，未生成最终执行单。请重新生成。")
         if ai_tasks.get(task_key, {}).get('status') != 'processing':
@@ -2887,6 +3037,7 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
                 'trace_id': ai_tasks[task_key].get('trace_id'),
                 'trace_path': _analysis_trace_path(match_id, ai_tasks[task_key].get('trace_id')),
                 'snapshot_hash': (snapshot or {}).get('hash', ''),
+                'market_snapshot_hash': (snapshot or {}).get('market_hash', ''),
                 'snapshot_captured_at': (snapshot or {}).get('captured_at', ''),
             }, cache_f, ensure_ascii=False, indent=2)
 
@@ -2905,6 +3056,14 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
     except Exception as e:
         print(f"Background AI Thread error for match {match_id}: {e}")
         existing = ai_tasks.get(task_key, {})
+        if existing.get('phase') == 'cro' and isinstance(existing.get('cro_output'), dict):
+            if existing['cro_output'].get('status') == 'streaming':
+                existing['cro_output'] = {
+                    **existing['cro_output'],
+                    'status': 'failed',
+                    'error': str(e),
+                    'completed_at': time.time(),
+                }
         if existing.get('status') not in {'timed_out', 'cancelled'}:
             ai_tasks[task_key] = {
                 'status': 'failed',
@@ -2974,29 +3133,30 @@ def match_ai_analysis():
     
     # 2. 如果非强刷，优先命中缓存
     if not force:
+        cache_state = 'miss'
         if os.path.exists(ai_cache_file):
             try:
                 with open(ai_cache_file, 'r', encoding='utf-8') as f:
                     cache_data = json.load(f)
                 
-                cache_matches_mode = cache_data.get('analysis_mode') == analysis_mode
-                if cache_matches_mode and cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
+                if _is_reusable_analysis_cache(cache_data, analysis_mode):
                     return jsonify({
                         'success': True, 
                         'status': 'completed', 
                         'cached': True, 
-                        'live_snapshot': analysis_mode == 'live',
+                        'cache_state': 'fresh',
                         'reports': cache_data['reports'],
                         'final_ticket': cache_data.get('final_ticket', '')
                     })
-                if not is_complete_analysis_cache(cache_data):
-                    os.remove(ai_cache_file)
+                cache_state = 'stale'
+                os.remove(ai_cache_file)
             except Exception:
-                pass
+                cache_state = 'invalid'
         return jsonify({
             'success': True, 
             'status': 'idle', 
             'cached': False, 
+            'cache_state': cache_state,
             'reports': ['', '', ''],
             'final_ticket': ''
         })
@@ -3081,6 +3241,12 @@ def ai_analysis_status():
         return jsonify({'success': False, 'error': 'Missing match_id'})
         
     ai_cache_file = os.path.join(CACHE_DIR, f'ai_analysis_{match_id}.json')
+    _, matches_by_id = load_match_store()
+    match_meta = matches_by_id.get(str(match_id), {})
+    try:
+        status_mode = 'live' if int(match_meta.get('status', 1)) in LIVE_STATUSES else 'prematch'
+    except (TypeError, ValueError):
+        status_mode = 'prematch'
     
     # 优先检测有无物理缓存生成
     if os.path.exists(ai_cache_file):
@@ -3088,7 +3254,7 @@ def ai_analysis_status():
             with open(ai_cache_file, 'r', encoding='utf-8') as f:
                 cache_data = json.load(f)
             
-            if cache_data.get('analysis_version') == AI_ANALYSIS_CACHE_VERSION and is_complete_analysis_cache(cache_data):
+            if _is_reusable_analysis_cache(cache_data, status_mode):
                 return jsonify({
                     'success': True, 
                     'status': 'completed', 
@@ -3096,8 +3262,7 @@ def ai_analysis_status():
                     'final_ticket': cache_data.get('final_ticket', ''),
                     'status_list': ['completed', 'completed', 'completed']
                 })
-            if not is_complete_analysis_cache(cache_data):
-                os.remove(ai_cache_file)
+            os.remove(ai_cache_file)
         except Exception:
             pass
             

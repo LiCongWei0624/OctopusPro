@@ -55,6 +55,13 @@ def log_odds(msg):
     if len(ODDS_DEBUG_LOG) > 200:
         ODDS_DEBUG_LOG.pop(0)
 
+
+def is_waf_challenge_response(body):
+    """Identify an interstitial challenge page before it reaches data parsers."""
+    if not isinstance(body, str):
+        return False
+    return 'renderData' in body and ('aliyun_waf' in body or 'acw_sc__v2' in body)
+
 # 全局共享 WAF CookieJar 容器，免除每次点击比赛重复求解 WAF 的耗时与偶发失败风险
 GLOBAL_CJ = http.cookiejar.CookieJar()
 
@@ -1667,7 +1674,7 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         return {"error": "Failed to encrypt auth payload"}
         
     # 3. 构造请求与发送
-    url_api = f"https://api-gateway.leisu.com/v1/web/match/common/odds_detail?id={match_id}&cid={cid}&type={type_val}"
+    url_api = f"https://api-gateway.leisu.com/v1/web/match/common/odds_detail?match_id={match_id}&cid={cid}&type={type_val}"
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
@@ -1677,7 +1684,10 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         'Connection': 'keep-alive',
         'Origin': 'https://m.leisu.com',
         'source': source_val,
-        'Referer': f'https://m.leisu.com/match/detail/football/{match_id}'
+        'Referer': f'https://m.leisu.com/match/detail/football/{match_id}',
+        'sec-fetch-dest': 'empty',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-site': 'same-site'
     }
     
     cj = GLOBAL_CJ
@@ -1709,6 +1719,9 @@ def get_odds_detail_via_api(match_id, cid, type_val):
             
     try:
         html = fetch_html_with_bypass(url_api, host_name, opener, cj, headers=headers)
+        if is_waf_challenge_response(html):
+            log_odds(f"get_odds_detail_via_api: WAF challenge persisted for match={match_id}, cid={cid}, type={type_val}")
+            return {"error": "WAF challenge response persisted; no odds payload returned"}
         res_json = json.loads(html)
         
         if 'data' in res_json and res_json['data']:
@@ -1850,6 +1863,9 @@ def get_odds_detail_via_html_pure(match_id, cid, type_val):
     log_odds(f"Pure HTML Scraper: Fetching trend HTML via bypass: {url_target} ...")
     try:
         html = fetch_html_with_bypass(url_target, 'odds.leisu.com', GLOBAL_ODDS_OPENER, GLOBAL_ODDS_CJ, headers=headers)
+        if is_waf_challenge_response(html):
+            log_odds(f"get_odds_detail_via_html_pure: WAF challenge persisted for match={match_id}, cid={cid}, type={type_val}")
+            return {"error": "WAF challenge response persisted; no trend table returned"}
         return parse_trend_html_data(html, type_val)
     except Exception as e:
         log_odds(f"Pure HTML Scraper Error: {e}")
@@ -1865,25 +1881,29 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
     """
     last_error = None
     
-    # 1. 优先尝试直接用纯 H5 API 获取（共享已缓存 WAF Cookie，0.1秒级秒回）
-    try:
-        log_odds(f"get_odds_detail_via_playwright: Phase 1 (H5 API) starting for match={match_id}, cid={cid}, type={type_val}")
-        api_data = get_odds_detail_via_api(match_id, cid, type_val)
-        if isinstance(api_data, list) and len(api_data) > 0:
-            log_odds("Successfully fetched odds details via high performance H5 API!")
-            return api_data
-        elif isinstance(api_data, dict):
-            if 'error' not in api_data:
-                log_odds("Successfully fetched odds details via high performance H5 API (dict)!")
+    # 1. 优先尝试直接用纯 H5 API 获取（共享已缓存 WAF Cookie，0.1秒级秒回，含 1 次网络自愈重试）
+    for api_attempt in range(2):
+        try:
+            log_odds(f"get_odds_detail_via_playwright: Phase 1 (H5 API attempt {api_attempt+1}) starting for match={match_id}, cid={cid}, type={type_val}")
+            api_data = get_odds_detail_via_api(match_id, cid, type_val)
+            if isinstance(api_data, list) and len(api_data) > 0:
+                log_odds("Successfully fetched odds details via high performance H5 API!")
                 return api_data
+            elif isinstance(api_data, dict):
+                if 'error' not in api_data:
+                    log_odds("Successfully fetched odds details via high performance H5 API (dict)!")
+                    return api_data
+                else:
+                    last_error = api_data['error']
+                    log_odds(f"H5 API approach returned error: {last_error}.")
             else:
-                last_error = api_data['error']
-                log_odds(f"H5 API approach returned error: {last_error}. Falling back to HTML Scraper...")
-        else:
-            log_odds(f"H5 API approach returned empty or non-dict. Falling back to HTML Scraper...")
-    except Exception as e_api:
-        last_error = str(e_api)
-        log_odds(f"H5 API approach exception: {e_api}. Falling back to HTML Scraper...")
+                log_odds(f"H5 API approach returned empty or non-dict.")
+        except Exception as e_api:
+            last_error = str(e_api)
+            log_odds(f"H5 API approach exception: {e_api}.")
+
+        if api_attempt == 0:
+            time.sleep(0.3)
 
     # 2. 第二优先：使用高效率纯 Python + HTML 静态走势页解析与 AES 本地解密
     try:
@@ -1893,6 +1913,8 @@ def get_odds_detail_via_playwright(match_id, cid, type_val):
             log_odds("Successfully fetched odds details via high performance Pure HTML Scraper!")
             return pure_html_data
         else:
+            if isinstance(pure_html_data, dict) and pure_html_data.get('error'):
+                last_error = pure_html_data['error']
             log_odds("Pure HTML Scraper returned empty or failed.")
             if not last_error:
                 last_error = "静态页面解析返回空或失败"
