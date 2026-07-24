@@ -1,10 +1,28 @@
 const fs = require('fs');
 const vm = require('vm');
 
+function extractJSON(str) {
+    // renderData may contain JavaScript: var requestInfo = {...};
+    // Extract the JSON object part
+    const braceMatch = str.match(/\{[\s\S]*\}/);
+    if (braceMatch) return braceMatch[0];
+    return str;
+}
+
 function solveWaf(html) {
     const renderDataMatch = html.match(/<textarea id="renderData"[^>]*>([\s\S]*?)<\/textarea>/);
     if (!renderDataMatch) return null;
-    const renderDataStr = renderDataMatch[1];
+    let renderDataStr = renderDataMatch[1];
+    // If renderData is JS (var requestInfo = {...};), extract the JSON part
+    const jsonStr = extractJSON(renderDataStr);
+    let renderDataObj;
+    try {
+        renderDataObj = JSON.parse(jsonStr);
+    } catch (e) {
+        // If JSON parsing still fails, try stripping JS prefix
+        console.error('renderData JSON parse error, raw:', renderDataStr.substring(0, 100));
+        return null;
+    }
     
     const wafTextareaMatch = html.match(/<textarea name="aliyunwaf_[^"]+" style="display:none">([\s\S]*?)<\/textarea>/);
     const wafTextareaContent = wafTextareaMatch ? wafTextareaMatch[1] : '';
@@ -65,8 +83,8 @@ function solveWaf(html) {
             if (prop === 'setInterval') return setInterval;
             if (prop === 'clearTimeout') return clearTimeout;
             if (prop === 'clearInterval') return clearInterval;
-            if (prop === 'renderData') return JSON.parse(renderDataStr);
-            if (prop === 'arg1') return JSON.parse(renderDataStr).l1.slice(10, 60);
+            if (prop === 'renderData') return renderDataObj;
+            if (prop === 'arg1') return renderDataObj.l1.slice(10, 60);
             if (prop === 'setCookie') {
                 return (e, r) => {
                     cookieValue = r;
@@ -90,8 +108,8 @@ function solveWaf(html) {
         setInterval: setInterval,
         clearTimeout: clearTimeout,
         clearInterval: clearInterval,
-        renderData: JSON.parse(renderDataStr),
-        arg1: JSON.parse(renderDataStr).l1.slice(10, 60),
+        renderData: renderDataObj,
+        arg1: renderDataObj.l1.slice(10, 60),
         setCookie: (e, r) => {
             cookieValue = r;
         },

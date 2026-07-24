@@ -120,13 +120,34 @@ def api_get(path: str, params: dict = None) -> dict | None:
             html = raw.decode("utf-8") if isinstance(raw, bytes) else raw
             if not html.strip():
                 return None
-            res = json.loads(html)
-            data, code = res.get("data"), res.get("code", 0)
-            if data and isinstance(data, str) and 100 <= code <= 130:
-                return decrypt_response(data, code)
-            return res
+
+        # WAF challenge 即使 HTTP 200 也会返回
+        if "renderData" in html:
+            cookie = solve_waf(html, url, headers.get("User-Agent", ""))
+            if cookie:
+                headers["Cookie"] = f"acw_sc__v2={cookie}"
+                try:
+                    req2 = Request(url, headers=headers)
+                    with urlopen(req2, timeout=15) as resp2:
+                        raw2 = resp2.read()
+                        html2 = raw2.decode("utf-8") if isinstance(raw2, bytes) else raw2
+                        if html2.strip() and "renderData" not in html2:
+                            res2 = json.loads(html2)
+                            d, c = res2.get("data"), res2.get("code", 0)
+                            if d and isinstance(d, str) and 100 <= c <= 130:
+                                return decrypt_response(d, c)
+                            return res2
+                except:
+                    pass
+            return None
+
+        res = json.loads(html)
+        data, code = res.get("data"), res.get("code", 0)
+        if data and isinstance(data, str) and 100 <= code <= 130:
+            return decrypt_response(data, code)
+        return res
     except HTTPError as e:
-        # WAF challenge 处理
+        # HTTP 错误 + WAF 处理
         err_body = e.read().decode("utf-8", errors="replace")
         if "renderData" in err_body:
             cookie = solve_waf(err_body, url, headers.get("User-Agent", ""))
@@ -137,11 +158,12 @@ def api_get(path: str, params: dict = None) -> dict | None:
                     with urlopen(req2, timeout=15) as resp2:
                         raw2 = resp2.read()
                         html2 = raw2.decode("utf-8") if isinstance(raw2, bytes) else raw2
-                        res2 = json.loads(html2)
-                        d, c = res2.get("data"), res2.get("code", 0)
-                        if d and isinstance(d, str) and 100 <= c <= 130:
-                            return decrypt_response(d, c)
-                        return res2
+                        if html2.strip() and "renderData" not in html2:
+                            res2 = json.loads(html2)
+                            d, c = res2.get("data"), res2.get("code", 0)
+                            if d and isinstance(d, str) and 100 <= c <= 130:
+                                return decrypt_response(d, c)
+                            return res2
                 except:
                     pass
         return None
@@ -159,9 +181,9 @@ def solve_waf(html: str, url: str, user_agent: str) -> str | None:
             f.write(html)
         proc = subprocess.Popen(
             ["node", script, url, user_agent, temp],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
-        out, _ = proc.communicate()
+        out, _ = proc.communicate(timeout=5)
         res = json.loads(out.strip())
         if res.get("success"):
             return res.get("cookie")
