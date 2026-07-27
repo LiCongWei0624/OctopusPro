@@ -66,3 +66,9 @@ dev_scratch/
 odds_detail_*.json
 scratch_*.json
 scratch_*.html
+IDEA.md
+flask.log
+batch_results/
+*.pyc
+__pycache__/
+
