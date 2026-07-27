@@ -13,6 +13,7 @@ import uuid
 import zlib
 import base64
 import urllib.parse
+import threading
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
@@ -71,6 +72,32 @@ GLOBAL_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(G
 GLOBAL_ODDS_CJ = http.cookiejar.CookieJar()
 GLOBAL_ODDS_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(GLOBAL_ODDS_CJ))
 
+SERVER_TIME_CACHE_TTL_SECONDS = 30
+_SERVER_TIME_CACHE = {'value': None, 'monotonic': 0.0}
+_SERVER_TIME_LOCK = threading.Lock()
+
+
+def get_cached_server_time():
+    """Return a WAF-safe server clock, reusing one request across a fixture."""
+    now = time.monotonic()
+    with _SERVER_TIME_LOCK:
+        cached = _SERVER_TIME_CACHE['value']
+        cached_at = _SERVER_TIME_CACHE['monotonic']
+        if cached is not None and now - cached_at < SERVER_TIME_CACHE_TTL_SECONDS:
+            return int(cached + (now - cached_at))
+
+        req = urllib.request.Request(
+            'https://api-gateway.leisu.com/v1/web/public/time', headers=HEADERS
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as response:
+                value = int(json.loads(response.read().decode('utf-8'))['data'])
+        except Exception as error:
+            log_odds(f"Failed to refresh Leisu server time, using local clock: {error}")
+            value = int(time.time())
+        _SERVER_TIME_CACHE.update({'value': value, 'monotonic': now})
+        return value
+
 def solve_waf_via_node(html, url, user_agent):
     """
     <summary>
@@ -118,11 +145,10 @@ def solve_waf_via_node(html, url, user_agent):
 def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
     use_headers = headers if headers is not None else HEADERS.copy()
     
-    # 自动从 Playwright 运行生成的 session_cookies.json 中加载全部雷速凭证到当前 urllib 会话中，实现完美浏览器行为仿真
+    # 从浏览器会话文件补充凭证，但保留刚求解成功的 acw_sc__v2。
     cookie_file = os.path.join(os.path.dirname(__file__), 'session_cookies.json')
     if os.path.exists(cookie_file):
         try:
-            cj.clear()
             with open(cookie_file, 'r', encoding='utf-8') as f:
                 cookies = json.load(f)
                 for c in cookies:
@@ -136,6 +162,14 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
                                     expires_val = int(float(expires_val))
                                 except:
                                     expires_val = None
+                            has_cookie = any(
+                                existing.name == c['name']
+                                and existing.domain == c['domain']
+                                and existing.path == c['path']
+                                for existing in cj
+                            )
+                            if has_cookie:
+                                continue
                             ck = http.cookiejar.Cookie(
                                 version=0, name=c['name'], value=c['value'],
                                 port=None, port_specified=False,
@@ -911,18 +945,9 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
         return []
         
     target_companies = [
-        {"name": "36*", "cid": 2},
-        {"name": "皇*", "cid": 3},
-        {"name": "威***", "cid": 9},
-        {"name": "易**", "cid": 10},
-        {"name": "澳*", "cid": 7},
-        {"name": "立*", "cid": 5},
-        {"name": "韦*", "cid": 11},
-        {"name": "Inter*", "cid": 13},
-        {"name": "12*", "cid": 14},
-        {"name": "利*", "cid": 15},
-        {"name": "盈*", "cid": 16},
-        {"name": "18**", "cid": 17}
+        {"name": "Pinnacle", "cid": 22},
+        {"name": "Bet365", "cid": 2},
+        {"name": "皇冠", "cid": 3},
     ]
     
     asia_list = decrypted_json.get('asia', [])
@@ -1110,15 +1135,7 @@ def get_real_odds(match_id):
     # 2. 停用极慢且易锁死的 Playwright 实时指数获取，全部统一由高效率纯 API 方式获取
     # 3. 使用 API 作为主通道
     if not odds_data:
-        # Fetch server time
-        url_time = 'https://api-gateway.leisu.com/v1/web/public/time'
-        req_time = urllib.request.Request(url_time, headers=HEADERS)
-        try:
-            with urllib.request.urlopen(req_time) as resp:
-                server_time = json.loads(resp.read().decode('utf-8'))['data']
-        except Exception as e:
-            print("Failed to get time for odds, fallback to local time:", e)
-            server_time = int(time.time())
+        server_time = get_cached_server_time()
             
         if server_time is not None:
             r = server_time + 10
@@ -1633,6 +1650,39 @@ def get_complete_match_details(match_id, home_name, away_name):
         'future_schedule': extra_analytics.get('future_schedule')
     }
 
+def normalize_odds_detail_history(rows, type_val):
+    """Convert the compact API history rows into the analysis cache schema."""
+    normalized = []
+    type_int = int(type_val)
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict):
+            normalized.append(row)
+            continue
+        if not isinstance(row, list) or len(row) < 5:
+            continue
+        try:
+            line = str(row[3])
+            normalized.append({
+                'change_time': row[0],
+                'home': float(row[2]),
+                'line': line,
+                'line_zh': line,
+                'away': float(row[4]),
+                'type': type_int,
+                'score': row[7] if len(row) > 7 else '',
+            })
+        except (TypeError, ValueError):
+            continue
+    return normalized
+
+
+def build_odds_detail_url(match_id, cid, type_val):
+    return (
+        'https://api-gateway.leisu.com/v1/web/match/common/odds_detail'
+        f'?match_id={match_id}&cid={cid}&handicap={type_val}'
+    )
+
+
 def get_odds_detail_via_api(match_id, cid, type_val):
     """
     <summary>
@@ -1644,17 +1694,8 @@ def get_odds_detail_via_api(match_id, cid, type_val):
     host_name = 'api-gateway.leisu.com'
     source_val = 'm_leisu'
     
-    # 1. 获取服务器时间
-    url_time = 'https://api-gateway.leisu.com/v1/web/public/time'
-    req_time = urllib.request.Request(url_time, headers=HEADERS)
     t0 = time.time()
-    server_time = None
-    try:
-        with urllib.request.urlopen(req_time, timeout=5) as resp:
-            server_time = json.loads(resp.read().decode('utf-8'))['data']
-    except Exception as e:
-        log_odds(f"Failed to get time for H5 odds detail: {e}")
-        server_time = int(time.time())
+    server_time = get_cached_server_time()
         
     dt = time.time() - t0
     r = server_time + 10 + int(dt)
@@ -1689,7 +1730,7 @@ def get_odds_detail_via_api(match_id, cid, type_val):
         return {"error": "Failed to encrypt auth payload"}
         
     # 3. 构造请求与发送
-    url_api = f"https://api-gateway.leisu.com/v1/web/match/common/odds_detail?match_id={match_id}&cid={cid}&type={type_val}"
+    url_api = build_odds_detail_url(match_id, cid, type_val)
     
     headers = {
         'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
@@ -1756,7 +1797,7 @@ def get_odds_detail_via_api(match_id, cid, type_val):
                 decoded_bytes = base64.b64decode(res_caesar)
                 decompressed = zlib.decompress(decoded_bytes, 15 + 32)
                 decrypted_json = json.loads(decompressed.decode('utf-8'))
-                return decrypted_json
+                return normalize_odds_detail_history(decrypted_json, type_val)
             else:
                 return data_val
         else:

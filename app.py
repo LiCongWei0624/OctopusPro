@@ -49,7 +49,10 @@ RECOMMENDED_ODDS_COMPANIES = 6
 TREND_MARKETS = {"1": "让球", "3": "大小球"}
 TREND_FETCH_MAX_ATTEMPTS = 3
 TREND_FETCH_RETRY_DELAY_SECONDS = 3
-TREND_REQUEST_MIN_INTERVAL_SECONDS = 0.8
+# Keep the six-request strategic-company burst serialized but avoid adding
+# almost a second of artificial delay after every successful network round-trip.
+TREND_REQUEST_MIN_INTERVAL_SECONDS = 0.15
+PREFERRED_TREND_COMPANY_IDS = ('22', '2', '3')
 PREMATCH_STATUSES = {1, 13}
 LIVE_STATUSES = {2, 3, 4, 5, 7, 10}
 ANALYSIS_STATUSES = PREMATCH_STATUSES | LIVE_STATUSES
@@ -881,10 +884,9 @@ def get_cached_odds_detail(match_id, cid):
 
 
 def _trend_companies_from_odds(odds_index):
-    """Return the companies actually present in this fixture's odds snapshot."""
-    companies = []
+    """Return strategic companies in fixed sharp/volume/Asia order."""
+    companies_by_cid = {}
     failures = []
-    seen = set()
     for item in odds_index if isinstance(odds_index, list) else []:
         company_name = str(item.get('company', '')).strip()
         cid = item.get('cid')
@@ -892,10 +894,13 @@ def _trend_companies_from_odds(odds_index):
             failures.append(f'{company_name or "未知公司"}: 缺少公司 cid，无法获取变盘历史')
             continue
         cid = str(cid)
-        if cid in seen:
-            continue
-        seen.add(cid)
-        companies.append((company_name, cid))
+        if cid in PREFERRED_TREND_COMPANY_IDS and cid not in companies_by_cid:
+            companies_by_cid[cid] = (company_name, cid)
+    companies = [
+        companies_by_cid[cid]
+        for cid in PREFERRED_TREND_COMPANY_IDS
+        if cid in companies_by_cid
+    ]
     return companies, failures
 
 
@@ -942,7 +947,7 @@ def _fetch_trend_with_global_pacing(match_id, cid, type_val):
 
 
 def _refresh_required_trend_history(match_id, odds_index):
-    """Fetch fresh handicap and totals trends for every company in this fixture.
+    """Fetch fresh handicap and totals trends for the three strategic companies.
 
     Each company/market pair is retried before the fixture is rejected. Existing
     cache files are removed before a fresh request, so stale trend data cannot

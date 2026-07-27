@@ -32,8 +32,11 @@ AES_KEY = b'kw@h*8gCIn$8X#df'
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUT_DIR = BASE_DIR / "cache"
 FIXED_CIDS = [22, 2, 3]  # Pinnacle, Bet365, 皇冠
-TREND_TYPES = {"asia": 1, "bs": 2}
+TREND_TYPES = {"asia": 1, "bs": 3}
 RATE_LIMIT = 15  # 次/分钟
+SERVER_TIME_CACHE_TTL_SECONDS = 30
+_SERVER_TIME_CACHE = {"value": None, "monotonic": 0.0}
+_WAF_COOKIE = None
 
 USER_AGENTS = [
     "Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36",
@@ -44,19 +47,27 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
 ]
+SESSION_USER_AGENT = random.choice(USER_AGENTS)
 
 
 # ============ 认证工具 ============
 def get_server_time() -> int:
+    now = time.monotonic()
+    cached = _SERVER_TIME_CACHE["value"]
+    cached_at = _SERVER_TIME_CACHE["monotonic"]
+    if cached is not None and now - cached_at < SERVER_TIME_CACHE_TTL_SECONDS:
+        return int(cached + (now - cached_at))
     try:
         req = Request("https://api-gateway.leisu.com/v1/web/public/time", headers={
-            "User-Agent": random.choice(USER_AGENTS)
+            "User-Agent": SESSION_USER_AGENT
         })
         with urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-            return int(data["data"])
+            value = int(data["data"])
     except Exception:
-        return int(time.time())
+        value = int(time.time())
+    _SERVER_TIME_CACHE.update({"value": value, "monotonic": now})
+    return value
 
 
 def build_auth(path: str) -> tuple[str, dict]:
@@ -80,7 +91,7 @@ def build_auth(path: str) -> tuple[str, dict]:
     enc = base64.b64encode(ct).decode("utf-8").replace("+", "-").replace("/", "_").replace("=", "")
 
     headers = {
-        "User-Agent": random.choice(USER_AGENTS),
+        "User-Agent": SESSION_USER_AGENT,
         "Accept": f"application/json, text/plain, */*;;{enc}",
         "Accept-Language": random.choice(["zh-CN,zh;q=0.9", "zh-CN,zh;q=0.9,en;q=0.8", "zh-CN,zh;q=0.8,en;q=0.5"]),
         "Origin": "https://m.leisu.com",
@@ -109,7 +120,10 @@ def decrypt_response(data_str: str, code_val: int) -> dict:
 
 def api_get(path: str, params: dict = None) -> dict | None:
     """带认证的 API GET 请求，自动处理 WAF"""
+    global _WAF_COOKIE
     enc, headers = build_auth(path)
+    if _WAF_COOKIE:
+        headers["Cookie"] = f"acw_sc__v2={_WAF_COOKIE}"
     qs = "&".join(f"{k}={v}" for k, v in (params or {}).items())
     url = f"https://api-gateway.leisu.com{path}?{qs}" if qs else f"https://api-gateway.leisu.com{path}"
 
@@ -125,6 +139,7 @@ def api_get(path: str, params: dict = None) -> dict | None:
         if "renderData" in html:
             cookie = solve_waf(html, url, headers.get("User-Agent", ""))
             if cookie:
+                _WAF_COOKIE = cookie
                 headers["Cookie"] = f"acw_sc__v2={cookie}"
                 try:
                     req2 = Request(url, headers=headers)
@@ -152,6 +167,7 @@ def api_get(path: str, params: dict = None) -> dict | None:
         if "renderData" in err_body:
             cookie = solve_waf(err_body, url, headers.get("User-Agent", ""))
             if cookie:
+                _WAF_COOKIE = cookie
                 headers["Cookie"] = f"acw_sc__v2={cookie}"
                 try:
                     req2 = Request(url, headers=headers)
@@ -258,7 +274,7 @@ def focused_pick(match_id: str, fixed_cids: list[int] = None) -> dict | None:
             if done > 1:
                 time.sleep(0.5 + random.random())  # 1-1.5s 间隙
             data = api_get("/v1/web/match/common/odds_detail", {
-                "match_id": match_id, "cid": str(cid), "type": str(tv),
+                "match_id": match_id, "cid": str(cid), "handicap": str(tv),
             })
             if data and isinstance(data, list):
                 comp["trends"][tn] = data

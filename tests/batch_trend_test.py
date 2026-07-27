@@ -7,7 +7,20 @@ import app
 
 
 class BatchTrendHistoryTests(unittest.TestCase):
-    def test_all_company_handicap_and_totals_histories_are_required(self):
+    def test_only_three_strategic_companies_are_selected_for_trends(self):
+        odds_index = [
+            {'company': 'Other', 'cid': 9},
+            {'company': '皇冠', 'cid': 3},
+            {'company': 'Pinnacle', 'cid': 22},
+            {'company': 'Bet365', 'cid': 2},
+        ]
+
+        companies, failures = app._trend_companies_from_odds(odds_index)
+
+        self.assertEqual(companies, [('Pinnacle', '22'), ('Bet365', '2'), ('皇冠', '3')])
+        self.assertEqual(failures, [])
+
+    def test_selected_company_handicap_and_totals_histories_are_required(self):
         with tempfile.TemporaryDirectory() as directory:
             companies = [('A', '1'), ('B', '2')]
             odds_index = [{'company': name, 'cid': int(cid)} for name, cid in companies]
@@ -16,6 +29,7 @@ class BatchTrendHistoryTests(unittest.TestCase):
                 return [{'change_time': '12:00', 'line': '2.5', 'home': 0.9, 'away': 0.9}]
 
             with patch.object(app, 'CACHE_DIR', directory), \
+                 patch.object(app, 'PREFERRED_TREND_COMPANY_IDS', ('1', '2')), \
                  patch.object(app, 'get_odds_detail_via_playwright', side_effect=fetch):
                 ok, error, quality = app._refresh_required_trend_history('101', odds_index)
 
@@ -39,6 +53,7 @@ class BatchTrendHistoryTests(unittest.TestCase):
                 return [{'change_time': '12:00', 'line': '2.5', 'home': 0.9, 'away': 0.9}]
 
             with patch.object(app, 'CACHE_DIR', directory), \
+                 patch.object(app, 'PREFERRED_TREND_COMPANY_IDS', ('1', '2')), \
                  patch.object(app, 'TREND_FETCH_RETRY_DELAY_SECONDS', 0), \
                  patch.object(app, 'get_odds_detail_via_playwright', side_effect=fetch):
                 ok, error, quality = app._refresh_required_trend_history('101', odds_index)
@@ -69,6 +84,7 @@ class BatchTrendHistoryTests(unittest.TestCase):
                 return [{'change_time': '12:00', 'line': '2.5', 'home': 0.9, 'away': 0.9}]
 
             with patch.object(app, 'CACHE_DIR', directory), \
+                 patch.object(app, 'PREFERRED_TREND_COMPANY_IDS', ('1', '2')), \
                  patch.object(app, 'get_odds_detail_via_playwright', side_effect=fetch):
                 ok, error, quality = app._refresh_required_trend_history('101', odds_index)
 

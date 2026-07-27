@@ -20,6 +20,7 @@ class TrendAndConsistencyTests(unittest.TestCase):
                 return {'error': 'WAF challenge'}
 
             with patch.object(app, 'CACHE_DIR', directory), \
+                 patch.object(app, 'PREFERRED_TREND_COMPANY_IDS', tuple(cid for _, cid in companies)), \
                  patch.object(app, 'TREND_FETCH_RETRY_DELAY_SECONDS', 0), \
                  patch.object(app, 'get_odds_detail_via_playwright', side_effect=mock_fetch):
                 ok, error, quality = app._refresh_required_trend_history('4556502', odds_index)
