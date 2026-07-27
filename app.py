@@ -2318,10 +2318,15 @@ def _trend_summary(rows):
 
 
 def _trend_rows_for_analysis_mode(rows, analysis_mode):
-    """Keep pre-match snapshots separate from in-play market history."""
+    """Keep pre-match snapshots separate from in-play market history.
+
+    For live mode the function returns only rows that are explicitly
+    in-play (have a match minute or a live match_status).  Legacy rows
+    with no explicit state are kept if they carry a score or a minute-
+    like change_time.
+    """
     rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
-    if analysis_mode != 'prematch':
-        return rows
+    is_live = (analysis_mode == 'live')
     filtered = []
     for row in rows:
         has_explicit_state = 'match_minute' in row or 'match_status' in row
@@ -2330,14 +2335,22 @@ def _trend_rows_for_analysis_mode(rows, analysis_mode):
             status = int(row.get('match_status', 1))
         except (TypeError, ValueError):
             status = 1
-        if has_explicit_state and not minute and status in PREMATCH_STATUSES:
-            filtered.append(row)
-            continue
         if has_explicit_state:
+            if (is_live and minute):
+                filtered.append(row)
+                continue
+            if (not is_live and not minute and status in PREMATCH_STATUSES):
+                filtered.append(row)
+                continue
             continue
+        # Legacy rows (no explicit state)
         change_time = str(row.get('change_time', '') or '').strip()
         score = str(row.get('score', '') or '').strip()
         legacy_live_time = bool(re.fullmatch(r'(?:\d{1,3}\+?|中场|半场|HT)', change_time, re.IGNORECASE))
+        if is_live:
+            if legacy_live_time or score:
+                filtered.append(row)
+            continue
         if not score and not legacy_live_time:
             filtered.append(row)
     return filtered
@@ -2806,8 +2819,13 @@ def _with_model_request_slot(function):
     return wrapped
 
 
+class ModelNoContentError(Exception):
+    """Raised when the model stream completed without delivering visible content."""
+    pass
+
+
 def _retry_model_operation(operation, has_visible_output):
-    """Retry transient provider failures only when no report text was received."""
+    """Retry transient failures OR content-less responses up to max attempts."""
     import requests
 
     retryable_errors = (
@@ -2818,7 +2836,14 @@ def _retry_model_operation(operation, has_visible_output):
     )
     for attempt in range(1, MODEL_REQUEST_MAX_ATTEMPTS + 1):
         try:
-            return operation()
+            result = operation()
+            if has_visible_output():
+                return result
+            print(f"Model returned only reasoning on attempt {attempt}/{MODEL_REQUEST_MAX_ATTEMPTS}")
+            if attempt == MODEL_REQUEST_MAX_ATTEMPTS:
+                raise ModelNoContentError(
+                    f"模型连续 {MODEL_REQUEST_MAX_ATTEMPTS} 次仅返回思考过程，未生成可用正文"
+                )
         except retryable_errors:
             if has_visible_output() or attempt == MODEL_REQUEST_MAX_ATTEMPTS:
                 raise

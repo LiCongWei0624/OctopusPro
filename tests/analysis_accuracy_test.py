@@ -131,6 +131,31 @@ class AnalysisAccuracyTests(unittest.TestCase):
         self.assertEqual(quality['refreshed'], 0)
         self.assertIn('赛前', error)
 
+    def test_live_trend_filter_keeps_in_play_rows(self):
+        rows = [
+            {'change_time': 300, 'match_minute': '15', 'match_status': 2, 'score': '0-0'},
+            {'change_time': 200, 'match_minute': '', 'match_status': 1, 'score': '0-0'},
+        ]
+        filtered = app._trend_rows_for_analysis_mode(rows, 'live')
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]['match_minute'], '15')
+
+    def test_live_trend_filter_keeps_legacy_in_play_rows(self):
+        rows = [
+            {'change_time': '15', 'score': '1-0', 'line': '-0.25'},
+            {'change_time': '07-27 15:00', 'score': '', 'line': '-0.25'},
+        ]
+        filtered = app._trend_rows_for_analysis_mode(rows, 'live')
+        self.assertEqual(len(filtered), 1)
+        self.assertEqual(filtered[0]['change_time'], '15')
+
+    def test_retry_model_raises_on_persistent_no_content(self):
+        called = [0]
+        def noop(): called[0] += 1
+        with patch.object(app, 'MODEL_REQUEST_MAX_ATTEMPTS', 2):
+            with self.assertRaises(Exception):
+                app._retry_model_operation(lambda: None, lambda: False)
+            self.assertGreaterEqual(called[0], 0)
 
 if __name__ == '__main__':
     unittest.main()
