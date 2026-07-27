@@ -1416,7 +1416,7 @@ function formatAsianHandicapPrediction(handicap, homeTeam, awayTeam) {
 
 function formatOverUnderPrediction(overUnder) {
     if (!overUnder || !overUnder.side) return '--';
-    return `${overUnder.side === 'over' ? '大' : '小'} ${overUnder.line ?? '--'}`;
+    return `${overUnder.side === 'over' ? '大球' : '小球'} ${overUnder.line ?? '--'}`;
 }
 
 function formatPredictionQuote(market) {
