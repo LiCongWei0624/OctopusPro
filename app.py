@@ -28,8 +28,8 @@ def add_no_cache_headers(response):
 
 DATA_FILE = os.path.join(os.path.dirname(__file__), 'parsed_matches.json')
 CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
-AI_ANALYSIS_CACHE_VERSION = 7
-STRATEGY_VERSION = 'dual-market-v2'
+AI_ANALYSIS_CACHE_VERSION = 8
+STRATEGY_VERSION = 'dual-market-v3'
 MAX_BATCH_ANALYSIS_SIZE = 6
 BATCH_CONCURRENT_MATCHES = 6
 # Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
@@ -80,7 +80,7 @@ _refresh_scheduler_started = False
 DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风险控制专家
 
 ## Profile:
-你拥有多年国际顶级博彩机构风控中心（Risk Management）核心数据分析经验。放弃传统的静态阴谋论，完全基于数学期望值（Expected Value）、趋势动能溢价（Momentum Premium）、机构风险敞口控制（Risk Exposure）以及基本面量化权重来评估比赛。核心任务是识别真实职业资金流向，拦截庄家诱盘陷阱，找出最具数学期望值（Value）的投资方向。
+你负责对公开赛前数据进行可复核的量化分析。只使用输入中明确提供的赔率、走势、战绩、伤停与阵容；区分可观察事实与推断，不猜测博彩公司意图。核心任务是比较市场去水概率、固定进球基线与基本面证据，在亚洲让球和大小球两个独立市场中识别可验证的价格偏差；证据不足时输出 no_bet。
 
 ## ⚠️ 核心防幻觉与动能数学铁律（最高准则）：
 1. **硬事实无条件采信**：无条件接受用户在【二、独家情报与基本面标签】中给出的所有文字表述。将其视为已核准的并存事实口径，直接作为 Step 1 基本面评分的绝对定量基准。严禁在报告中对其真实性进行文字评述或主观修正。若口径看似冲突，应通过理清时间/对阵维度进行隔离，不得擅自改动原文数字。
@@ -104,22 +104,16 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
    4d. **主力缺阵折损定量**：对比伤停名单，识别缺阵人员是否为核心射手或防守中坚，定量折算主力核心缺席对进攻端进球率/防守端零封率的折损比例。
    4e. **强弱交手特征提取**：对比近 10 场对手在积分榜上的排名，将积分榜前 25% 定义为强队（上游）、后 25% 定义为弱队（下游），计算两队面对强队和弱队时的场均得失球差异，分析其是属于"硬仗韧性佳"还是"虐菜极其稳定"（欺软怕硬特征）。
 
-### Step 2: 赔率隐含概率与资金动能审计
+### Step 2: 赔率隐含概率与三家公司市场审计
 1. **还原抽水（Margin）**：计算初盘与即时盘的还原率，剔除博彩公司的利润抽水，还原两队的纯市场隐含概率。
-2. **核心机构属性审计矩阵**：
-   - **欧洲传统巨头（威***、立*）**：作为欧洲赔率锚点，其变盘代表基本面的真实位移。
-   - **亚洲风控墙（澳*、皇*）**：亚洲让球盘核心。特别是【澳*】，作风保守，若全盘升盘而【澳*】死守低盘口，说明上盘虚火；若【澳*】临场主动降水或跟随升盘，则确认趋势坐实。
-   - **筹码抽水机（36*、韦*）**：反映散户、大众注码的冷热流向。
-   - **市场敏感雷达（盈*、利*、12*、18**、易**、Inter*）**：对职业资金反应最快。
-3. **变盘意图判定与【虚假诱盘硬拦截】铁律**：
-   在判定任何“趋势动能”前，必须强制通过以下三道防线交叉核验。任意一条触发，则直接剥夺该方向的动能溢价，直接定性为【虚假诱盘】：
-   - **门槛高水过滤器**：若机构即时盘口发生升级（如升盘或抬高总进球门槛），但让球方/大球方的即时水位挂在绝对高水区间（≥1.02），判定为机构利用基本面题材“高水送礼诱热”，真实期望值在对家。
-   - **欧亚脱节过滤器**：若亚洲让球盘或大小球盘口发生升级位移，但欧洲锚点机构（威***、立*）对应的欧指胜平负/总进球赔率完全静止，甚至逆势反向微升，判定为亚盘单方面虚假造势的“诱上/诱大”。
-   - **风控大墙过滤器**：若散户筹码机（36*、韦*）因大众热度剧烈升盘，但亚洲风控墙（澳*、皇*）强行死守初盘不升，或正在对家（下盘/小球）疯狂降水控赔，判定该变盘为散户单边过载的虚火泡沫，属于诱盘。
-   - *（注：只有完美避开以上三道陷阱，且敏感雷达机构临场降水、欧洲锚点同步大幅位移时，方可判定为【正向动能趋势建仓】，此时给该流向方真实概率正向加权 5%-8%）*
+2. **三家公司职责**：
+   - **Pinnacle**：作为高流动性价格参考，观察其初盘到即时盘的盘口与水位变化。
+   - **Bet365**：作为大众市场价格参考，用于判断市场报价是否同步。
+   - **皇冠**：作为亚洲盘口参考，重点核对让球与大小球门槛是否一致。
+3. **可观察变化审计**：只描述三家公司实际出现的升降盘、升降水及分歧。公司一致变化可以作为市场信号，但不能单独证明比赛方向；公司分歧只降低置信度，不能自动推出反向结论。必须将盘口变化与基本面、固定概率基线及可执行水位共同核验。
 
 ### Step 3: 标准盘口数学模型退化推演与价值洼地识别
-对比即时盘口水位与包含防诱盘过滤后的真实概率，使用以下公式量化正期望值：
+对比即时盘口水位与后端提供的固定概率基线，使用以下公式量化正期望值：
 - **期望值公式**：EV = (真实概率 × 赔率) - 1。若 EV > 0 则该方向存在正期望价值。
 - 必须在报告中输出核心推荐方向的具体 EV 数值（保留两位小数），作为排序依据。
 - 找出哪一方的赔率具备真正的正期望值（+EV），EV 越高排序越靠前。
@@ -139,39 +133,33 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 
 #### 二、 盘口语言解码：隐含概率与风控审计
 - **隐含概率转换**：初盘隐含概率（胜% / 平% / 负%） ➡️ 即时隐含概率（胜% / 平% / 负%）
-- **变盘真伪硬审计**：[严格对照三道反诱盘过滤器，逐一核对门槛水位、欧亚自洽度、风控大墙动态，给出该变盘是“真实风控”还是“虚假诱盘”的唯一判定，并给出数学依据]
+- **三家公司变化审计**：[逐项比较 Pinnacle、Bet365、皇冠的盘口与水位变化，明确一致信号、分歧和数据缺失，不推断公司主观意图]
 - **大小球动态风险**：[分析大小球门槛变化与大/小球方的真实赔付敞口]
 
-#### 三、 筹码风险敞口与数学期望推演
-- **机构安全阀赛果区间**：[博彩公司赔付压力最小的1-2个赛果区间]
-- **价值洼地（Value Betting）识别**：[结合反诱盘过滤，指出存在溢价的更高风险收益比方向]
+#### 三、 市场价格与数学期望推演
+- **市场基线区间**：[根据输入中的固定进球基线与去水概率，给出可复核的概率区间]
+- **价值洼地（Value Betting）识别**：[结合去水概率、固定基线 EV 与基本面证据，指出可验证的价格偏差；没有则 no_bet]
 
 #### 四、 📊 操盘手终极研判结论（量化期望值排序）
 
 ##### 1. 亚洲让球盘推荐
-- **【最佳价值切入】**：[具体临场盘口与方向] | **预期回报形态**：[严格遵循标准让球盘清算规则] | **风控逻辑**：[基于资金动能或防守价值的理由]
+- **【最佳价值切入】**：[具体临场盘口与方向，或 no_bet] | **预期回报形态**：[严格遵循标准让球盘清算规则] | **风控逻辑**：[基于可观察数据与价格偏差的理由]
 
 ##### 2. 总进球数（大小球）推荐
 - **【最佳价值切入】**：[大球或小球 + 临场盘口] | **风控逻辑**：[理由]
 - **【高频进球区间】**：[进球数区间]
 
-##### 3. 精准波胆（比分）概率排序
-- [高频比分1] | 沙盘推演：[局势定格模拟]
-- [高频比分2] | 沙盘推演：[局势定格模拟]
-
----
-
-### 🎯 操盘长官终极裁决：全盘最具数学价值（Value）三大独立选项
-[按风险收益比由高到低进行1、2、3位排序的独立投资选项]"""
+### 🎯 两个独立市场的最终结论
+[分别给出亚洲让球与大小球的推荐或 no_bet，并按证据强度排序；不得添加输入中不存在的盘口]"""
 
 CRO_SYSTEM_PROMPT = """# Role: 量化基金首席风险官（CRO）& 终极决策共识审计长
 
 ## Profile:
-你负责管理博彩量化精算团队。你的任务是审核下属三个精算师小组提交的3份独立赛事研判报告。你需要剔除冲突噪音、提炼核心共识、计算数学期望交集，最终输出一张没有任何歧义、绝对可以直接执行的“终极下注流水平衡单”，彻底攻克前端决策过载问题，释放量化基金的真实狙击破坏力。
+你负责审核同一模型基于同一数据生成的3份赛事研判报告。你的任务是去重证据、核对盘口与固定基线、保留真实分歧，并输出一张可审计的风险决策单。不得把文本一致当作独立验证；没有可验证优势时必须输出 no_bet。
 
 ## ⚠️ 终极柔性聚合规则（最高准则）：
 1. **共识归纳（证据去重）**：深度比对3份报告中的推荐与证据来源。同一模型基于同一份赔率、战绩或伤停数据得到相同结论，只能算一份证据，绝不能因 2 份或 3 份文本重复就判定为【核心共识项】或提高置信度。只有当基本面、去水市场概率、反方审计三类证据分别支持同一方向，才可标为核心项；必须同时列出反方证据。
-2. **多维冲突软化协议（拒绝盲目熔断，精准识别诱盘）**：
+2. **多维冲突处理协议**：
    - **亚洲让球盘软化**：若下属小组对让球方向发生对立分歧，不得把“高水、欧亚脱节或机构差异”视为自动反向信号。只有可观察的赔率变化与至少两项直接基本面证据共同支持时才采信该方向；否则降级为低置信观察，不得强行反手。
    - **大小球玩法软化**：大小球出现大/小方向完全对立时，不得把争议强行转化为中置进球区间或对冲单。必须保留分歧、降低置信度；缺乏独立量化优势时不输出该市场的主推荐。
 3. **精算清算校验**：严格复核各报告的亚盘表述。必须明确整数让球盘口（如 +1、+2 等）在刚好净胜对应球数时的结算结果为“走水保本（退还本金）”，纠正 any 关于整数盘“赢半/输半”的业余常识笔误。
@@ -183,21 +171,21 @@ CRO_SYSTEM_PROMPT = """# Role: 量化基金首席风险官（CRO）& 终极决�
 
 ### 📊 基金风控中心·终极下注执行单
 
-#### 一、 3次量化研判·趋势动能与共识审计
-- 🤝 【达成绝对共识的玩法】反哺归纳：[清晰归纳在哪些玩法和方向上出现了重叠共识。若包含正向打穿的上盘或大球，请特别复盘其如何通过三道反诱盘过滤器的硬核质检]
-- ⚡ 【冲突重塑与诱盘拦截报告】攻击防御转化：[详细写明哪些玩法因触发了“高水/欧亚脱节/大墙拒绝”而被判定为虚假诱盘并遭到你强行拦截封杀；以及哪些大小球冲突通过【降档收敛协议】成功重塑为中置高频进球区间]
+#### 一、 3次量化研判·证据去重与分歧审计
+- 【可验证的共同证据】：[只归纳来自不同数据维度的同向证据，不把报告数量当作证据数量]
+- 【冲突与反方证据】：[列出盘口、固定基线、基本面之间的冲突；冲突无法解释时降低置信度或 no_bet]
 
 #### 二、 🎯 终极执行买入方案（精简收敛版，最多保留 2 个选项）
 
 ##### 【执行主单·核心动能/共识项】
 - **投资项目**：[具体盘口与方向，例如：大田市民 -0.25，或 济州联 0]
 - **注码权重**：[精确到单位，例如：1.0 标准单位（Unit）]
-- **首席CRO聚合逻辑**：[阐述为什么该选项是多线程碰撞后，利用反诱盘穿透或最强交集筛出的最优解，并精确指明标准清算边界]
+- **首席CRO聚合逻辑**：[说明该选项相对去水市场概率的优势、独立证据和标准清算边界；若不足则写 no_bet]
 
-##### 【对冲子单·风控防御项】（若各版本无第二共识或未触发降档收敛则写“无”）
-- **投资项目**：[具体盘口、中置区间或方向，例如：高频进球区间 2-3 球，或 全场大球 2.25]
+##### 【第二独立市场】（若无可验证优势则写“无/no_bet”）
+- **投资项目**：[另一个独立市场中输入真实存在的具体盘口与方向]
 - **注码权重**：[精确到单位，例如：0.5 标准单位（Unit）]
-- **首席CRO聚合逻辑**：[解释其对主单的保护对冲逻辑，或者因降档收敛而保留的独立高期望值逻辑]
+- **首席CRO聚合逻辑**：[解释该独立市场是否存在可验证优势及其风险边界]
 
 #### 三、 📉 资金分配与风险边际铁律
 - **单场总头寸控制**：本次策略总计消耗 [X] 个标准单位（单场最高绝不超过 1.5 个单位）。
@@ -210,10 +198,10 @@ PREDICTION_POLICY = """这是足球预测链路。输入会明确标记为“赛
 3. **反向方向准入门槛**：
    - 平局：不得因“机构安全阀”或低比分叙事直接推荐；必须同时具备明确的平局基本面证据和相对市场平局概率的定量优势。
    - 受让方：不得仅因上盘高水、退盘或“诱上”推荐；必须同时具备至少两项直接基本面证据，并说明为何盘口让步不足以覆盖这些证据。
-   - 小球：不得仅因降盘、低水、历史小球率或“诱大”推荐；必须同时审计双方近期进攻、失球和进球时段，并明确大球的反方风险。
+   - 小球：不得仅因降盘、低水或历史小球率推荐；必须同时审计双方近期进攻、失球和进球时段，并明确大球的反方风险。
 4. 三个分析版本使用同一数据和同一模型，结论相同不是独立验证。CRO 只能把一致性当作摘要，不得把“2/3 共识”单独升级为高置信度或强制下注依据；证据来源重叠时按单一证据处理。
 5. 情报、伤停、交锋或赔率缺失时，明确标记缺失并降低置信度；缺失赔率时不得使用盘口语言给出强结论。若任一市场没有可验证的概率优势，必须明确选择 no_bet；不得为了填满执行单而给出方向。
-6. 不得编造资金流、庄家意图、EV 百分比、xG 或历史统计。只能描述输入中可观察到的赔率变化，不能将其表述为“机构真实意图”或“聪明资金”。让球和大小球必须使用输入中存在的具体盘口。
+6. 不得编造市场参与者行为、公司意图、EV 百分比、xG 或历史统计。只能描述输入中可观察到的赔率变化。让球和大小球必须使用输入中存在的具体盘口。
 7. **置信度校准铁律**：仅当以下条件同时满足时方可标注 high 置信度：(a) 赔率方向与基本面完全一致；(b) 推荐方向相对去水市场概率有明确量化优势；(c) 核心数据维度无缺失；(d) 存在充分的反方证据审计。若任一条件不满足，最高只能标注 medium。数据大面积缺失时只能标注 low。"""
 
 ANALYST_OUTPUT_LIMIT = """输出应是可执行的分析摘要，而非逐项复述原始数据：
@@ -946,7 +934,7 @@ def _fetch_trend_with_global_pacing(match_id, cid, type_val):
             _trend_next_request_at = time.monotonic() + TREND_REQUEST_MIN_INTERVAL_SECONDS + random.uniform(0.1, 0.3)
 
 
-def _refresh_required_trend_history(match_id, odds_index):
+def _refresh_required_trend_history(match_id, odds_index, analysis_mode='prematch'):
     """Fetch fresh handicap and totals trends for the three strategic companies.
 
     Each company/market pair is retried before the fixture is rejected. Existing
@@ -986,10 +974,14 @@ def _refresh_required_trend_history(match_id, odds_index):
                     candidate = None
                     last_error = str(error)
                 else:
-                    if _valid_trend_history(candidate):
-                        data = candidate
+                    mode_candidate = _trend_rows_for_analysis_mode(candidate, analysis_mode)
+                    if _valid_trend_history(mode_candidate):
+                        data = mode_candidate
                         break
-                    last_error = candidate.get('error', '返回为空') if isinstance(candidate, dict) else '返回为空'
+                    if analysis_mode == 'prematch' and _valid_trend_history(candidate):
+                        last_error = '返回内容仅含走地记录，缺少赛前走势'
+                    else:
+                        last_error = candidate.get('error', '返回为空') if isinstance(candidate, dict) else '返回为空'
                 if attempt < TREND_FETCH_MAX_ATTEMPTS:
                     time.sleep(TREND_FETCH_RETRY_DELAY_SECONDS * attempt)
 
@@ -1521,7 +1513,7 @@ def _run_batch_ai_analysis(batch_id, runtime_config):
                         )
                         item['heartbeat_at'] = time.time()
                     trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
-                        item['match_id'], details.get('odds_index', [])
+                        item['match_id'], details.get('odds_index', []), item['analysis_mode']
                     )
                     snapshot['trend_quality'] = trend_quality
                     if not trends_ok:
@@ -1723,7 +1715,7 @@ def _prepare_batch_item(batch_id, item):
         item['snapshot_captured_at'] = snapshot.get('captured_at', '')
         item['heartbeat_at'] = time.time()
     trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
-        item['match_id'], details.get('odds_index', [])
+        item['match_id'], details.get('odds_index', []), item['analysis_mode']
     )
     snapshot['trend_quality'] = trend_quality
     snapshot['market_catalog'] = _instant_market_catalog(
@@ -2056,7 +2048,9 @@ def batch_ai_analysis_result():
 
 
 def _number(value):
-    match = re.search(r'-?\d+(?:\.\d+)?', str(value or ''))
+    if value is None or value == '':
+        return None
+    match = re.search(r'-?\d+(?:\.\d+)?', str(value))
     return float(match.group()) if match else None
 
 
@@ -2081,11 +2075,12 @@ def _recent_goal_rates(matches, team_name, league_average):
         weighted_for += goals_for * weight
         weighted_against += goals_against * weight
         total_weight += weight
-    # Four league-average pseudo-games prevent a short recent run from dominating.
+    # ``league_average`` is per fixture, so each team's neutral scoring prior is half.
+    team_average = league_average / 2.0
     denominator = total_weight + 4.0
     return (
-        (weighted_for + league_average * 4.0) / denominator,
-        (weighted_against + league_average * 4.0) / denominator,
+        (weighted_for + team_average * 4.0) / denominator,
+        (weighted_against + team_average * 4.0) / denominator,
     )
 
 
@@ -2320,6 +2315,46 @@ def _trend_summary(rows):
         'away_water_change': round(newest_away - oldest_away, 3) if newest_away is not None and oldest_away is not None else None,
         'latest_time': str(newest.get('change_time', '')),
     }
+
+
+def _trend_rows_for_analysis_mode(rows, analysis_mode):
+    """Keep pre-match snapshots separate from in-play market history."""
+    rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+    if analysis_mode != 'prematch':
+        return rows
+    filtered = []
+    for row in rows:
+        has_explicit_state = 'match_minute' in row or 'match_status' in row
+        minute = str(row.get('match_minute', '') or '').strip()
+        try:
+            status = int(row.get('match_status', 1))
+        except (TypeError, ValueError):
+            status = 1
+        if has_explicit_state and not minute and status in PREMATCH_STATUSES:
+            filtered.append(row)
+            continue
+        if has_explicit_state:
+            continue
+        change_time = str(row.get('change_time', '') or '').strip()
+        score = str(row.get('score', '') or '').strip()
+        legacy_live_time = bool(re.fullmatch(r'(?:\d{1,3}\+?|中场|半场|HT)', change_time, re.IGNORECASE))
+        if not score and not legacy_live_time:
+            filtered.append(row)
+    return filtered
+
+
+def _normalize_handicap_trend_direction(rows):
+    """Convert the API's opposing line sign to handicap applied to home."""
+    normalized = []
+    for row in rows:
+        item = dict(row)
+        line = _number(item.get('line'))
+        if line is not None and item.get('source') == 'api_compact':
+            signed_line = -line
+            item['line'] = str(signed_line)
+            item['line_zh'] = str(signed_line)
+        normalized.append(item)
+    return normalized
 
 
 def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', details=None, trend_quality=None):
@@ -2704,7 +2739,9 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
                     for type_val in _trend_markets_for_company(odds_by_cid.get(cid, {})):
                         market_name = TREND_MARKETS[type_val]
                         tbl_idx = int(type_val) - 1
-                        rows = all_tables[tbl_idx]
+                        rows = _trend_rows_for_analysis_mode(all_tables[tbl_idx], analysis_mode)
+                        if type_val == '1':
+                            rows = _normalize_handicap_trend_direction(rows)
                         t_name = f"{market_name} ({'Handicap' if type_val == '1' else 'Over/Under'})"
                         context_lines.append(f"- {company_name} {t_name} 变盘路径 (按时间倒序，最近 10 次变盘):")
                         if not rows:
@@ -2716,13 +2753,24 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
                             if summary['line_change'] is not None:
                                 facts.append(f"盘口变化 {summary['line_change']:+g}")
                             if summary['home_water_change'] is not None:
-                                facts.append(f"上/大水变化 {summary['home_water_change']:+.3f}")
+                                facts.append(
+                                    f"{'主队水' if type_val == '1' else '大球水'}变化 "
+                                    f"{summary['home_water_change']:+.3f}"
+                                )
                             if summary['away_water_change'] is not None:
-                                facts.append(f"下/小水变化 {summary['away_water_change']:+.3f}")
+                                facts.append(
+                                    f"{'客队水' if type_val == '1' else '小球水'}变化 "
+                                    f"{summary['away_water_change']:+.3f}"
+                                )
                             context_lines.append("  可观察路径摘要: " + " | ".join(facts))
                         for r in rows[:10]:
                             time_str = r.get('change_time', '')
-                            context_lines.append(f"  * 时间: {time_str} | 盘口 {r.get('line')} | 上/大 {r.get('home')} | 下/小 {r.get('away')}")
+                            sides = (
+                                f"主队水 {r.get('home')} | 客队水 {r.get('away')}"
+                                if type_val == '1'
+                                else f"大球水 {r.get('home')} | 小球水 {r.get('away')}"
+                            )
+                            context_lines.append(f"  * 时间: {time_str} | 盘口 {r.get('line')} | {sides}")
         except Exception:
             pass
 
@@ -3003,6 +3051,15 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         
     return ai_output
 
+
+def _cro_market_anchor_context(context_str):
+    for marker in ('【八、 后端进球概率基线', '【赔率指数'):
+        marker_index = context_str.find(marker)
+        if marker_index >= 0:
+            return context_str[marker_index:]
+    return '(赔率与基线数据不可用)'
+
+
 def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_prompt, context_str, ai_cache_file, prediction_metadata, analysis_mode, task_key=None, snapshot=None):
     global ai_tasks
     task_key = task_key or str(match_id)
@@ -3082,7 +3139,10 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
         reports_list = [extract_final_output(ai_tasks[task_key]['reports'][i]) for i in range(3)]
         combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
         # 注入精简赔率锚点，让 CRO 能独立校验分析师对赔率变盘的表述是否准确
-        combined_reports += f"\n\n【原始赔率锚点数据（供 CRO 交叉校验）】\n{context_str[context_str.find('赔率指数'):] if '赔率指数' in context_str else '(赔率数据不可用)'}"
+        combined_reports += (
+            "\n\n【固定概率基线与原始赔率锚点（供 CRO 交叉校验）】\n"
+            + _cro_market_anchor_context(context_str)
+        )
         
         # 串行调用大模型进行收敛层聚合
         ai_tasks[task_key]['phase'] = 'cro'
@@ -3253,7 +3313,7 @@ def match_ai_analysis():
     if not success:
         return jsonify({'success': False, 'error': err_msg})
     trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
-        match_id, details.get('odds_index', [])
+        match_id, details.get('odds_index', []), analysis_mode
     )
     if not trends_ok:
         return jsonify({'success': False, 'error': trend_error})

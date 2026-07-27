@@ -1664,10 +1664,14 @@ def normalize_odds_detail_history(rows, type_val):
             line = str(row[3])
             normalized.append({
                 'change_time': row[0],
+                'match_minute': str(row[1]) if len(row) > 1 else '',
                 'home': float(row[2]),
                 'line': line,
                 'line_zh': line,
                 'away': float(row[4]),
+                'match_status': row[5] if len(row) > 5 else None,
+                'raw_flag': row[6] if len(row) > 6 else None,
+                'source': 'api_compact',
                 'type': type_int,
                 'score': row[7] if len(row) > 7 else '',
             })
@@ -1891,6 +1895,7 @@ def parse_trend_html_data(html, type_val):
                 'line_zh': val2,
                 'away': float(val3) if val3 else 0.0,
                 'score': score_str,
+                'source': 'html_table',
                 'type': type_int
             })
         elif type_int == 2:
@@ -1900,6 +1905,7 @@ def parse_trend_html_data(html, type_val):
                 'draw': float(val2) if val2 else 0.0,
                 'away': float(val3) if val3 else 0.0,
                 'score': score_str,
+                'source': 'html_table',
                 'type': type_int
             })
     log_odds(f"parse_trend_html_data: Successfully parsed and decrypted {len(table_data)} trend items!")

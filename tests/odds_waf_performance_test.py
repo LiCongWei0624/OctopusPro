@@ -151,10 +151,14 @@ class OddsWafPerformanceTests(unittest.TestCase):
 
         self.assertEqual(normalized, [{
             'change_time': 1783533076,
+            'match_minute': '93',
             'home': 3.0,
             'line': '-0.25',
             'line_zh': '-0.25',
             'away': 0.23,
+            'match_status': 4,
+            'raw_flag': 0,
+            'source': 'api_compact',
             'type': 1,
             'score': '2-3',
         }])
