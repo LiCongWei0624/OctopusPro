@@ -943,12 +943,23 @@ def get_odds_via_playwright(match_id):
 def parse_odds_json_to_list(decrypted_json, is_live=False):
     if not decrypted_json:
         return []
-        
-    target_companies = [
-        {"name": "Pinnacle", "cid": 22},
-        {"name": "Bet365", "cid": 2},
-        {"name": "皇冠", "cid": 3},
-    ]
+
+    # Dynamically select companies: prefer strategic 3, then fill from available
+    cids = decrypted_json.get('cids', [])
+    coop = decrypted_json.get('coop', {})
+    preferred = [22, 2, 3]
+    target_companies = []
+    seen = set()
+    for cid in preferred:
+        if cid in cids:
+            name = coop.get(str(cid), {}).get('name', f'cid_{cid}')
+            target_companies.append({"name": name, "cid": cid})
+            seen.add(cid)
+    for cid in cids:
+        if cid not in seen and len(target_companies) < 5:
+            name = coop.get(str(cid), {}).get('name', f'cid_{cid}')
+            target_companies.append({"name": name, "cid": cid})
+            seen.add(cid)
     
     asia_list = decrypted_json.get('asia', [])
     eu_list = decrypted_json.get('eu', [])

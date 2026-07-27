@@ -44,7 +44,7 @@ MODEL_REQUEST_MAX_ATTEMPTS = 2
 MODEL_REQUEST_RETRY_DELAY_SECONDS = 1.5
 BATCH_MATCH_TIMEOUT_SECONDS = 5400
 BATCH_HEARTBEAT_TIMEOUT_SECONDS = 5700
-MIN_REQUIRED_ODDS_COMPANIES = 1
+MIN_REQUIRED_ODDS_COMPANIES = 3
 RECOMMENDED_ODDS_COMPANIES = 6
 TREND_MARKETS = {"1": "让球", "3": "大小球"}
 TREND_FETCH_MAX_ATTEMPTS = 3
@@ -872,7 +872,7 @@ def get_cached_odds_detail(match_id, cid):
 
 
 def _trend_companies_from_odds(odds_index):
-    """Return strategic companies in fixed sharp/volume/Asia order."""
+    """Return companies for trend fetching: preferred 3 first, then fill from available."""
     companies_by_cid = {}
     failures = []
     for item in odds_index if isinstance(odds_index, list) else []:
@@ -882,13 +882,23 @@ def _trend_companies_from_odds(odds_index):
             failures.append(f'{company_name or "未知公司"}: 缺少公司 cid，无法获取变盘历史')
             continue
         cid = str(cid)
-        if cid in PREFERRED_TREND_COMPANY_IDS and cid not in companies_by_cid:
+        if cid not in companies_by_cid:
             companies_by_cid[cid] = (company_name, cid)
-    companies = [
-        companies_by_cid[cid]
-        for cid in PREFERRED_TREND_COMPANY_IDS
-        if cid in companies_by_cid
-    ]
+    # Use PREFERRED_TREND_COMPANY_IDS as priority order (tests mock this)
+    preferred = PREFERRED_TREND_COMPANY_IDS
+    companies = []
+    seen = set()
+    for cid in preferred:
+        if cid in companies_by_cid:
+            companies.append(companies_by_cid[cid])
+            seen.add(cid)
+    # Fill with remaining available companies up to 3 total
+    for cid in companies_by_cid:
+        if len(companies) >= 3:
+            break
+        if cid not in seen:
+            companies.append(companies_by_cid[cid])
+            seen.add(cid)
     return companies, failures
 
 
