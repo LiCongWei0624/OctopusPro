@@ -3781,7 +3781,24 @@ function triggerOddsBackgroundFetch(matchId, details) {
     if (!matchId || !details) return;
 
     // AI 页始终可查看已完成报告；仅在生成新报告时拦截尚未完成的走势同步。
-    const aiTab = document.querySelector('.detail-tab[onclick*="\'ai\'"]');
+    const aiTab = document.querySelector('.detail-tab[onclick*="AI\'ai\'"]');
+    const runBtn = document.getElementById('btn-run-ai-analysis');
+
+    const setSyncUI = (syncing) => {
+        if (syncing) {
+            if (runBtn) {
+                runBtn.disabled = true;
+                const span = runBtn.querySelector('span');
+                if (span) span.textContent = '盘口同步中...';
+            }
+            if (aiTab) {
+                aiTab.setAttribute('title', '盘口走势同步中：可查看已有报告；生成新报告请等待同步完成。');
+            }
+        } else {
+            resetAiTabUI();
+        }
+    };
+
     const resetAiTabUI = () => {
         if (aiTab) {
             aiTab.removeAttribute('title');
@@ -3818,26 +3835,51 @@ function triggerOddsBackgroundFetch(matchId, details) {
         }
     });
 
-    if (oddsFetchQueue.length === 0) return;
-
-    // The full instant odds snapshot is already available in match details.
-    // This queue warms the heavier handicap-trend history before AI analysis.
-    if (aiTab) {
-        aiTab.setAttribute('title', '盘口走势同步中：可查看已有报告；生成新报告请等待同步完成。');
-        const fText = aiTab.querySelector('.tab-text-full');
-        const sText = aiTab.querySelector('.tab-text-short');
-        if (fText) fText.textContent = 'AI 预测分析';
-        if (sText) sText.textContent = 'AI';
+    if (oddsFetchQueue.length === 0) {
+        // 无赔率公司可同步，直接启用按钮
+        if (runBtn) {
+            runBtn.disabled = false;
+            const span = runBtn.querySelector('span');
+            if (span) span.textContent = '一键生成 AI 滚球分析（实时盘口）';
+        }
+        return;
     }
 
-    console.log(`[Background Fetcher] Queue initialized with ${oddsFetchQueue.length} companies to cache.`);
+    // —— 同步中阶段：锁定分析按钮 ——
+    setSyncUI(true);
+
+    const oddsFetchQueueOriginalSize = oddsFetchQueue.length;
+    console.log(`[Background Fetcher] Queued ${oddsFetchQueueOriginalSize} companies to cache.`);
+
+    // 超时兜底：60秒后无论如何启用按钮
+    let syncTimeout = setTimeout(() => {
+        console.log('[Background Fetcher] Sync timeout — enabling button anyway.');
+        if (runBtn) {
+            runBtn.disabled = false;
+            const span = runBtn.querySelector('span');
+            if (span) span.textContent = '一键生成 AI 滚球分析（实时盘口）';
+        }
+        resetAiTabUI();
+    }, 60000);
 
     const fetchNextTrend = () => {
         if (matchId !== currentOddsFetchMatchId) return;
         if (oddsFetchQueue.length === 0) {
             oddsFetchIntervalId = null;
+            clearTimeout(syncTimeout);
             resetAiTabUI();
-            console.log(`[Background Fetcher] All odds trends successfully cached for match ${matchId}!`);
+
+            // —— 同步完成：启用按钮 ——
+            if (runBtn) {
+                runBtn.disabled = false;
+                const span = runBtn.querySelector('span');
+                if (span) span.textContent = '一键生成 AI 滚球分析（实时盘口）';
+            }
+
+            console.log(`[Background Fetcher] All odds trends cached for match ${matchId}!`);
+
+            // —— 微信通知 ——
+            notifyWechat(`✅ 盘口走势同步完成\n比赛: ${details.home_team || '?'} vs ${details.away_team || '?'}\n${oddsFetchQueueOriginalSize || 0} 家公司赔率已就绪，可进行 AI 分析。`);
             return;
         }
 
@@ -3857,5 +3899,22 @@ function triggerOddsBackgroundFetch(matchId, details) {
             });
     };
 
+    // Track original queue size for notification
     fetchNextTrend();
+}
+
+// ===== 微信通知辅助 =====
+// 通过后端 /api/send_wechat_message 发送微信通知
+function notifyWechat(message) {
+    fetch('/api/send_wechat_message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: message })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) console.log('[Wechat] Notification sent:', message.slice(0, 50));
+        else console.warn('[Wechat] Failed to send:', data.error);
+    })
+    .catch(err => console.error('[Wechat] Error:', err));
 }

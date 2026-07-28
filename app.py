@@ -11,6 +11,8 @@ import tempfile
 import threading
 import time
 import uuid
+import sqlite3
+from contextlib import closing
 from leisu_crawler import fetch_matches
 from detail_scraper import get_complete_match_details, get_odds_detail_via_playwright, get_real_odds
 from scraper import scrape_desktop_matches
@@ -3445,6 +3447,33 @@ def ai_analysis_status():
             'final_ticket': task.get('final_ticket', ''),
             'status_list': task.get('status_list', ['processing', 'processing', 'processing'])
         })
+    
+    # 缓存和内存都找不到时，回退到 prediction_history.sqlite3 读取历史报告
+    detail = None
+    try:
+        with closing(sqlite3.connect(PREDICTION_DB_FILE)) as conn:
+            row = conn.execute(
+                'SELECT final_report, prediction_json FROM predictions WHERE match_id = ? ORDER BY id DESC LIMIT 1',
+                (match_id,)
+            ).fetchone()
+        if row:
+            detail = {
+                'final_report': row[0],
+                'prediction': json.loads(row[1]) if row[1] else None,
+            }
+    except Exception:
+        detail = None
+    
+    if detail:
+        report = detail.get('final_report', '') or ''
+        return jsonify({
+            'success': True,
+            'status': 'completed',
+            'reports': [report, report, report],
+            'final_ticket': report,
+            'status_list': ['completed', 'completed', 'completed'],
+            'cached': True,
+        })
         
     return jsonify({'success': True, 'status': 'idle'})
 
@@ -3497,6 +3526,36 @@ def prediction_backtest_detail(prediction_id):
     except Exception as e:
         return jsonify({'success': False, 'error': f'读取预测样本失败: {str(e)}'})
 
+
+@app.route('/api/send_wechat_message', methods=['POST'])
+def send_wechat_message():
+    """Send a notification to user via configured channel."""
+    import requests
+    data = request.get_json(silent=True) or {}
+    message = str(data.get('message', '')).strip()
+    if not message:
+        return jsonify({'success': False, 'error': '消息内容为空'})
+
+    # 通过 Hermes chat API 推送；如果不可用则静默失败
+    try:
+        api_key = os.environ.get('API_SERVER_KEY', 'my-secret-token-2026')
+        # Hermes local chat relay
+        resp = requests.post(
+            'http://127.0.0.1:9119/api/v1/messages',
+            headers={
+                'Authorization': f'Bearer {api_key}',
+                'Content-Type': 'application/json',
+                'X-Channel': 'wechat',
+            },
+            json={'text': message},
+            timeout=10,
+        )
+        if resp.status_code < 400:
+            return jsonify({'success': True, 'via': 'hermes'})
+    except Exception:
+        pass
+
+    return jsonify({'success': False, 'error': '微信推送未配置或网关不可达；但不影响核心功能'})
 
 
 if __name__ == '__main__':
