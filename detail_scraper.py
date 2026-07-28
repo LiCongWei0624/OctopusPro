@@ -956,7 +956,7 @@ def parse_odds_json_to_list(decrypted_json, is_live=False):
             target_companies.append({"name": name, "cid": cid})
             seen.add(cid)
     for cid in cids:
-        if cid not in seen and len(target_companies) < 5:
+        if cid not in seen:
             name = coop.get(str(cid), {}).get('name', f'cid_{cid}')
             target_companies.append({"name": name, "cid": cid})
             seen.add(cid)
