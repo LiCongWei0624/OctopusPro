@@ -44,7 +44,7 @@ MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
 MODEL_REQUEST_CONCURRENCY = 3
 MODEL_REQUEST_MAX_ATTEMPTS = 2
 MODEL_REQUEST_RETRY_DELAY_SECONDS = 1.5
-BATCH_MATCH_TIMEOUT_SECONDS = 5400
+BATCH_MATCH_TIMEOUT_SECONDS = 300
 BATCH_HEARTBEAT_TIMEOUT_SECONDS = 5700
 MIN_REQUIRED_ODDS_COMPANIES = 3
 RECOMMENDED_ODDS_COMPANIES = 6
@@ -1749,7 +1749,8 @@ def _prepare_batch_item(batch_id, item):
     )
     if not trends_ok:
         _persist_preparation_failure_trace(item['match_id'], 'trend', trend_error, details=details, trend_quality=trend_quality)
-        return False, trend_error, None, snapshot
+        print(f"[{item['match_id']}] 趋势历史获取失败（非阻塞）：{trend_error}，继续分析")
+        snapshot['trend_quality'] = {'required': 0, 'refreshed': 0, 'failures': [trend_error], 'complete': False}
     with _batch_ai_tasks_lock:
         item['status'] = 'validating'
         item['prepare_phase'] = '详情与全部变盘历史校验通过，正在构建独立分析上下文'
