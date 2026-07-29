@@ -1896,7 +1896,7 @@ def _watch_batch_timeouts(batch_id):
 
 @app.route('/api/batch_ai_analysis', methods=['POST'])
 def batch_ai_analysis():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     requested_matches = data.get('matches')
     if not isinstance(requested_matches, list) or not requested_matches:
         return jsonify({'success': False, 'error': '请先选择至少一场赛事。'})
@@ -1995,7 +1995,7 @@ def batch_ai_analysis_latest():
 
 @app.route('/api/batch_ai_analysis_retry_cro', methods=['POST'])
 def retry_batch_cro():
-    payload = request.get_json(silent=True) or {}
+    payload = request.get_json(force=True, silent=True) or {}
     batch_id = str(payload.get('batch_id', '')).strip()
     match_id = str(payload.get('match_id', '')).strip()
     if not batch_id or not match_id:
@@ -3540,7 +3540,7 @@ def prediction_backtest_detail(prediction_id):
 def send_wechat_message():
     """Send a notification to user via configured channel."""
     import requests
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     message = str(data.get('message', '')).strip()
     if not message:
         return jsonify({'success': False, 'error': '消息内容为空'})
