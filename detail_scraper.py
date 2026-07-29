@@ -151,7 +151,14 @@ def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
     if lock:
         lock.acquire()
     try:
-        return _fetch_html_with_bypass_inner(url, domain, opener, cj, headers)
+        # 设置全局 socket 超时兜底，防止 TCP connect 被 IP 黑洞静默丢弃时无限挂起
+        import socket
+        old_timeout = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(15)
+        try:
+            return _fetch_html_with_bypass_inner(url, domain, opener, cj, headers)
+        finally:
+            socket.setdefaulttimeout(old_timeout)
     finally:
         if lock:
             lock.release()
