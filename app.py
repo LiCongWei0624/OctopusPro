@@ -1388,6 +1388,12 @@ def _prepare_analysis_snapshot(match_id, home, away, force_refresh=True):
     """
     try:
         with _detail_prepare_semaphore:
+            # 每次抓取前清理全局 CookieJar，避免残留的 WAF cookie 导致 TCP 连接异常
+            from detail_scraper import GLOBAL_CJ, GLOBAL_ODDS_CJ, _GLOBAL_CJ_LOCK, _GLOBAL_ODDS_CJ_LOCK
+            with _GLOBAL_CJ_LOCK:
+                GLOBAL_CJ.clear()
+            with _GLOBAL_ODDS_CJ_LOCK:
+                GLOBAL_ODDS_CJ.clear()
             details = get_complete_match_details(match_id, home, away)
             if not details.get('odds_index'):
                 details['odds_index'] = get_real_odds(match_id)
@@ -1755,24 +1761,19 @@ def _run_batch_ai_analysis_v2(batch_id, runtime_config):
         with _batch_ai_tasks_lock:
             items = [item for item in batch_ai_tasks[batch_id]['items'] if item['status'] == 'queued']
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_DETAIL_CONCURRENCY) as prepare_executor:
-            futures = {prepare_executor.submit(_prepare_batch_item, batch_id, item): item for item in items}
-            for future in concurrent.futures.as_completed(futures):
-                item = futures[future]
-                try:
-                    success, error, context_str, snapshot = future.result()
-                except Exception as error:
-                    success, context_str, snapshot = False, None, None
-                if item.get('status') == 'timed_out':
-                    continue
-                if not success:
-                    with _batch_ai_tasks_lock:
-                        item['status'] = 'failed'
-                        item['error'] = str(error)
-                    _persist_latest_batch_state(batch_id)
-                    continue
-                prepared.append((item, context_str, snapshot))
+        # Preparation stage: sequential (BATCH_DETAIL_CONCURRENCY=1 anyway)
+        for item in items:
+            success, error, context_str, snapshot = _prepare_batch_item(batch_id, item)
+            if item.get('status') == 'timed_out':
+                continue
+            if not success:
+                with _batch_ai_tasks_lock:
+                    item['status'] = 'failed'
+                    item['error'] = str(error)
                 _persist_latest_batch_state(batch_id)
+                continue
+            prepared.append((item, context_str, snapshot))
+            _persist_latest_batch_state(batch_id)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_CONCURRENT_MATCHES) as ai_executor:
             active = {}
@@ -3561,4 +3562,4 @@ def send_wechat_message():
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
     start_refresh_scheduler()
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=5000, use_reloader=False, threaded=True)
