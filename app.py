@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-import socket
-socket.setdefaulttimeout(10)  # 全局 socket 超时，防 TCP connect 被黑洞静默吞包时无限挂起
 from flask import Flask, jsonify, render_template, request, send_from_directory
 import json
 import os

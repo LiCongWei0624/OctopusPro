@@ -145,20 +145,42 @@ def solve_waf_via_node(html, url, user_agent):
         log_odds(f"solve_waf_via_node: Failed to execute or parse Node WAF solver: {e_node}")
     return None
 
+
+TCP_PRECHECK_TIMEOUT = 3
+
+
+def _tcp_precheck(host, port):
+    """DNS 多 IP 轮询 + TCP 连接预检，3 秒内任一 IP 可达返回 True。"""
+    import socket as _socket
+    try:
+        addrs = _socket.getaddrinfo(host, port, _socket.AF_INET, _socket.SOCK_STREAM)
+    except _socket.gaierror:
+        return False
+    for addr in addrs[:10]:
+        ip = addr[4][0]
+        try:
+            s = _socket.create_connection((ip, port), timeout=TCP_PRECHECK_TIMEOUT)
+            s.close()
+            return True
+        except (_socket.timeout, OSError):
+            continue
+    return False
+
+
 def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
     # 通过 cj 身份确定使用哪个全局锁：GLOBAL_CJ 或 GLOBAL_ODDS_CJ
     lock = _GLOBAL_CJ_LOCK if cj is GLOBAL_CJ else (_GLOBAL_ODDS_CJ_LOCK if cj is GLOBAL_ODDS_CJ else None)
     if lock:
         lock.acquire()
     try:
-        # 设置全局 socket 超时兜底，防止 TCP connect 被 IP 黑洞静默丢弃时无限挂起
-        import socket
-        old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(15)
-        try:
-            return _fetch_html_with_bypass_inner(url, domain, opener, cj, headers)
-        finally:
-            socket.setdefaulttimeout(old_timeout)
+        # live.leisu.com CDN 部分 IP 从 VPS 不可达，TCP 预检（3s）快速跳过不可达 IP
+        if 'live.leisu.com' in (url or ''):
+            from urllib.parse import urlparse
+            host = urlparse(url).hostname
+            if not _tcp_precheck(host, 443):
+                log_odds(f"TCP precheck failed for {host}, skipping request")
+                raise Exception(f"{host} unreachable within 3s TCP precheck, falling through")
+        return _fetch_html_with_bypass_inner(url, domain, opener, cj, headers)
     finally:
         if lock:
             lock.release()
