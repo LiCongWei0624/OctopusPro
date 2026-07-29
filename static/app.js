@@ -3526,8 +3526,10 @@ function renderTrendDetails(container, trendData, type) {
         }
 
         let timeStr = item.change_time || '即时';
-        if (item.match_status > 1) {
-            timeStr = `<span class="in-play-badge">滚 ${item.match_time || ''}'</span>`;
+        // 用户要求：去掉"滚"字，只保留时间
+        timeStr = timeStr.replace(/滚/g, '').trim();
+        if (item.match_status > 1 && item.match_time) {
+            timeStr = `${item.match_time}'`;
         }
 
         listHtml += `
