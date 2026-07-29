@@ -17,6 +17,42 @@ import threading
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
+# ── Socket 保险：自定义 create_connection，每个域名最多只试 2 个 IP ──
+import socket as _orig_socket
+
+_orig_create_connection = _orig_socket.create_connection
+_MAX_CONNECT_ATTEMPTS = 2
+
+def _safe_create_connection(address, timeout=_orig_socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **kwargs):
+    """like socket.create_connection, but tries at most 2 IPs so
+       a batch of unreachable CDN edge nodes cannot pile up 8×timeout."""
+    host, port = address
+    err = None
+    last_err_msg = None
+    # 获取所有 IP，但只试前 N 个
+    for res in _orig_socket.getaddrinfo(host, port, 0, _orig_socket.SOCK_STREAM)[:_MAX_CONNECT_ATTEMPTS]:
+        af, socktype, proto, canonname, sa = res
+        sock = None
+        try:
+            sock = _orig_socket.socket(af, socktype, proto)
+            if timeout is not _orig_socket._GLOBAL_DEFAULT_TIMEOUT:
+                sock.settimeout(timeout)
+            if source_address:
+                sock.bind(source_address)
+            sock.connect(sa)
+            return sock
+        except OSError as _e:
+            err = _e
+            last_err_msg = str(_e)[:80]
+            if sock is not None:
+                sock.close()
+    if err is not None:
+        raise err
+    else:
+        raise OSError(f"getaddrinfo returned no usable IPs for {host}")
+
+_orig_socket.create_connection = _safe_create_connection
+
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,image/avif,image/heif,*/*;q=0.8',
