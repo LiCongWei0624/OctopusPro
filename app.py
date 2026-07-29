@@ -1368,8 +1368,12 @@ def _detail_quality_report(details):
         'odds_snapshot': f'最少 {MIN_REQUIRED_ODDS_COMPANIES} 家赔率指数',
     }
     missing = [key for key, passed in checks.items() if not passed]
+    # Only odds shortage blocks the snapshot; other missing dimensions
+    # (intelligence, lineup, H2H, recent form) are logged as warnings only.
+    snapshot_blocked = not checks.get('odds_snapshot', False)
     return {
-        'passed': not missing,
+        'passed': not snapshot_blocked,
+        'blocked_reason': ('赔率指数不足' if snapshot_blocked else None),
         'checks': checks,
         'missing': missing,
         'missing_labels': [labels[key] for key in missing],
@@ -1402,7 +1406,11 @@ def _prepare_analysis_snapshot(match_id, home, away, force_refresh=True):
 
     quality = _detail_quality_report(details)
     if not quality['passed']:
-        return False, f"数据校验未通过：缺少 {', '.join(quality['missing_labels'])}", details, quality
+        # Only odds shortage (< 3 companies) blocks the snapshot
+        return False, f"数据校验未通过：{quality['blocked_reason']}", details, quality
+    if quality['missing']:
+        # Non-blocking missing dimensions are logged for monitoring
+        print(f"[{match_id}] 数据维度警告：缺少 {', '.join(quality['missing_labels'])}，继续分析")
 
     snapshot = {
         'captured_at': datetime.datetime.now().isoformat(timespec='seconds'),
