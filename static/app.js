@@ -2827,10 +2827,7 @@ function renderOddsTab(match, details) {
                             <div class="shimmer-line"></div>
                             <div class="shimmer-line medium"></div>
                             <div class="shimmer-line short"></div>
-                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
-                        </div>
-                        <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
-                            <canvas id="trend-canvas-${row.cid}-1" style="height: 160px; width: 100%;"></canvas>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取变盘记录...</span>
                         </div>
                         <div id="trend-details-${row.cid}-1" class="trend-details-box" style="display: none;"></div>
                     </div>
@@ -2887,10 +2884,7 @@ function renderOddsTab(match, details) {
                             <div class="shimmer-line"></div>
                             <div class="shimmer-line medium"></div>
                             <div class="shimmer-line short"></div>
-                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
-                        </div>
-                        <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
-                            <canvas id="trend-canvas-${row.cid}-2" style="height: 160px; width: 100%;"></canvas>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取变盘记录...</span>
                         </div>
                         <div id="trend-details-${row.cid}-2" class="trend-details-box" style="display: none;"></div>
                     </div>
@@ -2940,10 +2934,7 @@ function renderOddsTab(match, details) {
                             <div class="shimmer-line"></div>
                             <div class="shimmer-line medium"></div>
                             <div class="shimmer-line short"></div>
-                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取实时变盘走势...</span>
-                        </div>
-                        <div class="trend-chart-wrapper" style="position: relative; height: 160px; width: 100%; display: none;">
-                            <canvas id="trend-canvas-${row.cid}-3" style="height: 160px; width: 100%;"></canvas>
+                            <span style="font-size:0.8rem; color:var(--color-text-secondary); margin-top:5px; display:inline-block;">正在拉取变盘记录...</span>
                         </div>
                         <div id="trend-details-${row.cid}-3" class="trend-details-box" style="display: none;"></div>
                     </div>
@@ -3431,9 +3422,6 @@ function selectPopoverQuickDate(type) {
 }
 window.selectPopoverQuickDate = selectPopoverQuickDate;
 
-// 全局图表缓存实例
-const chartInstances = {};
-
 function toggleOddsTrend(matchId, cid, type, trEl) {
     // 容错兜底：若 cid 缺失（如由于读取了不含 cid 属性的历史缓存），则利用公司名称匹配映射出正确的 ID
     if (!cid || cid === 'undefined' || cid === undefined) {
@@ -3459,9 +3447,9 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
         }
     }
 
-    // 找到走势面板所在的 <tr>
-    const trendRow = trEl.nextElementSibling;
-    if (!trendRow || !trendRow.classList.contains('trend-chart-row')) {
+    // 找到走势面板所在的 <tr>（改用 ID 查找，避免 nextElementSibling 在跨 tbody 时失败）
+    const trendRow = document.getElementById('trend-row-' + cid + '-' + type);
+    if (!trendRow) {
         return;
     }
 
@@ -3473,9 +3461,9 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
     }
 
     // 折叠该表格内的其它所有展开的走势行，保证视觉简洁
-    const allTrendRows = trEl.parentElement.querySelectorAll('.trend-chart-row');
+    const allTrendRows = trEl.closest('table').querySelectorAll('.trend-chart-row');
     allTrendRows.forEach(r => r.style.display = 'none');
-    const allClickableRows = trEl.parentElement.querySelectorAll('.odds-row-clickable');
+    const allClickableRows = trEl.closest('table').querySelectorAll('.odds-row-clickable');
     allClickableRows.forEach(r => r.classList.remove('odds-row-active'));
 
     // 展开当前行
@@ -3484,18 +3472,15 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
 
     const box = trendRow.querySelector('.trend-chart-box');
     const spinner = box.querySelector('.trend-loading-spinner');
-    const wrapper = box.querySelector('.trend-chart-wrapper');
     const detailsBox = box.querySelector('#trend-details-' + cid + '-' + type);
-    const canvasId = 'trend-canvas-' + cid + '-' + type;
 
-    // 如果已经加载过数据了，就不重复请求，只做渲染
-    if (wrapper.getAttribute('data-loaded') === 'true') {
+    // 如果已经加载过数据了，就不重复请求
+    if (detailsBox.getAttribute('data-loaded') === 'true') {
         return;
     }
 
     // 显示 loading
     spinner.style.display = 'block';
-    wrapper.style.display = 'none';
     detailsBox.style.display = 'none';
 
     // 发起 API 请求拉取数据
@@ -3504,16 +3489,12 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
         .then(res => {
             if (res.success && res.data && res.data.length > 0) {
                 spinner.style.display = 'none';
-                wrapper.style.display = 'block';
                 detailsBox.style.display = 'block';
 
-                // 绘制图表
-                drawChart(canvasId, res.data, type);
-
-                // 渲染变盘明文列表
+                // 渲染变盘记录表格
                 renderTrendDetails(detailsBox, res.data, type);
 
-                wrapper.setAttribute('data-loaded', 'true');
+                detailsBox.setAttribute('data-loaded', 'true');
             } else {
                 spinner.innerText = res.error || '该盘口暂无详细历史变盘走势点';
             }
@@ -3524,150 +3505,6 @@ function toggleOddsTrend(matchId, cid, type, trEl) {
         });
 }
 window.toggleOddsTrend = toggleOddsTrend;
-
-function drawChart(canvasId, trendData, type) {
-    const ctx = document.getElementById(canvasId).getContext('2d');
-
-    // 反转数组，让变盘历史时间从早到晚排序展示（通常接口返回的是最新到最旧）
-    const sortedData = [...trendData].reverse();
-
-    // 准备数据
-    const labels = sortedData.map(item => {
-        if (item.match_status > 1) {
-            return `滚盘 ${item.match_time || ''}'`;
-        }
-        return item.change_time || '即时';
-    });
-
-    let datasets = [];
-
-    if (type === 1 || type === 3) {
-        // 让球 (1) 或 大小球 (3)
-        const homeOdds = sortedData.map(item => parseFloat(item.home));
-        const awayOdds = sortedData.map(item => parseFloat(item.away));
-
-        // 粉蓝渐变
-        const gradientHome = ctx.createLinearGradient(0, 0, 0, 160);
-        gradientHome.addColorStop(0, 'rgba(54, 162, 235, 0.3)');
-        gradientHome.addColorStop(1, 'rgba(54, 162, 235, 0.0)');
-
-        // 橘黄渐变
-        const gradientAway = ctx.createLinearGradient(0, 0, 0, 160);
-        gradientAway.addColorStop(0, 'rgba(255, 159, 64, 0.3)');
-        gradientAway.addColorStop(1, 'rgba(255, 159, 64, 0.0)');
-
-        datasets = [
-            {
-                label: type === 1 ? '主队/大球水位' : '大球水位',
-                data: homeOdds,
-                borderColor: '#36a2eb',
-                backgroundColor: gradientHome,
-                fill: true,
-                tension: 0.4,
-                borderWidth: 2,
-                pointRadius: 2,
-                pointHoverRadius: 5
-            },
-            {
-                label: type === 1 ? '客队/小球水位' : '小球水位',
-                data: awayOdds,
-                borderColor: '#ff9f40',
-                backgroundColor: gradientAway,
-                fill: true,
-                tension: 0.4,
-                borderWidth: 2,
-                pointRadius: 2,
-                pointHoverRadius: 5
-            }
-        ];
-    } else if (type === 2) {
-        // 胜平负 (1X2) 欧指三条线
-        const winOdds = sortedData.map(item => parseFloat(item.home));
-        const drawOdds = sortedData.map(item => parseFloat(item.draw));
-        const loseOdds = sortedData.map(item => parseFloat(item.away));
-
-        datasets = [
-            {
-                label: '主胜',
-                data: winOdds,
-                borderColor: '#4bc0c0',
-                fill: false,
-                tension: 0.4,
-                borderWidth: 2,
-                pointRadius: 2
-            },
-            {
-                label: '平局',
-                data: drawOdds,
-                borderColor: '#9966ff',
-                fill: false,
-                tension: 0.4,
-                borderWidth: 2,
-                pointRadius: 2
-            },
-            {
-                label: '客胜',
-                data: loseOdds,
-                borderColor: '#ff6384',
-                fill: false,
-                tension: 0.4,
-                borderWidth: 2,
-                pointRadius: 2
-            }
-        ];
-    }
-
-    // 如果已有实例则销毁，防止报错
-    if (chartInstances[canvasId]) {
-        chartInstances[canvasId].destroy();
-    }
-
-    chartInstances[canvasId] = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: datasets
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'top',
-                    labels: {
-                        color: 'var(--text-muted)',
-                        boxWidth: 12,
-                        font: { size: 10 }
-                    }
-                },
-                tooltip: {
-                    mode: 'index',
-                    intersect: false
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false },
-                    ticks: {
-                        color: 'var(--text-muted)',
-                        font: { size: 9 },
-                        maxRotation: 45,
-                        autoSkip: true,
-                        maxTicksLimit: 8
-                    }
-                },
-                y: {
-                    grid: { color: 'rgba(200, 200, 200, 0.1)' },
-                    ticks: {
-                        color: 'var(--text-muted)',
-                        font: { size: 9 }
-                    }
-                }
-            }
-        }
-    });
-}
 
 function renderTrendDetails(container, trendData, type) {
     let listHtml = `
@@ -3877,9 +3714,6 @@ function triggerOddsBackgroundFetch(matchId, details) {
             }
 
             console.log(`[Background Fetcher] All odds trends cached for match ${matchId}!`);
-
-            // —— 微信通知 ——
-            notifyWechat(`✅ 盘口走势同步完成\n比赛: ${details.home_team || '?'} vs ${details.away_team || '?'}\n${oddsFetchQueueOriginalSize || 0} 家公司赔率已就绪，可进行 AI 分析。`);
             return;
         }
 
@@ -3901,20 +3735,4 @@ function triggerOddsBackgroundFetch(matchId, details) {
 
     // Track original queue size for notification
     fetchNextTrend();
-}
-
-// ===== 微信通知辅助 =====
-// 通过后端 /api/send_wechat_message 发送微信通知
-function notifyWechat(message) {
-    fetch('/api/send_wechat_message', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: message })
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.success) console.log('[Wechat] Notification sent:', message.slice(0, 50));
-        else console.warn('[Wechat] Failed to send:', data.error);
-    })
-    .catch(err => console.error('[Wechat] Error:', err));
 }

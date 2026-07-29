@@ -64,11 +64,14 @@ def is_waf_challenge_response(body):
     return 'renderData' in body and ('aliyun_waf' in body or 'acw_sc__v2' in body)
 
 # 全局共享 WAF CookieJar 容器，免除每次点击比赛重复求解 WAF 的耗时与偶发失败风险
+# 互斥锁保护：批处理线程与 Flask 请求线程必须串行访问共享的 CookieJar，
+# 否则 cj.clear() + WAF cookie 设置会被并发竞争破坏，导致无限 WAF 循环和请求永久阻塞。
+_GLOBAL_CJ_LOCK = threading.Lock()
 GLOBAL_CJ = http.cookiejar.CookieJar()
 
 GLOBAL_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(GLOBAL_CJ))
 
-# 赔率走势网页专属的 WAF CookieJar 容器，实现子域物理隔离，防止 WAF Cookie 冲突拦截
+_GLOBAL_ODDS_CJ_LOCK = threading.Lock()
 GLOBAL_ODDS_CJ = http.cookiejar.CookieJar()
 GLOBAL_ODDS_OPENER = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(GLOBAL_ODDS_CJ))
 
@@ -143,6 +146,18 @@ def solve_waf_via_node(html, url, user_agent):
     return None
 
 def fetch_html_with_bypass(url, domain, opener, cj, headers=None):
+    # 通过 cj 身份确定使用哪个全局锁：GLOBAL_CJ 或 GLOBAL_ODDS_CJ
+    lock = _GLOBAL_CJ_LOCK if cj is GLOBAL_CJ else (_GLOBAL_ODDS_CJ_LOCK if cj is GLOBAL_ODDS_CJ else None)
+    if lock:
+        lock.acquire()
+    try:
+        return _fetch_html_with_bypass_inner(url, domain, opener, cj, headers)
+    finally:
+        if lock:
+            lock.release()
+
+
+def _fetch_html_with_bypass_inner(url, domain, opener, cj, headers=None):
     use_headers = headers if headers is not None else HEADERS.copy()
     
     # 从浏览器会话文件补充凭证，但保留刚求解成功的 acw_sc__v2。
@@ -1364,9 +1379,10 @@ def get_complete_match_details(match_id, home_name, away_name):
                 break
             print(f"HTML length is only {len(html_analysis)} (WAF soft block). Attempt {attempt+1} failed. Re-solving WAF...")
             try:
-                solve_waf_via_node(url_analysis, opener, cj)
+                # 重新走完整的 fetch_html_with_bypass 链路，内部自带 WAF 检测+重试
+                html_analysis = fetch_html_with_bypass(url_analysis, 'live.leisu.com', opener, cj)
             except Exception as e_solve:
-                print(f"Error solving WAF in loop: {e_solve}")
+                print(f"Error re-fetching in WAF soft block loop: {e_solve}")
             time.sleep(0.5)
             
         soup_analysis = BeautifulSoup(html_analysis, 'html.parser')
