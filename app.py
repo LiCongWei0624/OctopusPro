@@ -37,8 +37,8 @@ BATCH_CONCURRENT_MATCHES = 1
 # Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
 # time so a multi-match batch cannot multiply requests against that shared host.
 BATCH_DETAIL_CONCURRENCY = 1
-AI_VERSION_TIMEOUT_SECONDS = 300
-CRO_TIMEOUT_SECONDS = 240
+AI_VERSION_TIMEOUT_SECONDS = 120
+CRO_TIMEOUT_SECONDS = 120
 MODEL_CONNECT_TIMEOUT_SECONDS = 30
 MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
 MODEL_REQUEST_CONCURRENCY = 2
