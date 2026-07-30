@@ -2870,6 +2870,13 @@ class ModelNoContentError(Exception):
     pass
 
 
+class ModelRateLimitError(Exception):
+    """Raised when the provider returned HTTP 429."""
+    def __init__(self, msg, original_text=""):
+        super().__init__(msg)
+        self.original_text = original_text
+
+
 def _retry_model_operation(operation, has_visible_output):
     """Retry transient failures OR content-less responses up to max attempts."""
     import requests
@@ -2890,6 +2897,16 @@ def _retry_model_operation(operation, has_visible_output):
                 raise ModelNoContentError(
                     f"模型连续 {MODEL_REQUEST_MAX_ATTEMPTS} 次仅返回思考过程，未生成可用正文"
                 )
+        except ModelRateLimitError as rle:
+            # 429 - wait outside the semaphore, then retry
+            with _rate_limit_lock:
+                global _model_rate_limit_backoff
+                _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
+                backoff = _model_rate_limit_backoff
+            if attempt == MODEL_REQUEST_MAX_ATTEMPTS:
+                raise  # last attempt, propagate
+            print(f"模型被限流(429)，全局退避 {backoff:.0f}s 后第 {attempt}/{MODEL_REQUEST_MAX_ATTEMPTS} 次重试")
+            time.sleep(backoff)
         except retryable_errors:
             if has_visible_output() or attempt == MODEL_REQUEST_MAX_ATTEMPTS:
                 raise
@@ -2944,26 +2961,15 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         stream=True,
     )
     if r.status_code == 429:
-        global _model_rate_limit_backoff
-        with _rate_limit_lock:
-            _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
-            backoff = _model_rate_limit_backoff
         err_text = _read_error_body(r)
         r.close()
-        print(f"模型请求被限流(429)，退避 {backoff:.0f}s 后重试")
-        time.sleep(backoff)
-        # 内部重试一次（已经等过了退避）
-        headers['x-request-id'] = str(uuid.uuid4())
-        r = requests.post(
-            url, headers=headers, json=payload,
-            timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
-            stream=True,
+        # Don't sleep here — still inside _model_request_semaphore.
+        # _retry_model_operation catches ModelRateLimitError and
+        # sleeps outside the semaphore before retrying.
+        raise ModelRateLimitError(
+            f"大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}",
+            original_text=err_text or r.text[:80],
         )
-        if r.status_code == 429:
-            # 再次限流就直接报错，让外层 retry 处理
-            err_text = _read_error_body(r)
-            r.close()
-            raise Exception(f"大模型接口请求失败: HTTP 429（重试后仍限流）- {err_text or r.text[:80]}")
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
@@ -3071,24 +3077,12 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         stream=True,
     )
     if r.status_code == 429:
-        global _model_rate_limit_backoff
-        with _rate_limit_lock:
-            _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
-            backoff = _model_rate_limit_backoff
         err_text = _read_error_body(r)
         r.close()
-        print(f"CRO被限流(429)，退避 {backoff:.0f}s 后重试")
-        time.sleep(backoff)
-        headers['x-request-id'] = str(uuid.uuid4())
-        r = requests.post(
-            url, headers=headers, json=payload,
-            timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
-            stream=True,
+        raise ModelRateLimitError(
+            f"收敛层大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}",
+            original_text=err_text or r.text[:80],
         )
-        if r.status_code == 429:
-            err_text = _read_error_body(r)
-            r.close()
-            raise Exception(f"收敛层大模型接口请求失败: HTTP 429（重试后仍限流）- {err_text or r.text[:80]}")
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
