@@ -33,7 +33,7 @@ CACHE_DIR = os.path.join(os.path.dirname(__file__), 'cache')
 AI_ANALYSIS_CACHE_VERSION = 8
 STRATEGY_VERSION = 'dual-market-v3'
 MAX_BATCH_ANALYSIS_SIZE = 6
-BATCH_CONCURRENT_MATCHES = 6
+BATCH_CONCURRENT_MATCHES = 1
 # Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
 # time so a multi-match batch cannot multiply requests against that shared host.
 BATCH_DETAIL_CONCURRENCY = 1
