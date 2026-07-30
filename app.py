@@ -2950,8 +2950,20 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             backoff = _model_rate_limit_backoff
         err_text = _read_error_body(r)
         r.close()
+        print(f"模型请求被限流(429)，退避 {backoff:.0f}s 后重试")
         time.sleep(backoff)
-        raise Exception(f"大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}")
+        # 内部重试一次（已经等过了退避）
+        headers['x-request-id'] = str(uuid.uuid4())
+        r = requests.post(
+            url, headers=headers, json=payload,
+            timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
+            stream=True,
+        )
+        if r.status_code == 429:
+            # 再次限流就直接报错，让外层 retry 处理
+            err_text = _read_error_body(r)
+            r.close()
+            raise Exception(f"大模型接口请求失败: HTTP 429（重试后仍限流）- {err_text or r.text[:80]}")
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
@@ -3065,8 +3077,18 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             backoff = _model_rate_limit_backoff
         err_text = _read_error_body(r)
         r.close()
+        print(f"CRO被限流(429)，退避 {backoff:.0f}s 后重试")
         time.sleep(backoff)
-        raise Exception(f"收敛层大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}")
+        headers['x-request-id'] = str(uuid.uuid4())
+        r = requests.post(
+            url, headers=headers, json=payload,
+            timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
+            stream=True,
+        )
+        if r.status_code == 429:
+            err_text = _read_error_body(r)
+            r.close()
+            raise Exception(f"收敛层大模型接口请求失败: HTTP 429（重试后仍限流）- {err_text or r.text[:80]}")
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
