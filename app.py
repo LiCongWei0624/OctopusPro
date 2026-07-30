@@ -42,6 +42,7 @@ CRO_TIMEOUT_SECONDS = 240
 MODEL_CONNECT_TIMEOUT_SECONDS = 30
 MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
 MODEL_REQUEST_CONCURRENCY = 1
+MODEL_REQUEST_INTERVAL_SECONDS = 10
 MODEL_REQUEST_MAX_ATTEMPTS = 2
 MODEL_REQUEST_RETRY_DELAY_SECONDS = 1.5
 BATCH_MATCH_TIMEOUT_SECONDS = 300
@@ -71,6 +72,8 @@ _detail_prepare_semaphore = threading.BoundedSemaphore(BATCH_DETAIL_CONCURRENCY)
 _trend_request_lock = threading.Lock()
 _trend_next_request_at = 0.0
 _model_request_semaphore = threading.BoundedSemaphore(MODEL_REQUEST_CONCURRENCY)
+_model_last_model_request = 0.0
+_rate_limit_lock = threading.Lock()
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -2833,10 +2836,18 @@ _VERSION_PERSPECTIVES = [
 
 
 def _with_model_request_slot(function):
-    """Limit simultaneous provider streams across all single and batch tasks."""
+    """Limit simultaneous provider streams AND guarantee min interval between calls."""
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
         with _model_request_semaphore:
+            # Rate limiter: ensure at least MODEL_REQUEST_INTERVAL_SECONDS between calls
+            now = time.monotonic()
+            with _rate_limit_lock:
+                global _model_last_model_request
+                wait = MODEL_REQUEST_INTERVAL_SECONDS - (now - _model_last_model_request)
+                if wait > 0:
+                    time.sleep(wait)
+                _model_last_model_request = time.monotonic()
             return function(*args, **kwargs)
     return wrapped
 
