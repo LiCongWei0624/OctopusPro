@@ -25,7 +25,15 @@ _MAX_CONNECT_ATTEMPTS = 2
 
 def _safe_create_connection(address, timeout=_orig_socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None, **kwargs):
     """like socket.create_connection, but tries at most 2 IPs so
-       a batch of unreachable CDN edge nodes cannot pile up 8×timeout."""
+       a batch of unreachable CDN edge nodes cannot pile up 8×timeout.
+       Also caps the per-IP connect timeout to 5 s to avoid
+       kernel-level TCP SYN retransmissions (20-30 s) swallowing a
+       whole match slot."""
+
+    # ── 硬限制：单个 connect 最多等 5 秒 ──
+    if timeout is _orig_socket._GLOBAL_DEFAULT_TIMEOUT or timeout is None or timeout > 5:
+        timeout = 5
+
     host, port = address
     err = None
     last_err_msg = None
@@ -35,8 +43,7 @@ def _safe_create_connection(address, timeout=_orig_socket._GLOBAL_DEFAULT_TIMEOU
         sock = None
         try:
             sock = _orig_socket.socket(af, socktype, proto)
-            if timeout is not _orig_socket._GLOBAL_DEFAULT_TIMEOUT:
-                sock.settimeout(timeout)
+            sock.settimeout(timeout)
             if source_address:
                 sock.bind(source_address)
             sock.connect(sa)
