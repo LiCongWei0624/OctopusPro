@@ -74,6 +74,7 @@ _trend_next_request_at = 0.0
 _model_request_semaphore = threading.BoundedSemaphore(MODEL_REQUEST_CONCURRENCY)
 _model_last_model_request = 0.0
 _rate_limit_lock = threading.Lock()
+_model_rate_limit_backoff = 10.0  # starts at 10s, increases on 429
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -2840,16 +2841,28 @@ def _with_model_request_slot(function):
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
         with _model_request_semaphore:
-            # Rate limiter: ensure at least MODEL_REQUEST_INTERVAL_SECONDS between calls
+            # Rate limiter: use dynamic backoff (increases on 429)
             now = time.monotonic()
             with _rate_limit_lock:
-                global _model_last_model_request
-                wait = MODEL_REQUEST_INTERVAL_SECONDS - (now - _model_last_model_request)
+                global _model_last_model_request, _model_rate_limit_backoff
+                wait = _model_rate_limit_backoff - (now - _model_last_model_request)
                 if wait > 0:
                     time.sleep(wait)
                 _model_last_model_request = time.monotonic()
             return function(*args, **kwargs)
     return wrapped
+
+
+def _read_error_body(r):
+    """Extract error text from a non-200 response."""
+    err_text = ""
+    try:
+        for line in r.iter_lines(chunk_size=1):
+            if line:
+                err_text += line.decode('utf-8')
+    except:
+        pass
+    return err_text
 
 
 class ModelNoContentError(Exception):
@@ -2930,14 +2943,17 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
+    if r.status_code == 429:
+        global _model_rate_limit_backoff
+        with _rate_limit_lock:
+            _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
+            backoff = _model_rate_limit_backoff
+        err_text = _read_error_body(r)
+        r.close()
+        time.sleep(backoff)
+        raise Exception(f"大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}")
     if r.status_code != 200:
-        err_text = ""
-        try:
-            for line in r.iter_lines(chunk_size=1):
-                if line:
-                    err_text += line.decode('utf-8')
-        except:
-            pass
+        err_text = _read_error_body(r)
         raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
     ai_output = ""
@@ -3042,14 +3058,17 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
+    if r.status_code == 429:
+        global _model_rate_limit_backoff
+        with _rate_limit_lock:
+            _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
+            backoff = _model_rate_limit_backoff
+        err_text = _read_error_body(r)
+        r.close()
+        time.sleep(backoff)
+        raise Exception(f"收敛层大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}")
     if r.status_code != 200:
-        err_text = ""
-        try:
-            for line in r.iter_lines(chunk_size=1):
-                if line:
-                    err_text += line.decode('utf-8')
-        except:
-            pass
+        err_text = _read_error_body(r)
         raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
     ai_output = ""
