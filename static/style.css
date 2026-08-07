@@ -4085,3 +4085,177 @@ textarea:focus-visible {
         padding: 0.35rem 0.4rem;
     }
 }
+
+/* --- 全局后台 AI 研判任务指示浮框 (Global AI Task Status Badge) --- */
+.global-ai-task-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.1), rgba(99, 102, 241, 0.16));
+    border: 1px solid rgba(79, 70, 229, 0.28);
+    color: var(--color-primary);
+    padding: 0.38rem 0.85rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 2px 8px rgba(79, 70, 229, 0.12);
+    user-select: none;
+    white-space: nowrap;
+}
+
+.global-ai-task-badge:hover {
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.2), rgba(99, 102, 241, 0.26));
+    border-color: var(--color-primary);
+    transform: translateY(-1.5px);
+    box-shadow: 0 4px 14px rgba(79, 70, 229, 0.25);
+}
+
+.global-ai-task-badge:active {
+    transform: translateY(0);
+}
+
+.badge-beacon {
+    width: 8px;
+    height: 8px;
+    background-color: var(--color-primary);
+    border-radius: 50%;
+    position: relative;
+    box-shadow: 0 0 6px var(--color-primary);
+    flex-shrink: 0;
+}
+
+.badge-beacon::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    background-color: var(--color-primary);
+    border-radius: 50%;
+    animation: beacon-pulse 1.8s infinite ease-in-out;
+}
+
+/* --- CRO 终极执行单卡片化可视化渲染 (Enhanced CRO Ticket Cards) --- */
+.cro-structured-picks {
+    background: linear-gradient(135deg, rgba(79, 70, 229, 0.03), rgba(241, 245, 249, 0.6));
+    border: 1px solid rgba(79, 70, 229, 0.18);
+    border-radius: var(--border-radius-lg);
+    padding: 1rem 1.15rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-soft);
+}
+
+.cro-no-bet-card {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.04), rgba(254, 242, 242, 0.6));
+    border-color: rgba(239, 68, 68, 0.22);
+}
+
+.cro-pick-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.85rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed rgba(79, 70, 229, 0.15);
+}
+
+.cro-pick-title {
+    font-size: 0.86rem;
+    font-weight: 800;
+    color: var(--text-primary);
+    letter-spacing: -0.2px;
+}
+
+.cro-pick-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18rem 0.55rem;
+    border-radius: 12px;
+    font-size: 0.72rem;
+    font-weight: 800;
+    white-space: nowrap;
+}
+
+.cro-pick-badge.success {
+    background: var(--color-success-bg);
+    border: 1px solid var(--color-success-border);
+    color: var(--color-success);
+}
+
+.cro-pick-badge.alert {
+    background: var(--color-danger-bg);
+    border: 1px solid var(--color-danger-border);
+    color: var(--color-danger);
+}
+
+.cro-pick-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 0.75rem;
+}
+
+.cro-pick-item {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius-md);
+    padding: 0.75rem 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+    transition: var(--transition-smooth);
+}
+
+.cro-pick-item:hover {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
+}
+
+.cro-pick-type {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.cro-pick-value {
+    font-size: 0.98rem;
+    font-weight: 850;
+    color: var(--color-primary);
+    line-height: 1.25;
+}
+
+.cro-pick-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.15rem;
+    flex-wrap: wrap;
+}
+
+.cro-meta-chip {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text-secondary);
+    background: var(--bg-body-secondary);
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.cro-meta-chip.ev-chip {
+    background: var(--color-success-bg);
+    color: var(--color-success);
+    border-color: var(--color-success-border);
+}
+
+.cro-pick-reason {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    font-style: italic;
+}

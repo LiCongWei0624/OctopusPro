@@ -48,8 +48,62 @@ function setAiTabState(enabled, syncing = false) {
         if (fullSpan) fullSpan.textContent = 'AI 预测分析';
         if (shortSpan) shortSpan.textContent = 'AI';
     }
-}
 window.setAiTabState = setAiTabState;
+
+function updateGlobalAiTaskBadge() {
+    const badge = document.getElementById('global-ai-task-badge');
+    const badgeText = document.getElementById('global-ai-badge-text');
+    if (!badge || !badgeText) return;
+
+    const runningMatchKey = Object.keys(runningAiAnalysisTasks).find(
+        k => runningAiAnalysisTasks[k] && runningAiAnalysisTasks[k].status === 'processing'
+    );
+
+    if (runningMatchKey) {
+        const task = runningAiAnalysisTasks[runningMatchKey];
+        badge.style.display = 'inline-flex';
+        badge.dataset.targetMatchId = runningMatchKey;
+        delete badge.dataset.targetBatchId;
+        badgeText.textContent = `🟢 AI 研判中: ${task.homeTeam} VS ${task.awayTeam}`;
+        return;
+    }
+
+    if (isBatchAiRunning && activeBatchAiId) {
+        const counts = latestBatchProgress?.counts || {};
+        badge.style.display = 'inline-flex';
+        badge.dataset.targetBatchId = activeBatchAiId;
+        delete badge.dataset.targetMatchId;
+        badgeText.textContent = `⚡ 批量研判中 (${counts.completed || 0}/${counts.total || 0})`;
+        return;
+    }
+
+    badge.style.display = 'none';
+    delete badge.dataset.targetMatchId;
+    delete badge.dataset.targetBatchId;
+}
+window.updateGlobalAiTaskBadge = updateGlobalAiTaskBadge;
+
+function handleGlobalAiTaskBadgeClick() {
+    const badge = document.getElementById('global-ai-task-badge');
+    if (!badge) return;
+
+    const matchId = badge.dataset.targetMatchId;
+    const batchId = badge.dataset.targetBatchId;
+
+    if (matchId) {
+        const matchObj = allMatches.find(m => String(m.id) === String(matchId)) || {
+            id: matchId,
+            home_team: runningAiAnalysisTasks[matchId]?.homeTeam || '主队',
+            away_team: runningAiAnalysisTasks[matchId]?.awayTeam || '客队'
+        };
+        selectMatch(matchObj);
+        switchDetailTab('ai');
+        showAppNotice(`已切回【${matchObj.home_team} vs ${matchObj.away_team}】AI 研判`, 'primary');
+    } else if (batchId) {
+        openBatchAnalysisModal();
+    }
+}
+window.handleGlobalAiTaskBadgeClick = handleGlobalAiTaskBadgeClick;
 
 // 全页最先执行：死死锁定 Tab 标题为“对决 & 数据”，彻底消除任何强缓存导致的文字闪动
 (function lockTabTitlesImmediately() {
@@ -898,6 +952,7 @@ function renderBatchAiProgress(batch) {
         button.disabled = isRunning ? false : Object.keys(batchSelectedMatches).length === 0;
         button.textContent = isRunning ? '查看进度' : '批量分析';
     }
+    updateGlobalAiTaskBadge();
 }
 
 function stopBatchAiPolling() {
@@ -1564,12 +1619,60 @@ function finalTicketPredictionMarkup(report, fixture = null) {
     if (!prediction) return '';
     const home = fixture?.home_team || selectedMatch?.home_team || '主队';
     const away = fixture?.away_team || selectedMatch?.away_team || '客队';
-    const picks = [
-        ['让球', formatAsianHandicapPrediction(prediction.asian_handicap, home, away)],
-        ['大小球', formatOverUnderPrediction(prediction.over_under)],
-    ].filter(([, value]) => value && value !== '--');
-    if (!picks.length) return '';
-    return `<section class="cro-structured-picks"><h5>最终执行预测</h5><div>${picks.map(([label, value]) => `<span><b>${escapeBacktestHtml(label)}</b><strong>${escapeBacktestHtml(value)}</strong></span>`).join('')}</div></section>`;
+
+    if (prediction.status === 'no_bet') {
+        return `
+            <div class="cro-structured-picks cro-no-bet-card">
+                <div class="cro-pick-header">
+                    <span class="cro-pick-title">🚨 基金风控状态：触发全面熔断 / 建议弃选</span>
+                    <span class="cro-pick-badge alert">NO BET</span>
+                </div>
+                <div class="cro-pick-reason">${escapeBacktestHtml(prediction.reason || '市场报价未达到正期望值门槛，模型建议放弃本场。')}</div>
+            </div>
+        `;
+    }
+
+    const items = [];
+    if (prediction.asian_handicap && (prediction.asian_handicap.team || prediction.asian_handicap.side)) {
+        const ah = prediction.asian_handicap;
+        const text = formatAsianHandicapPrediction(ah, home, away);
+        const quote = ah.quote || {};
+        const ev = (quote.baseline_ev !== undefined && quote.baseline_ev !== null) ? (Number(quote.baseline_ev) >= 0 ? `+${Number(quote.baseline_ev).toFixed(3)}` : `${Number(quote.baseline_ev).toFixed(3)}`) : null;
+        const water = quote.water !== undefined && quote.water !== null ? Number(quote.water).toFixed(2) : null;
+        items.push({ label: '亚洲让球', val: text, ev: ev, water: water });
+    }
+
+    if (prediction.over_under && prediction.over_under.side) {
+        const ou = prediction.over_under;
+        const text = formatOverUnderPrediction(ou);
+        const quote = ou.quote || {};
+        const ev = (quote.baseline_ev !== undefined && quote.baseline_ev !== null) ? (Number(quote.baseline_ev) >= 0 ? `+${Number(quote.baseline_ev).toFixed(3)}` : `${Number(quote.baseline_ev).toFixed(3)}`) : null;
+        const water = quote.water !== undefined && quote.water !== null ? Number(quote.water).toFixed(2) : null;
+        items.push({ label: '大小球', val: text, ev: ev, water: water });
+    }
+
+    if (!items.length) return '';
+
+    return `
+        <section class="cro-structured-picks">
+            <div class="cro-pick-header">
+                <span class="cro-pick-title">🎯 首席风险官·核心量化研判提炼</span>
+                <span class="cro-pick-badge success">建议仓位 2.0%</span>
+            </div>
+            <div class="cro-pick-cards">
+                ${items.map(item => `
+                    <div class="cro-pick-item">
+                        <span class="cro-pick-type">${escapeBacktestHtml(item.label)}</span>
+                        <strong class="cro-pick-value">${escapeBacktestHtml(item.val)}</strong>
+                        <div class="cro-pick-meta">
+                            ${item.water ? `<span class="cro-meta-chip">水位 ${item.water}</span>` : ''}
+                            ${item.ev ? `<span class="cro-meta-chip ev-chip">EV ${item.ev}</span>` : ''}
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </section>
+    `;
 }
 
 function formatSettlementOutcome(outcome) {
@@ -1999,6 +2102,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                         if (stRes.status === 'completed') {
                             clearInterval(task.timer);
                             task.timer = null;
+                            updateGlobalAiTaskBadge();
 
                             if (isCurrentlySelected) {
                                 const currentRunBtn = document.getElementById('btn-run-ai-analysis');
@@ -2018,6 +2122,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                         } else if (stRes.status === 'failed') {
                             clearInterval(task.timer);
                             task.timer = null;
+                            updateGlobalAiTaskBadge();
 
                             if (isCurrentlySelected) {
                                 const currentRunBtn = document.getElementById('btn-run-ai-analysis');
@@ -2034,6 +2139,7 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                                 }
                             }
                         } else if (stRes.status === 'processing') {
+                            updateGlobalAiTaskBadge();
                             if (isAiTabActive) {
                                 latestFinalTicket = task.finalTicket;
                                 renderStreamingMarkdown(task.reports, task.statusList);
@@ -2044,9 +2150,11 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
                         console.error("[AI Status Polling] Ping failed for match", key, err);
                     });
             }, 1500);
+            updateGlobalAiTaskBadge();
         })
         .catch(err => {
             delete runningAiAnalysisTasks[key];
+            updateGlobalAiTaskBadge();
             const currentReport = document.getElementById('ai-report-content');
             const currentRunBtn = document.getElementById('btn-run-ai-analysis');
             if (currentReport) {
