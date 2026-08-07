@@ -781,6 +781,14 @@ body {
     background-color: var(--color-primary);
 }
 
+.detail-tab.disabled,
+.detail-tab[disabled] {
+    opacity: 0.5;
+    cursor: not-allowed !important;
+    pointer-events: none;
+    user-select: none;
+}
+
 /* Body Content Scroll area */
 .details-body {
     padding: 1.5rem;

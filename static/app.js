@@ -15,6 +15,7 @@ let searchRenderTimer = null;
 const MAX_MATCH_DETAILS_CACHE = 24;
 
 let aiPollingTimer = null;
+let runningAiAnalysisTasks = {}; // Key: matchId (string), Value: { status, reports, statusList, finalTicket, error, timer, homeTeam, awayTeam }
 let batchAiPollingTimer = null;
 let activeBatchAiId = null;
 let isBatchSelectionMode = false;
@@ -23,6 +24,32 @@ let isBatchAiRunning = false;
 let latestBatchProgress = null;
 let batchExecutionTickets = {};
 const MAX_BATCH_SELECTION = 6;
+
+function setAiTabState(enabled, syncing = false) {
+    const aiTabBtn = document.getElementById('tab-btn-ai') || Array.from(document.querySelectorAll('.detail-tab')).find(t => {
+        const attr = t.getAttribute('onclick');
+        return attr && attr.includes("'ai'");
+    });
+    if (!aiTabBtn) return;
+
+    const fullSpan = aiTabBtn.querySelector('.tab-text-full');
+    const shortSpan = aiTabBtn.querySelector('.tab-text-short');
+
+    if (syncing || !enabled) {
+        aiTabBtn.disabled = true;
+        aiTabBtn.classList.add('disabled');
+        aiTabBtn.setAttribute('aria-disabled', 'true');
+        if (fullSpan) fullSpan.textContent = '数据同步中...';
+        if (shortSpan) shortSpan.textContent = '同步中';
+    } else {
+        aiTabBtn.disabled = false;
+        aiTabBtn.classList.remove('disabled');
+        aiTabBtn.removeAttribute('aria-disabled');
+        if (fullSpan) fullSpan.textContent = 'AI 预测分析';
+        if (shortSpan) shortSpan.textContent = 'AI';
+    }
+}
+window.setAiTabState = setAiTabState;
 
 // 全页最先执行：死死锁定 Tab 标题为“对决 & 数据”，彻底消除任何强缓存导致的文字闪动
 (function lockTabTitlesImmediately() {
@@ -1068,8 +1095,15 @@ function loadMatchDetails(match) {
             refreshBtn.disabled = false;
         }
         setMatchRefreshControls({ visible: true, disabled: false });
+        setAiTabState(true, false);
         renderMatchDetails(match, matchDetailsCache[match.id]);
         return;
+    }
+
+    // 数据未加载完成：禁用 AI 分析 Tab，标题显示“同步中”
+    setAiTabState(false, true);
+    if (activeDetailTab === 'ai') {
+        activeDetailTab = 'intel';
     }
 
     showDetailsLoading(match);
@@ -1079,6 +1113,7 @@ function loadMatchDetails(match) {
         .then(res => {
             if (res.success) {
                 cacheMatchDetails(match.id, res.data);
+                setAiTabState(true, false);
                 renderMatchDetails(match, res.data);
 
                 // 首次拉取若因 WAF 延迟导致 odds_index 暂空，后台静默发起一次强制补充刷新，无需用户手动点“刷新本场”
@@ -1093,17 +1128,30 @@ function loadMatchDetails(match) {
                         }).catch(e => {});
                 }
             } else {
+                setAiTabState(false, true);
                 renderDetailsError(res.error || "获取比赛详情失败。");
             }
         })
         .catch(err => {
+            setAiTabState(false, true);
             renderDetailsError("网络连接失败，请检查网络或后端服务器状态。");
             console.error(err);
         });
 }
 
-// Switch Right Panel Tabs (intel, history, squad, odds)
+// Switch Right Panel Tabs (intel, history, squad, odds, ai)
 function switchDetailTab(tabName) {
+    if (tabName === 'ai') {
+        const aiTabBtn = document.getElementById('tab-btn-ai') || Array.from(document.querySelectorAll('.detail-tab')).find(t => {
+            const attr = t.getAttribute('onclick');
+            return attr && attr.includes("'ai'");
+        });
+        if (aiTabBtn && (aiTabBtn.disabled || aiTabBtn.classList.contains('disabled'))) {
+            showAppNotice('比赛基础数据正在同步中，请稍候数据同步成功后再点击 AI 分析', 'warning');
+            return;
+        }
+    }
+
     activeDetailTab = tabName;
 
     // Toggle tab active class
@@ -1119,15 +1167,33 @@ function switchDetailTab(tabName) {
     const activeContent = document.getElementById(`tab-content-${tabName}`);
     if (activeContent) activeContent.classList.add('active');
 
-    // 切换到 AI 研判 tab 时，自动检查并秒级载入已缓存的 AI 预测报告
+    // 切换到 AI 研判 tab 时，检查是否有在后台进行中的分析任务或已有缓存
     if (tabName === 'ai' && selectedMatch) {
-        checkAndLoadCachedReport(selectedMatch.id);
+        const matchKey = String(selectedMatch.id);
+        const runningTask = runningAiAnalysisTasks[matchKey];
+        if (runningTask && runningTask.status === 'processing') {
+            latestReports = runningTask.reports || ['', '', ''];
+            latestStatusList = runningTask.statusList || ['processing', 'processing', 'processing'];
+            latestFinalTicket = runningTask.finalTicket || '';
+            renderStreamingMarkdown(latestReports, latestStatusList);
+            const runBtn = document.getElementById('btn-run-ai-analysis');
+            if (runBtn) {
+                runBtn.disabled = true;
+                const runText = runBtn.querySelector('span');
+                if (runText) runText.textContent = 'AI 研判并发生成中...';
+            }
+        } else {
+            checkAndLoadCachedReport(selectedMatch.id);
+        }
     }
 }
 
 // Render Complete Match Details
 function renderMatchDetails(match, details) {
     const container = document.getElementById('details-content');
+    // 基础数据加载完成，解锁 AI 分析页签
+    setAiTabState(true, false);
+
     // 动态纠正 Tab 标题文本（解决浏览器强缓存问题）
     const historyBtn = Array.from(document.querySelectorAll('.detail-tab')).find(t => {
         const attr = t.getAttribute('onclick');
@@ -1204,9 +1270,25 @@ function renderMatchDetails(match, details) {
     `;
 
     container.innerHTML = html;
-    // 如果当前选中的是 AI 选项卡，在切换场次后自动尝试秒级拉取并渲染已有的 AI 分析缓存
+
+    // 如果当前选中的是 AI 选项卡，检查后台是否有正在执行的分析任务或已有的 AI 分析缓存
     if (activeDetailTab === 'ai') {
-        checkAndLoadCachedReport(match.id);
+        const matchKey = String(match.id);
+        const runningTask = runningAiAnalysisTasks[matchKey];
+        if (runningTask && runningTask.status === 'processing') {
+            latestReports = runningTask.reports || ['', '', ''];
+            latestStatusList = runningTask.statusList || ['processing', 'processing', 'processing'];
+            latestFinalTicket = runningTask.finalTicket || '';
+            renderStreamingMarkdown(latestReports, latestStatusList);
+            const runBtn = document.getElementById('btn-run-ai-analysis');
+            if (runBtn) {
+                runBtn.disabled = true;
+                const runText = runBtn.querySelector('span');
+                if (runText) runText.textContent = 'AI 研判并发生成中...';
+            }
+        } else {
+            checkAndLoadCachedReport(match.id);
+        }
     }
 
     // 渲染完详情后，自动静默触发 12 家博彩公司走势图的排队异步拉取写缓存，供 AI 全量分析使用
@@ -1840,15 +1922,30 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
         return;
     }
 
-    const runBtn = document.getElementById('btn-run-ai-analysis');
-    const skeleton = document.getElementById('ai-generating-status');
-    const report = document.getElementById('ai-report-content');
+    const key = String(matchId);
+    if (runningAiAnalysisTasks[key] && runningAiAnalysisTasks[key].timer) {
+        clearInterval(runningAiAnalysisTasks[key].timer);
+    }
 
-    // 初始化三版本状态与展示
+    runningAiAnalysisTasks[key] = {
+        status: 'processing',
+        reports: ['', '', ''],
+        statusList: ['processing', 'processing', 'processing'],
+        finalTicket: '',
+        error: '',
+        homeTeam: decodeURIComponent(homeTeam),
+        awayTeam: decodeURIComponent(awayTeam),
+        timer: null
+    };
+
     latestReports = ['', '', ''];
     latestStatusList = ['processing', 'processing', 'processing'];
     latestFinalTicket = '';
     activeReportVersion = 0;
+
+    const runBtn = document.getElementById('btn-run-ai-analysis');
+    const skeleton = document.getElementById('ai-generating-status');
+    const report = document.getElementById('ai-report-content');
 
     if (skeleton && report) {
         skeleton.style.display = 'none';
@@ -1860,11 +1957,6 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
         runBtn.disabled = true;
         const runText = runBtn.querySelector('span');
         if (runText) runText.textContent = 'AI 研判并发生成中...';
-    }
-
-    if (aiPollingTimer) {
-        clearInterval(aiPollingTimer);
-        aiPollingTimer = null;
     }
 
     // 1. 发起后台异步托管生成
@@ -1886,54 +1978,83 @@ function generateAiReport(matchId, homeTeam, awayTeam) {
 
             console.log("[AI Background Worker] Managed successfully! Message:", res.message);
 
-            // 2. 开启心跳短轮询
-            aiPollingTimer = setInterval(() => {
+            // 2. 开启后台独立的轮询心跳（不受用户切页面或查看其他比赛影响）
+            runningAiAnalysisTasks[key].timer = setInterval(() => {
                 fetch(`/api/ai_analysis_status?match_id=${matchId}`)
                     .then(stRes => stRes.json())
                     .then(stRes => {
-                        if (stRes.success) {
-                            if (stRes.status === 'completed') {
-                                clearInterval(aiPollingTimer);
-                                aiPollingTimer = null;
+                        if (!stRes.success) return;
+                        const task = runningAiAnalysisTasks[key];
+                        if (!task) return;
 
-                                if (runBtn) {
-                                    runBtn.disabled = false;
-                                    const runText = runBtn.querySelector('span');
+                        task.status = stRes.status;
+                        task.reports = stRes.reports || task.reports;
+                        task.statusList = stRes.status_list || task.statusList;
+                        task.finalTicket = stRes.final_ticket || '';
+                        task.error = stRes.error || '';
+
+                        const isCurrentlySelected = selectedMatch && String(selectedMatch.id) === key;
+                        const isAiTabActive = isCurrentlySelected && activeDetailTab === 'ai';
+
+                        if (stRes.status === 'completed') {
+                            clearInterval(task.timer);
+                            task.timer = null;
+
+                            if (isCurrentlySelected) {
+                                const currentRunBtn = document.getElementById('btn-run-ai-analysis');
+                                if (currentRunBtn) {
+                                    currentRunBtn.disabled = false;
+                                    const runText = currentRunBtn.querySelector('span');
                                     if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                                 }
-                                latestFinalTicket = stRes.final_ticket || '';
-                                renderFullMarkdownReport(stRes.reports);
-                            } else if (stRes.status === 'failed') {
-                                clearInterval(aiPollingTimer);
-                                aiPollingTimer = null;
-
-                                if (report) {
-                                    report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
+                                if (isAiTabActive) {
+                                    latestFinalTicket = task.finalTicket;
+                                    renderFullMarkdownReport(task.reports);
                                 }
-                                if (runBtn) {
-                                    runBtn.disabled = false;
-                                    const runText = runBtn.querySelector('span');
+                                showAppNotice(`【${task.homeTeam} vs ${task.awayTeam}】AI 深度研判报告生成完成！`, 'primary');
+                            } else {
+                                showAppNotice(`【${task.homeTeam} vs ${task.awayTeam}】AI 深度研判报告已在后台生成完成`, 'primary');
+                            }
+                        } else if (stRes.status === 'failed') {
+                            clearInterval(task.timer);
+                            task.timer = null;
+
+                            if (isCurrentlySelected) {
+                                const currentRunBtn = document.getElementById('btn-run-ai-analysis');
+                                if (currentRunBtn) {
+                                    currentRunBtn.disabled = false;
+                                    const runText = currentRunBtn.querySelector('span');
                                     if (runText) runText.textContent = '一键生成 AI 深度研判报告';
                                 }
-                            } else if (stRes.status === 'processing') {
-                                // 正在并发处理中，流式刷新三版本结果
-                                latestFinalTicket = stRes.final_ticket || '';
-                                renderStreamingMarkdown(stRes.reports, stRes.status_list);
+                                if (isAiTabActive) {
+                                    const currentReport = document.getElementById('ai-report-content');
+                                    if (currentReport) {
+                                        currentReport.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">生成出错: ${stRes.error || "大模型连接超时，请重试。"}</p>`;
+                                    }
+                                }
+                            }
+                        } else if (stRes.status === 'processing') {
+                            if (isAiTabActive) {
+                                latestFinalTicket = task.finalTicket;
+                                renderStreamingMarkdown(task.reports, task.statusList);
                             }
                         }
                     })
                     .catch(err => {
-                        console.error("[AI Status Polling] Ping failed:", err);
+                        console.error("[AI Status Polling] Ping failed for match", key, err);
                     });
             }, 1500);
         })
         .catch(err => {
-            if (report) {
-                report.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
+            delete runningAiAnalysisTasks[key];
+            const currentReport = document.getElementById('ai-report-content');
+            const currentRunBtn = document.getElementById('btn-run-ai-analysis');
+            if (currentReport) {
+                currentReport.innerHTML = `<p style="color:var(--color-danger); font-weight:700;">发送请求失败: ${err.message || err}</p>`;
             }
-            if (runBtn) {
-                runBtn.disabled = false;
-                const runText = runBtn.querySelector('span');
+            if (currentRunBtn) {
+                currentRunBtn.disabled = false;
+                const runText = currentRunBtn.querySelector('span');
                 if (runText) runText.textContent = '一键生成 AI 深度研判报告';
             }
         });
