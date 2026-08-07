@@ -37,6 +37,8 @@ fi
 
 # 4. 重启 Systemd 守护服务以加载最新代码
 echo "🔄 正在重启 Systemd 守护服务 ($SERVICE_NAME)..."
+# 自动清理可能脱离 systemd 托管的残留进程，释放 5000 端口
+sudo fuser -k 5000/tcp >/dev/null 2>&1 || true
 sudo systemctl restart $SERVICE_NAME
 
 # 5. 检查服务运行状态
