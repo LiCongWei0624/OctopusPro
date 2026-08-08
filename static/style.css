@@ -2284,13 +2284,39 @@ body {
         gap: 1rem !important;
     }
 
-    /* 7. 全局配置弹窗自适应高度与宽度，支持手机端内部滚动 */
-    .modal-content {
-        width: 92% !important;
-        margin: 10% auto !important;
-        padding: 1.25rem !important;
-        max-height: 85vh !important;
+    /* 7. 全局配置弹窗与批量分析弹窗自适应高度与宽度，支持手机端内部滚动且绝无横向溢出 */
+    .modal-content, .batch-analysis-modal .modal-container {
+        width: 94% !important;
+        max-width: 100% !important;
+        margin: 5% auto !important;
+        padding: 1rem !important;
+        max-height: 88vh !important;
         overflow-y: auto !important;
+        overflow-x: hidden !important;
+        box-sizing: border-box !important;
+    }
+
+    .batch-progress-item {
+        grid-template-columns: 10px minmax(0, 1fr) !important;
+        gap: 0.5rem !important;
+        padding: 0.6rem !important;
+    }
+
+    .batch-progress-phase {
+        grid-column: 2 / -1 !important;
+        justify-items: start !important;
+        text-align: left !important;
+        margin-top: 0.2rem !important;
+    }
+
+    .batch-versions-pills {
+        gap: 4px !important;
+        margin-top: 4px !important;
+    }
+
+    .v-pill {
+        font-size: 0.68rem !important;
+        padding: 2px 5px !important;
     }
     
     .modal-content input, .modal-content textarea {
@@ -2511,12 +2537,31 @@ body {
 }
 
 .batch-progress-quality { color: var(--color-success) !important; }
-.batch-progress-error { color: var(--color-danger) !important; max-width: 250px; }
+.batch-progress-error { color: var(--color-danger) !important; max-width: 100%; word-break: break-word; }
 
 .batch-progress-phase {
-    justify-items: end;
+    justify-items: start;
     color: var(--text-secondary);
     font-size: 0.75rem;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
+
+.batch-versions-pills {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+    flex-wrap: wrap;
+    max-width: 100%;
+}
+
+.v-pill {
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    white-space: nowrap;
 }
 
 .batch-result-toggle,
