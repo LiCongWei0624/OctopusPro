@@ -104,9 +104,18 @@ class ApiKeyPool:
     def get_key(self, preferred_key=None, exclude_keys=None):
         with self._lock:
             if not self._keys:
-                return preferred_key or ''
-            exclude = set(exclude_keys or [])
+                clean_pref = str(preferred_key or '').strip()
+                if clean_pref and ',' not in clean_pref and '\n' not in clean_pref and ';' not in clean_pref:
+                    return clean_pref
+                return ''
+            
+            clean_pref = str(preferred_key or '').strip()
             now = time.monotonic()
+            if clean_pref and ',' not in clean_pref and '\n' not in clean_pref and ';' not in clean_pref and clean_pref in self._keys:
+                if self._cooldowns.get(clean_pref, 0.0) <= now:
+                    return clean_pref
+
+            exclude = set(exclude_keys or [])
             candidates = [k for k in self._keys if k not in exclude]
             if not candidates:
                 candidates = list(self._keys)
@@ -1551,14 +1560,31 @@ def _batch_snapshot(batch_id):
                         item['retry_scope'] = 'cro'
                 else:
                     status_list = task.get('status_list', [])
+                    analyst_outputs = task.get('analyst_outputs', [])
+                    v_details = []
+                    for idx in range(3):
+                        out = analyst_outputs[idx] if idx < len(analyst_outputs) else None
+                        if not out or not isinstance(out, dict):
+                            v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 排队', 'len': 0})
+                        else:
+                            st = out.get('status', 'processing')
+                            c_len = len(out.get('content', ''))
+                            if st == 'completed':
+                                v_details.append({'v': idx + 1, 'status': 'completed', 'label': f'研判{idx+1}: ✅ 完成({c_len}字)', 'len': c_len})
+                            elif st == 'streaming' or out.get('reasoning_received') or c_len > 0:
+                                v_details.append({'v': idx + 1, 'status': 'streaming', 'label': f'研判{idx+1}: ⚡ 生成中({c_len}字)', 'len': c_len})
+                            else:
+                                v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 等待中', 'len': 0})
+                    item['versions_detail'] = v_details
+
                     completed_versions = sum(value == 'completed' for value in status_list)
                     failed_versions = sum(value == 'failed' for value in status_list)
                     if completed_versions == 3:
-                        item['phase'] = 'CRO 正在汇总最终执行单'
+                        item['phase'] = 'CRO 正在风控审计汇总最终执行单...'
                     elif failed_versions:
-                        item['phase'] = f'AI 三路研判中（完成 {completed_versions}/3，失败 {failed_versions}）'
+                        item['phase'] = f'AI 三路并行研判中（已完成 {completed_versions}/3，失败 {failed_versions}）'
                     else:
-                        item['phase'] = f'AI 三路研判中（完成 {completed_versions}/3）'
+                        item['phase'] = f'AI 三路并行研判中（已完成 {completed_versions}/3）'
             elif status == 'completed':
                 item['phase'] = '分析完成'
             elif status == 'cached':
@@ -1586,152 +1612,130 @@ def _batch_snapshot(batch_id):
         }
 
 
-def _run_batch_ai_analysis(batch_id, runtime_config):
-    """Prepare details serially and run each selected match independently.
+def _process_single_batch_item_pipeline(item, batch_id, runtime_config):
+    """Self-contained asynchronous match analysis worker.
 
-    Detail scraping keeps shared anti-bot state, so it deliberately stays on this
-    coordinator thread. Once prepared, up to six matches run concurrently; each
-    retains its own prompt context, task key, and match-specific cache file.
+    Serializes upstream anti-bot data scraping via _detail_prepare_semaphore, then
+    immediately fans out to multi-key parallel AI analysis without blocking other items.
     """
+    match_id = item['match_id']
+    with _batch_ai_tasks_lock:
+        item['status'] = 'preparing'
+        item['prepare_phase'] = '正在获取情报、阵容、战绩与赔率'
+        item['started_at'] = time.time()
+        item['heartbeat_at'] = time.time()
+
+    success, error, details, snapshot = _prepare_analysis_snapshot(
+        match_id, item['home_team'], item['away_team'], force_refresh=True
+    )
+    if not success:
+        with _batch_ai_tasks_lock:
+            item['status'] = 'failed'
+            item['error'] = error
+        return
+
+    with _batch_ai_tasks_lock:
+        item['prepare_phase'] = f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
+        item['heartbeat_at'] = time.time()
+
+    trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
+        match_id, details.get('odds_index', []), item['analysis_mode']
+    )
+    snapshot['trend_quality'] = trend_quality
+    if not trends_ok:
+        with _batch_ai_tasks_lock:
+            item['status'] = 'failed'
+            item['error'] = trend_error
+        return
+
+    with _batch_ai_tasks_lock:
+        item['status'] = 'validating'
+        item['prepare_phase'] = '详情和变盘历史校验通过，正在构建独立分析上下文'
+        item['data_quality'] = snapshot.get('quality', {})
+        item['trend_quality'] = trend_quality
+        item['snapshot_hash'] = snapshot.get('hash', '')
+        item['snapshot_captured_at'] = snapshot.get('captured_at', '')
+        item['heartbeat_at'] = time.time()
+
+    success, error, context_str = build_match_prompt_context(
+        match_id, item['home_team'], item['away_team'], item['analysis_mode'],
+        details=details, trend_quality=trend_quality
+    )
+    if not success:
+        with _batch_ai_tasks_lock:
+            item['status'] = 'failed'
+            item['error'] = error
+        return
+
+    ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{match_id}.json")
+    if os.path.exists(ai_cache_file):
+        try:
+            os.remove(ai_cache_file)
+        except OSError:
+            pass
+
+    prediction_metadata = {
+        'match_id': match_id,
+        'home_team': item['home_team'],
+        'away_team': item['away_team'],
+        'kickoff': item['kickoff'],
+        'competition': item['competition'],
+        'fixture_date': item['fixture_date'],
+        'fixture_status': item['fixture_status'],
+        'analysis_mode': item['analysis_mode'],
+        'strategy_version': STRATEGY_VERSION,
+        'tracking_cohort_id': runtime_config['tracking_cohort_id'],
+        'tracking_cohort_name': runtime_config['tracking_cohort_name'],
+        'market_catalog': _instant_market_catalog(
+            details, _build_probability_baseline(details, item['home_team'], item['away_team'])
+        ),
+    }
+    task_key = f"{batch_id}:{match_id}:{uuid.uuid4().hex}"
+    with _batch_ai_tasks_lock:
+        item['task_key'] = task_key
+        item['status'] = 'processing'
+        item['prepare_phase'] = ''
+        item['heartbeat_at'] = time.time()
+
+    # Fan out to 3 parallel AI versions + CRO synthesis using ApiKeyPool
+    run_ai_analysis_thread(
+        match_id, runtime_config['api_base'], runtime_config['api_key'],
+        runtime_config['model_name'], runtime_config['system_prompt'], context_str,
+        ai_cache_file, prediction_metadata, item['analysis_mode'], task_key, snapshot,
+    )
+
+    with _batch_ai_tasks_lock:
+        task = ai_tasks.get(task_key, {})
+        if task.get('status') == 'completed':
+            item['status'] = 'completed'
+        else:
+            item['status'] = 'failed'
+            item['error'] = task.get('error', 'AI 分析未完成，请单独重试。')
+        _persist_latest_batch_state(batch_id)
+
+
+def _run_batch_ai_analysis(batch_id, runtime_config):
+    """Execute all queued match pipelines in parallel across the ThreadPoolExecutor."""
     try:
         with _batch_ai_tasks_lock:
             items = batch_ai_tasks[batch_id]['items']
         pending = [item for item in items if item['status'] == 'queued']
-        active = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_CONCURRENT_MATCHES) as executor:
-            while pending or active:
-                while pending and len(active) < BATCH_CONCURRENT_MATCHES:
-                    item = pending.pop(0)
-                    with _batch_ai_tasks_lock:
-                        item['status'] = 'preparing'
-                        item['prepare_phase'] = '正在获取情报、阵容、战绩与赔率'
-                        item['started_at'] = time.time()
-                        item['heartbeat_at'] = time.time()
-
-                    success, error, details, snapshot = _prepare_analysis_snapshot(
-                        item['match_id'], item['home_team'], item['away_team'], force_refresh=True
-                    )
-                    if not success:
-                        with _batch_ai_tasks_lock:
-                            item['status'] = 'failed'
-                            item['error'] = error
-                        continue
-
-                    with _batch_ai_tasks_lock:
-                        item['prepare_phase'] = (
-                            f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
-                        )
-                        item['heartbeat_at'] = time.time()
-                    trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
-                        item['match_id'], details.get('odds_index', []), item['analysis_mode']
-                    )
-                    snapshot['trend_quality'] = trend_quality
-                    if not trends_ok:
-                        with _batch_ai_tasks_lock:
-                            item['status'] = 'failed'
-                            item['error'] = trend_error
-                        continue
-
-                    with _batch_ai_tasks_lock:
-                        item['status'] = 'validating'
-                        item['prepare_phase'] = '详情和全部变盘历史校验通过，正在构建独立分析上下文'
-                        item['data_quality'] = snapshot.get('quality', {})
-                        item['trend_quality'] = trend_quality
-                        item['snapshot_hash'] = snapshot.get('hash', '')
-                        item['snapshot_captured_at'] = snapshot.get('captured_at', '')
-                        item['heartbeat_at'] = time.time()
-
-                    success, error, context_str = build_match_prompt_context(
-                        item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'],
-                        details=details, trend_quality=trend_quality
-                    )
-                    if not success:
-                        with _batch_ai_tasks_lock:
-                            item['status'] = 'failed'
-                            item['error'] = error
-                        continue
-
-                    ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{item['match_id']}.json")
-                    if os.path.exists(ai_cache_file):
-                        try:
-                            os.remove(ai_cache_file)
-                        except OSError:
-                            pass
-
-                    prediction_metadata = {
-                        'match_id': item['match_id'],
-                        'home_team': item['home_team'],
-                        'away_team': item['away_team'],
-                        'kickoff': item['kickoff'],
-                        'competition': item['competition'],
-                        'fixture_date': item['fixture_date'],
-                        'fixture_status': item['fixture_status'],
-                        'analysis_mode': item['analysis_mode'],
-                        'strategy_version': STRATEGY_VERSION,
-                        'tracking_cohort_id': runtime_config['tracking_cohort_id'],
-                        'tracking_cohort_name': runtime_config['tracking_cohort_name'],
-                        'market_catalog': _instant_market_catalog(
-                            details, _build_probability_baseline(details, item['home_team'], item['away_team'])
-                        ),
-                    }
-                    task_key = f"{batch_id}:{item['match_id']}:{uuid.uuid4().hex}"
-                    with _batch_ai_tasks_lock:
-                        item['task_key'] = task_key
-                        item['status'] = 'processing'
-                        item['prepare_phase'] = ''
-                        item['heartbeat_at'] = time.time()
-                    future = executor.submit(
-                        run_ai_analysis_thread,
-                        item['match_id'], runtime_config['api_base'], runtime_config['api_key'],
-                        runtime_config['model_name'], runtime_config['system_prompt'], context_str,
-                        ai_cache_file, prediction_metadata, item['analysis_mode'], task_key, snapshot,
-                    )
-                    active[future] = item
-
-                if not active:
-                    continue
-                done, _ = concurrent.futures.wait(
-                    active, timeout=1, return_when=concurrent.futures.FIRST_COMPLETED
-                )
-                now = time.time()
-                for running_future, running_item in list(active.items()):
-                    elapsed = now - running_item.get('started_at', now)
-                    if elapsed <= BATCH_MATCH_TIMEOUT_SECONDS:
-                        continue
-                    active.pop(running_future, None)
-                    running_future.cancel()
-                    with _batch_ai_tasks_lock:
-                        running_item['status'] = 'timed_out'
-                        running_item['error'] = f'单场任务超过 {BATCH_MATCH_TIMEOUT_SECONDS} 秒未完成，已释放批次。'
-                        running_item['heartbeat_at'] = now
-                        task = ai_tasks.get(running_item.get('task_key', ''), {})
-                        if task:
-                            task['status'] = 'timed_out'
-                            task['error'] = running_item['error']
-                    _persist_latest_batch_state(batch_id)
-                if not done:
-                    continue
-                for future in done:
-                    item = active.pop(future)
-                    try:
-                        future.result()
-                    except Exception as error:
-                        task = {'status': 'failed', 'error': str(error)}
-                    else:
-                        task = ai_tasks.get(item.get('task_key', item['match_id']), {})
-                    with _batch_ai_tasks_lock:
-                        if task.get('status') == 'completed':
-                            item['status'] = 'completed'
-                        else:
-                            item['status'] = 'failed'
-                            item['error'] = task.get('error', 'AI 分析未完成，请单独重试。')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_BATCH_ANALYSIS_SIZE) as executor:
+            futures = [
+                executor.submit(_process_single_batch_item_pipeline, item, batch_id, runtime_config)
+                for item in pending
+            ]
+            concurrent.futures.wait(futures)
 
         with _batch_ai_tasks_lock:
-            batch_ai_tasks[batch_id]['status'] = 'completed'
+            batch = batch_ai_tasks.get(batch_id)
+            if batch:
+                batch['status'] = 'completed'
+                batch['finished_at'] = time.time()
         _persist_latest_batch_state(batch_id)
     except Exception as error:
-        print(f"Batch AI analysis error for batch {batch_id}: {error}")
+        print(f"[Batch AI Engine] Batch {batch_id} unexpected failure: {error}")
         with _batch_ai_tasks_lock:
             batch = batch_ai_tasks.get(batch_id)
             if batch:

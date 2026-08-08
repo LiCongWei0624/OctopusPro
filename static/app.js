@@ -929,6 +929,11 @@ function renderBatchAiProgress(batch) {
         const retryAction = item.retry_scope === 'cro'
             ? `<button class="batch-retry-cro" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">重试 CRO 汇总</button>`
             : '';
+        const versionsMarkup = (item.versions_detail && item.versions_detail.length)
+            ? `<div class="batch-versions-pills" style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
+                ${item.versions_detail.map(v => `<span class="v-pill v-${v.status}" style="font-size:0.72rem; padding:2px 8px; border-radius:4px; background:${v.status==='completed'?'rgba(16,185,129,0.15)':(v.status==='streaming'?'rgba(59,130,246,0.15)':'rgba(156,163,175,0.1)')}; border:1px solid ${v.status==='completed'?'rgba(16,185,129,0.3)':(v.status==='streaming'?'rgba(59,130,246,0.3)':'rgba(156,163,175,0.2)')}; color:${v.status==='completed'?'#10b981':(v.status==='streaming'?'#60a5fa':'#9ca3af')};">${escapeBatchProgressText(v.label)}</span>`).join('')}
+               </div>`
+            : '';
         return `
             <li class="batch-progress-item ${status}">
                 <span class="batch-progress-dot" aria-hidden="true"></span>
@@ -938,6 +943,7 @@ function renderBatchAiProgress(batch) {
                 </div>
                 <div class="batch-progress-phase">
                     <span>${escapeBatchProgressText(item.phase || '等待处理')}</span>
+                    ${versionsMarkup}
                     ${quality}
                     ${warningMsg}
                     ${error}
