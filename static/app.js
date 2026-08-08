@@ -48,6 +48,7 @@ function setAiTabState(enabled, syncing = false) {
         if (fullSpan) fullSpan.textContent = 'AI 预测分析';
         if (shortSpan) shortSpan.textContent = 'AI';
     }
+}
 window.setAiTabState = setAiTabState;
 
 function updateGlobalAiTaskBadge() {
@@ -1404,15 +1405,22 @@ function loadAiConfigFromServer(callback) {
         .catch(err => console.error("连接配置接口失败:", err));
 }
 
-// Global AI Config Modal Controls
 function openAiConfigModal() {
     const modal = document.getElementById('ai-config-modal');
     if (!modal) return;
     setMobileNavActive('config');
 
     loadAiConfigFromServer((cfg) => {
+        const keyArea = document.getElementById('global-ai-key');
         document.getElementById('global-ai-base').value = cfg.api_base || 'https://opencode.ai/zen/v1';
-        document.getElementById('global-ai-key').value = cfg.api_key || '';
+        if (keyArea) {
+            keyArea.value = cfg.api_key || '';
+            if (cfg.key_count && cfg.key_count > 0 && !cfg.api_key) {
+                keyArea.placeholder = `已配置并生效 ${cfg.key_count} 个 API Key 密钥池。如需增加或替换，请在此输入（一行一个或逗号分隔）`;
+            } else {
+                keyArea.placeholder = '填入您的 API Key。支持配置多个账号 Key（一行一个或逗号分隔），系统会自动轮询负载均衡并在遭遇 429 限流时无缝秒级切换备用账号';
+            }
+        }
         document.getElementById('global-ai-model').value = cfg.model_name || 'minimax-m2.5-free';
         document.getElementById('global-ai-prompt').value = cfg.system_prompt || '';
         modal.style.display = 'flex';

@@ -66,6 +66,77 @@ ANALYSIS_TRACE_DIR = os.path.join(CACHE_DIR, 'analysis_traces')
 LIVE_DETAILS_CACHE_TTL_SECONDS = 90
 PREMATCH_AI_CACHE_TTL_SECONDS = 90
 
+class ApiKeyPool:
+    """Thread-safe API Key pool supporting multi-account load balancing and 429 cooldowns."""
+    def __init__(self, key_source=None):
+        self._lock = threading.RLock()
+        self._index = 0
+        self._keys = []
+        self._cooldowns = {}  # {key: timestamp_when_available}
+        if key_source:
+            self.set_keys(key_source)
+
+    def set_keys(self, key_source):
+        with self._lock:
+            keys = []
+            if isinstance(key_source, list):
+                for k in key_source:
+                    if isinstance(k, str) and k.strip():
+                        keys.append(k.strip())
+            elif isinstance(key_source, str):
+                raw_parts = re.split(r'[\r\n,;]+', key_source)
+                for part in raw_parts:
+                    k = part.strip()
+                    if k:
+                        keys.append(k)
+            seen = set()
+            self._keys = [k for k in keys if not (k in seen or seen.add(k))]
+            self._index = 0
+
+    def get_keys(self):
+        with self._lock:
+            return list(self._keys)
+
+    def key_count(self):
+        with self._lock:
+            return len(self._keys)
+
+    def get_key(self, preferred_key=None, exclude_keys=None):
+        with self._lock:
+            if not self._keys:
+                return preferred_key or ''
+            exclude = set(exclude_keys or [])
+            now = time.monotonic()
+            candidates = [k for k in self._keys if k not in exclude]
+            if not candidates:
+                candidates = list(self._keys)
+            healthy_candidates = [k for k in candidates if self._cooldowns.get(k, 0.0) <= now]
+            if healthy_candidates:
+                key = healthy_candidates[self._index % len(healthy_candidates)]
+                self._index = (self._index + 1) % len(self._keys)
+                return key
+            candidates_by_expiry = sorted(candidates, key=lambda k: self._cooldowns.get(k, 0.0))
+            earliest_key = candidates_by_expiry[0]
+            wait_time = self._cooldowns.get(earliest_key, 0.0) - now
+            if 0 < wait_time <= 15.0:
+                time.sleep(wait_time)
+            return earliest_key
+
+    def report_rate_limit(self, key, cooldown_seconds=20.0):
+        if not key:
+            return
+        with self._lock:
+            self._cooldowns[key] = time.monotonic() + cooldown_seconds
+            print(f"[ApiKeyPool] Key {key[:6]}... rate-limited (429), cooling down for {cooldown_seconds}s")
+
+    def report_success(self, key):
+        if not key:
+            return
+        with self._lock:
+            self._cooldowns.pop(key, None)
+
+global_api_key_pool = ApiKeyPool()
+
 # Detail scraping shares the upstream anti-bot session. Keep this limiter global
 # so a batch cannot accidentally turn six fixtures into a WAF burst.
 _detail_prepare_semaphore = threading.BoundedSemaphore(BATCH_DETAIL_CONCURRENCY)
@@ -74,7 +145,7 @@ _trend_next_request_at = 0.0
 _model_request_semaphore = threading.BoundedSemaphore(MODEL_REQUEST_CONCURRENCY)
 _model_last_model_request = 0.0
 _rate_limit_lock = threading.Lock()
-_model_rate_limit_backoff = 10.0  # starts at 10s, increases on 429
+_model_rate_limit_backoff = 5.0  # starts at 5s, dynamic failover
 
 # The browser can issue overlapping refreshes. Keep the shared fixture file
 # coherent and avoid repeatedly decoding several megabytes for every request.
@@ -519,7 +590,12 @@ def _read_config_file():
     try:
         with open(CONFIG_FILE, 'r', encoding='utf-8') as config_file:
             data = json.load(config_file)
-        return data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            key_source = data.get('api_key') or data.get('api_keys')
+            if key_source:
+                global_api_key_pool.set_keys(key_source)
+            return data
+        return {}
     except Exception:
         return {}
 
@@ -539,10 +615,11 @@ def get_ai_config():
             # batch and single-match analysis on incompatible prompt versions.
             config['system_prompt'] = DEFAULT_SYSTEM_PROMPT
             config['strategy_version'] = STRATEGY_VERSION
-            # The browser only needs the configuration shape.  Returning the
+            # The browser only needs the configuration shape. Returning the
             # stored provider key to any unauthenticated visitor exposed it.
             safe_config = config.copy()
             safe_config['api_key'] = ''
+            safe_config['key_count'] = global_api_key_pool.key_count()
             return jsonify({'success': True, 'data': safe_config})
         except Exception as e:
             pass
@@ -553,6 +630,7 @@ def get_ai_config():
         'model_name': 'deepseek-v4-flash-free',
         'system_prompt': DEFAULT_SYSTEM_PROMPT,
         'strategy_version': STRATEGY_VERSION,
+        'key_count': global_api_key_pool.key_count(),
     }
     _attach_tracking_cohort_state(default_config)
     return jsonify({'success': True, 'data': default_config})
@@ -567,10 +645,11 @@ def save_ai_config():
     existing_key = existing_config.get('api_key', '')
     cohorts, active_cohort = _tracking_cohort_state(existing_config)
 
+    raw_key_input = str(data.get('api_key', '')).strip()
+    active_key = raw_key_input or existing_key
+
     config = {
-        # A blank field means “keep the server-side key”, so editing only the
-        # prompt/model in the UI cannot erase it after GET redaction.
-        'api_key': data.get('api_key', '').strip() or existing_key,
+        'api_key': active_key,
         'api_base': data.get('api_base', 'https://opencode.ai/zen/v1'),
         'model_name': data.get('model_name', 'minimax-m2.5-free'),
         'system_prompt': DEFAULT_SYSTEM_PROMPT,
@@ -579,10 +658,12 @@ def save_ai_config():
         'active_tracking_cohort': active_cohort,
     }
     
+    global_api_key_pool.set_keys(active_key)
+    
     try:
         with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
-        return jsonify({'success': True, 'message': "Config saved successfully"})
+        return jsonify({'success': True, 'message': "Config saved successfully", 'key_count': global_api_key_pool.key_count()})
     except Exception as e:
         return jsonify({'success': False, 'error': f"Write config error: {str(e)}"})
 
@@ -2837,15 +2918,15 @@ _VERSION_PERSPECTIVES = [
 
 
 def _with_model_request_slot(function):
-    """Limit simultaneous provider streams AND guarantee min interval between calls."""
+    """Limit simultaneous provider streams with key-pool aware concurrency."""
     @functools.wraps(function)
     def wrapped(*args, **kwargs):
         with _model_request_semaphore:
-            # Rate limiter: use dynamic backoff (increases on 429)
             now = time.monotonic()
             with _rate_limit_lock:
                 global _model_last_model_request, _model_rate_limit_backoff
-                wait = _model_rate_limit_backoff - (now - _model_last_model_request)
+                min_interval = 0.1 if global_api_key_pool.key_count() > 1 else 0.5
+                wait = min_interval - (now - _model_last_model_request)
                 if wait > 0:
                     time.sleep(wait)
                 _model_last_model_request = time.monotonic()
@@ -2872,13 +2953,14 @@ class ModelNoContentError(Exception):
 
 class ModelRateLimitError(Exception):
     """Raised when the provider returned HTTP 429."""
-    def __init__(self, msg, original_text=""):
+    def __init__(self, msg, original_text="", rate_limited_key=""):
         super().__init__(msg)
         self.original_text = original_text
+        self.rate_limited_key = rate_limited_key
 
 
 def _retry_model_operation(operation, has_visible_output):
-    """Retry transient failures OR content-less responses up to max attempts."""
+    """Retry transient failures OR content-less responses up to max attempts with dynamic multi-key failover."""
     import requests
 
     retryable_errors = (
@@ -2887,28 +2969,33 @@ def _retry_model_operation(operation, has_visible_output):
         requests.exceptions.ReadTimeout,
         requests.exceptions.SSLError,
     )
-    for attempt in range(1, MODEL_REQUEST_MAX_ATTEMPTS + 1):
+    max_attempts = 4
+    for attempt in range(1, max_attempts + 1):
         try:
             result = operation()
             if has_visible_output():
                 return result
-            print(f"Model returned only reasoning on attempt {attempt}/{MODEL_REQUEST_MAX_ATTEMPTS}")
-            if attempt == MODEL_REQUEST_MAX_ATTEMPTS:
+            print(f"Model returned only reasoning on attempt {attempt}/{max_attempts}")
+            if attempt == max_attempts:
                 raise ModelNoContentError(
-                    f"模型连续 {MODEL_REQUEST_MAX_ATTEMPTS} 次仅返回思考过程，未生成可用正文"
+                    f"模型连续 {max_attempts} 次仅返回思考过程，未生成可用正文"
                 )
         except ModelRateLimitError as rle:
-            # 429 - wait outside the semaphore, then retry
-            with _rate_limit_lock:
-                global _model_rate_limit_backoff
-                _model_rate_limit_backoff = min(_model_rate_limit_backoff * 2, 120.0)
-                backoff = _model_rate_limit_backoff
-            if attempt == MODEL_REQUEST_MAX_ATTEMPTS:
-                raise  # last attempt, propagate
-            print(f"模型被限流(429)，全局退避 {backoff:.0f}s 后第 {attempt}/{MODEL_REQUEST_MAX_ATTEMPTS} 次重试")
-            time.sleep(backoff)
+            has_other_keys = global_api_key_pool.key_count() > 1
+            if has_other_keys:
+                print(f"[429 Rate Limit] 触发多账号智能故障转移，轮换下一个健康 API Key (尝试 {attempt}/{max_attempts})...")
+                time.sleep(0.3)
+            else:
+                with _rate_limit_lock:
+                    global _model_rate_limit_backoff
+                    _model_rate_limit_backoff = min(_model_rate_limit_backoff * 1.5, 30.0)
+                    backoff = _model_rate_limit_backoff
+                if attempt == max_attempts:
+                    raise
+                print(f"单 Key 被限流(429)，等待 {backoff:.0f}s 后第 {attempt}/{max_attempts} 次重试")
+                time.sleep(backoff)
         except retryable_errors:
-            if has_visible_output() or attempt == MODEL_REQUEST_MAX_ATTEMPTS:
+            if has_visible_output() or attempt == max_attempts:
                 raise
             time.sleep(MODEL_REQUEST_RETRY_DELAY_SECONDS * attempt)
 
@@ -2917,8 +3004,9 @@ def _retry_model_operation(operation, has_visible_output):
 def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key=None):
     global ai_tasks
     task_key = task_key or str(match_id)
+    active_key = global_api_key_pool.get_key(preferred_key=api_key)
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {active_key}",
         "Content-Type": "application/json"
     }
     url = f"{api_base}/chat/completions"
@@ -2963,17 +3051,17 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
     if r.status_code == 429:
         err_text = _read_error_body(r)
         r.close()
-        # Don't sleep here — still inside _model_request_semaphore.
-        # _retry_model_operation catches ModelRateLimitError and
-        # sleeps outside the semaphore before retrying.
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
         raise ModelRateLimitError(
-            f"大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}",
+            f"大模型接口请求被限流 (HTTP 429): {err_text or r.text[:80]}",
             original_text=err_text or r.text[:80],
+            rate_limited_key=active_key,
         )
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
+    global_api_key_pool.report_success(active_key)
     ai_output = ""
     reasoning_omitted = False
     content_output = ""
@@ -3037,8 +3125,9 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
 def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key=None):
     global ai_tasks
     task_key = task_key or str(match_id)
+    active_key = global_api_key_pool.get_key(preferred_key=api_key)
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {active_key}",
         "Content-Type": "application/json"
     }
     url = f"{api_base}/chat/completions"
@@ -3079,14 +3168,17 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
     if r.status_code == 429:
         err_text = _read_error_body(r)
         r.close()
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
         raise ModelRateLimitError(
-            f"收敛层大模型接口请求失败: HTTP 429 - {err_text or r.text[:80]}",
+            f"收敛层大模型接口请求被限流 (HTTP 429): {err_text or r.text[:80]}",
             original_text=err_text or r.text[:80],
+            rate_limited_key=active_key,
         )
     if r.status_code != 200:
         err_text = _read_error_body(r)
         raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
         
+    global_api_key_pool.report_success(active_key)
     ai_output = ""
     reasoning_omitted = False
     content_output = ""

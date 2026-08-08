@@ -283,9 +283,10 @@
                         placeholder="例如: https://opencode.ai/zen/v1">
                 </div>
                 <div class="ai-form-group">
-                    <label>API Key 密钥</label>
-                    <input id="global-ai-key" class="ai-input" type="password"
-                        placeholder="填入您的 OpenCode Zen 密钥">
+                    <label>API Key 密钥池 (支持多账号多 Key，一行一个或英文逗号分隔)</label>
+                    <textarea id="global-ai-key" class="ai-textarea" rows="3"
+                        placeholder="填入您的 API Key。支持配置多个账号 Key（一行一个或逗号分隔），系统会自动轮询负载均衡并在遭遇 429 限流时无缝秒级切换备用账号"></textarea>
+                    <small style="color: var(--text-muted); font-size: 0.76rem; display: block; margin-top: 4px;">💡 填入多个 Key 时，批量与单场分析会自动跨账号轮询分摊并发，遇到单 Key 限流（429）会自动秒级故障转移。</small>
                 </div>
                 <div class="ai-form-group">
                     <label>选择大模型</label>
