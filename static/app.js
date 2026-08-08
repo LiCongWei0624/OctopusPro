@@ -796,9 +796,18 @@ window.clearBatchSelection = clearBatchSelection;
 
 function openBatchAnalysisModal() {
     const modal = document.getElementById('batch-analysis-modal');
-    if (modal) modal.style.display = 'flex';
+    if (modal) {
+        modal.style.display = 'flex';
+        restoreLatestBatchProgress();
+    }
 }
 window.openBatchAnalysisModal = openBatchAnalysisModal;
+
+function refreshBatchAiProgressManually() {
+    restoreLatestBatchProgress();
+    showAppNotice('已同步最新批量分析进度', 'success');
+}
+window.refreshBatchAiProgressManually = refreshBatchAiProgressManually;
 
 function closeBatchAnalysisModal() {
     const modal = document.getElementById('batch-analysis-modal');
@@ -963,21 +972,28 @@ function stopBatchAiPolling() {
     }
 }
 
+let batchPollingErrorCount = 0;
+
 function startBatchAiPolling() {
     stopBatchAiPolling();
+    batchPollingErrorCount = 0;
     if (!activeBatchAiId) return;
     batchAiPollingTimer = setInterval(() => {
         fetch(`/api/batch_ai_analysis_status?batch_id=${encodeURIComponent(activeBatchAiId)}`)
             .then(statusRes => statusRes.json())
             .then(statusRes => {
                 if (!statusRes.success) throw new Error(statusRes.error || '无法读取批量任务状态。');
+                batchPollingErrorCount = 0;
                 renderBatchAiProgress(statusRes.batch);
                 if (statusRes.batch.status !== 'processing') stopBatchAiPolling();
             })
             .catch(error => {
-                console.error('[Batch AI] Status polling failed:', error);
-                stopBatchAiPolling();
-                isBatchAiRunning = false;
+                batchPollingErrorCount++;
+                console.warn(`[Batch AI] Status polling warning (attempt ${batchPollingErrorCount}/5):`, error);
+                if (batchPollingErrorCount >= 5) {
+                    stopBatchAiPolling();
+                    isBatchAiRunning = false;
+                }
             });
     }, 1500);
 }
