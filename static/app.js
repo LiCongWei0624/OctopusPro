@@ -808,11 +808,39 @@ function openBatchAnalysisModal() {
 }
 window.openBatchAnalysisModal = openBatchAnalysisModal;
 
+function retryBatchVersion(batchId, matchId, versionIdx) {
+    fetch('/api/batch_ai_analysis_retry_version', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: batchId, match_id: matchId, version_idx: versionIdx })
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || '重试单独研判版本失败。');
+            if (batchId) activeBatchAiId = batchId;
+            if (result.batch) renderBatchAiProgress(result.batch);
+            startBatchAiPolling();
+            showAppNotice(`已开始单独重试【研判 ${versionIdx + 1}】`, 'primary');
+        })
+        .catch(error => alert(error.message || '重试单独研判版本失败。'));
+}
+window.retryBatchVersion = retryBatchVersion;
+
 function showPillErrorAlert(element) {
-    const errorMsg = element ? element.dataset.errorMsg : '';
-    if (errorMsg) {
-        const label = (element.dataset.label || '研判').replace(/🔍/g, '').trim();
-        alert(`🔍 【${label} 失败详细原因】\n\n${errorMsg}`);
+    if (!element) return;
+    const errorMsg = element.dataset.errorMsg || '';
+    const label = (element.dataset.label || '研判').replace(/🔍/g, '').replace(/🔄/g, '').trim();
+    const batchId = element.dataset.batchId || activeBatchAiId || '';
+    const matchId = element.dataset.matchId || '';
+    const versionIdx = parseInt(element.dataset.versionIdx, 10);
+
+    const msg = `🔍 【${label} 失败详细原因】\n\n${errorMsg}\n\n是否只单独重试 ${label}？`;
+    if (confirm(msg)) {
+        if (!matchId || isNaN(versionIdx)) {
+            alert('缺少比赛标识，请使用整体重试按钮。');
+            return;
+        }
+        retryBatchVersion(batchId, matchId, versionIdx);
     }
 }
 window.showPillErrorAlert = showPillErrorAlert;
@@ -1005,9 +1033,9 @@ function renderBatchAiProgress(batch) {
                 ${stallBadge}${item.versions_detail.map(v => {
                     const hasErr = Boolean(v.error_msg);
                     const clickAttr = hasErr
-                        ? ` onclick="showPillErrorAlert(this)" data-error-msg="${escapeBatchProgressText(v.error_msg)}" data-label="${escapeBatchProgressText(v.label)}" style="cursor:pointer;" title="点击查看失败具体原因"`
+                        ? ` onclick="showPillErrorAlert(this)" data-batch-id="${escapeBatchProgressText(batch.id)}" data-match-id="${escapeBatchProgressText(item.match_id)}" data-version-idx="${v.v - 1}" data-error-msg="${escapeBatchProgressText(v.error_msg)}" data-label="${escapeBatchProgressText(v.label)}" style="cursor:pointer;" title="点击单独重试此研判版本或查看错误原因"`
                         : '';
-                    return `<span class="v-pill v-${v.status}${hasErr ? ' has-error' : ''}"${clickAttr}>${escapeBatchProgressText(v.label)}${hasErr ? ' 🔍' : ''}</span>`;
+                    return `<span class="v-pill v-${v.status}${hasErr ? ' has-error' : ''}"${clickAttr}>${escapeBatchProgressText(v.label)}${hasErr ? ' 🔄' : ''}</span>`;
                 }).join('')}
                </div>`
             : (stallBadge ? `<div class="batch-versions-pills">${stallBadge}</div>` : '');

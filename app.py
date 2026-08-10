@@ -2337,6 +2337,150 @@ def retry_batch_ai():
     return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
 
 
+@app.route('/api/batch_ai_analysis_retry_version', methods=['POST'])
+def retry_batch_ai_version():
+    """Retry ONLY a single failed analyst version (e.g. version_idx=0, 1, or 2) while preserving completed versions."""
+    payload = request.get_json(force=True, silent=True) or {}
+    batch_id = str(payload.get('batch_id', '')).strip()
+    match_id = str(payload.get('match_id', '')).strip()
+    version_idx_raw = payload.get('version_idx')
+    try:
+        version_idx = int(version_idx_raw)
+    except (TypeError, ValueError):
+        version_idx = None
+
+    if version_idx is None or version_idx not in (0, 1, 2):
+        return jsonify({'success': False, 'error': '无效的研判版本序号（必须为 0, 1 或 2）。'}), 400
+
+    if not match_id:
+        return jsonify({'success': False, 'error': '缺少比赛标识。'}), 400
+
+    ok, error, runtime_config = _load_ai_runtime_config()
+    if not ok:
+        return jsonify({'success': False, 'error': error}), 400
+
+    task_key = None
+    item = None
+    if batch_id:
+        with _batch_ai_tasks_lock:
+            batch = batch_ai_tasks.get(batch_id)
+            item = next((row for row in (batch or {}).get('items', []) if str(row.get('match_id')) == match_id), None)
+            if item:
+                task_key = item.get('task_key')
+
+    if not task_key:
+        task_key = str(match_id)
+
+    with _batch_ai_tasks_lock:
+        if task_key not in ai_tasks:
+            context_str = item.get('cached_context_str', '') if item else ''
+            if not context_str:
+                return jsonify({'success': False, 'error': '无缓存的分析上下文，无法单独重试该版本。'}), 409
+            _now = time.time()
+            ai_tasks[task_key] = {
+                'match_id': match_id,
+                'status': 'processing',
+                'phase': 'analyst',
+                'reports': ['', '', ''],
+                'status_list': ['waiting', 'waiting', 'waiting'],
+                'final_ticket': '',
+                'analyst_outputs': [
+                    {'version': i + 1, 'status': 'waiting', 'reasoning': '', 'content': '', 'started_at': _now}
+                    for i in range(3)
+                ],
+                'started_at': _now,
+                'heartbeat_at': _now,
+                'analysis_input': context_str,
+            }
+        else:
+            context_str = ai_tasks[task_key].get('analysis_input', '')
+
+        # Reset state ONLY for the specified target version
+        ai_tasks[task_key]['status'] = 'processing'
+        ai_tasks[task_key]['phase'] = 'analyst'
+        ai_tasks[task_key]['status_list'][version_idx] = 'waiting'
+        ai_tasks[task_key]['reports'][version_idx] = ''
+        ai_tasks[task_key]['heartbeat_at'] = time.time()
+        _now = time.time()
+        ai_tasks[task_key]['analyst_outputs'][version_idx] = {
+            'version': version_idx + 1,
+            'status': 'waiting',
+            'reasoning': '',
+            'content': '',
+            'started_at': _now,
+            'first_event_at': None,
+            'first_visible_content_at': None,
+            'reasoning_received': False,
+            'reasoning_len': 0,
+        }
+        if item:
+            item['status'] = 'processing'
+            item.pop('error', None)
+            item.pop('retry_scope', None)
+            item['heartbeat_at'] = time.time()
+            if batch_id and batch_id in batch_ai_tasks:
+                batch_ai_tasks[batch_id]['status'] = 'processing'
+
+    def run_single_version_retry_worker():
+        api_base = runtime_config['api_base']
+        api_key = runtime_config['api_key']
+        model_name = runtime_config['model_name']
+        system_prompt = runtime_config['system_prompt']
+        ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{match_id}.json")
+
+        try:
+            ai_tasks[task_key]['status_list'][version_idx] = 'processing'
+            report = _retry_model_operation(
+                lambda: run_single_version(
+                    version_idx, match_id, api_base, api_key, model_name,
+                    system_prompt, context_str, task_key,
+                ),
+                lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('reports', ['', '', ''])[version_idx])),
+            )
+            ai_tasks[task_key]['status_list'][version_idx] = 'completed'
+            ai_tasks[task_key]['reports'][version_idx] = report
+            ai_tasks[task_key]['heartbeat_at'] = time.time()
+
+            # Check if all 3 versions are now completed, then run CRO aggregation
+            if all(s == 'completed' for s in ai_tasks[task_key]['status_list']):
+                ai_tasks[task_key]['phase'] = 'cro'
+                reports_list = [extract_final_output(ai_tasks[task_key]['reports'][i]) for i in range(3)]
+                combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
+                combined_reports += "\n\n【固定概率基线与原始赔率锚点（供 CRO 交叉校验）】\n" + _cro_market_anchor_context(context_str)
+
+                final_ticket = _retry_model_operation(
+                    lambda: run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key),
+                    lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('final_ticket', ''))),
+                )
+                ai_tasks[task_key]['final_ticket'] = final_ticket
+                ai_tasks[task_key]['status'] = 'completed'
+
+                with open(ai_cache_file, 'w', encoding='utf-8') as cache_f:
+                    json.dump({
+                        'analysis_version': AI_ANALYSIS_CACHE_VERSION,
+                        'reports': ai_tasks[task_key]['reports'],
+                        'final_ticket': final_ticket,
+                        'analysis_input': context_str,
+                    }, cache_f, ensure_ascii=False)
+
+                if item:
+                    item['status'] = 'completed'
+        except Exception as sub_e:
+            ai_tasks[task_key]['status_list'][version_idx] = 'failed'
+            ai_tasks[task_key]['reports'][version_idx] = f"【该版本研判生成出错: {str(sub_e)}】"
+            if item:
+                item['status'] = 'failed'
+                item['error'] = str(sub_e)
+        if batch_id:
+            _persist_latest_batch_state(batch_id)
+
+    worker = threading.Thread(target=run_single_version_retry_worker, daemon=True)
+    worker.start()
+    if batch_id:
+        _persist_latest_batch_state(batch_id)
+    return jsonify({'success': True, 'batch': _batch_snapshot(batch_id) if batch_id else None})
+
+
 @app.route('/api/batch_ai_analysis_cancel', methods=['POST'])
 def cancel_batch():
     """强制取消一个进行中的批量任务（工作线程在下次心跳检测时自动退出）。"""
