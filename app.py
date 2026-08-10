@@ -1201,26 +1201,37 @@ def _refresh_required_trend_history(match_id, odds_index, analysis_mode='prematc
 
 
 def has_final_output(text):
-    """A completed reasoning stream must contain content after its <think> block."""
+    """A completed reasoning stream must contain usable content."""
     if not isinstance(text, str):
         return False
     stripped = text.lstrip()
     if not stripped.startswith('<think>'):
         return bool(stripped)
     closing_index = stripped.rfind('</think>')
-    visible = stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
-    return bool(visible)
+    if closing_index >= 0:
+        visible = stripped[closing_index + len('</think>'):].strip()
+        if visible:
+            return True
+    inside = stripped[len('<think>'):].strip()
+    return bool(inside)
 
 
 def extract_final_output(text):
-    """Return only the report body; reasoning is retained for the UI, not re-sent to CRO."""
+    """Return only the report body; if no text exists after </think>, fallback to text inside <think>."""
     if not isinstance(text, str):
         return ''
     stripped = text.lstrip()
     if not stripped.startswith('<think>'):
         return stripped
     closing_index = stripped.rfind('</think>')
-    return stripped[closing_index + len('</think>'):].strip() if closing_index >= 0 else ''
+    if closing_index >= 0:
+        visible = stripped[closing_index + len('</think>'):].strip()
+        if visible:
+            return visible
+        inside = stripped[len('<think>'):closing_index].strip()
+        if inside:
+            return inside
+    return stripped[len('<think>'):].strip()
 
 
 def validate_report_recommendation_consistency(report_text):
@@ -3359,6 +3370,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
     stream_deadline = stream_start_mono + _token_idle_window
     hard_deadline = stream_start_mono + MAX_SINGLE_VERSION_STREAM_SECONDS
     
+    accumulated_reasoning = ""
     for line in r.iter_lines(chunk_size=1):
         now_mono = time.monotonic()
         if now_mono > hard_deadline:
@@ -3375,40 +3387,47 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             try:
                 chunk = json.loads(data_content)
                 delta = chunk['choices'][0]['delta']
-                
-                reasoning = delta.get('reasoning_content', '')
-                content = delta.get('content', '')
-                output_state = ai_tasks.get(task_key, {}).get('analyst_outputs', [None, None, None])[version_idx]
-                if isinstance(output_state, dict):
-                    event_time = time.time()
-                    output_state['first_event_at'] = output_state.get('first_event_at') or event_time
-                    output_state['last_event_at'] = event_time
-                
-                if reasoning:
-                    reasoning_omitted = True
-                    # Roll the idle window forward on every reasoning token.
-                    stream_deadline = now_mono + _token_idle_window
-                    if isinstance(output_state, dict):
-                        output_state['reasoning_received'] = True
-                        curr_r_len = output_state.get('reasoning_len', 0) + len(reasoning)
-                        output_state['reasoning_len'] = curr_r_len
-                        # 防死循环熔断：思考字数已超上限且仍未吐出正文，或者总思考超过 2 万字
-                        if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or curr_r_len > 25000:
-                            print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触重试！")
-                            raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > {MAX_REASONING_CHARACTERS}字)，判定为思考死循环，已强行中断重试')
-                if content:
-                    # Roll the idle window forward on every content token.
-                    stream_deadline = now_mono + _token_idle_window
-                    ai_output += content
-                    content_output += content
-                    if isinstance(output_state, dict):
-                        output_state['first_visible_content_at'] = output_state.get('first_visible_content_at') or event_time
-                        output_state['content'] = content_output
-                        
-                if ai_tasks.get(task_key, {}).get('status') == 'processing':
-                    ai_tasks[task_key]['reports'][version_idx] = ai_output
             except Exception:
-                pass
+                continue
+                
+            reasoning = delta.get('reasoning_content', '')
+            content = delta.get('content', '')
+            output_state = ai_tasks.get(task_key, {}).get('analyst_outputs', [None, None, None])[version_idx]
+            if isinstance(output_state, dict):
+                event_time = time.time()
+                output_state['first_event_at'] = output_state.get('first_event_at') or event_time
+                output_state['last_event_at'] = event_time
+            
+            if reasoning:
+                reasoning_omitted = True
+                accumulated_reasoning += reasoning
+                # Roll the idle window forward on every reasoning token.
+                stream_deadline = now_mono + _token_idle_window
+                if isinstance(output_state, dict):
+                    output_state['reasoning_received'] = True
+                    curr_r_len = output_state.get('reasoning_len', 0) + len(reasoning)
+                    output_state['reasoning_len'] = curr_r_len
+                    # 防死循环熔断：思考字数已超上限且仍未吐出正文
+                    if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or (curr_r_len > 25000 and not content_output):
+                        print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触重试！")
+                        raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > {MAX_REASONING_CHARACTERS}字)，判定为思考死循环，已强行中断重试')
+            if content:
+                # Roll the idle window forward on every content token.
+                stream_deadline = now_mono + _token_idle_window
+                ai_output += content
+                content_output += content
+                if isinstance(output_state, dict):
+                    output_state['first_visible_content_at'] = output_state.get('first_visible_content_at') or event_time
+                    output_state['content'] = content_output
+                    
+            if ai_tasks.get(task_key, {}).get('status') == 'processing':
+                ai_tasks[task_key]['reports'][version_idx] = ai_output
+
+    if not content_output and accumulated_reasoning:
+        ai_output = accumulated_reasoning
+        content_output = accumulated_reasoning
+        if ai_tasks.get(task_key, {}).get('status') == 'processing':
+            ai_tasks[task_key]['reports'][version_idx] = ai_output
                 
     if task_key in ai_tasks:
         previous_output = ai_tasks[task_key].get('analyst_outputs', [None, None, None])[version_idx] or {}
