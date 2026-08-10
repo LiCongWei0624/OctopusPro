@@ -1456,19 +1456,28 @@ def _load_ai_runtime_config():
     system_prompt = ""
     tracking_cohorts = []
     active_tracking_cohort = DEFAULT_TRACKING_COHORT_ID
-    env_api_key = os.environ.get('LINSHU_AI_API_KEY') or os.environ.get('OPENAI_API_KEY')
-    if env_api_key:
-        api_key = env_api_key.strip()
+
+    cfg = {}
     if os.path.exists(CONFIG_FILE):
         try:
             cfg = _read_config_file()
-            if not api_key:
-                api_key = cfg.get('api_key', '')
+            api_key = cfg.get('api_key') or cfg.get('api_keys', '')
             api_base = cfg.get('api_base', api_base)
             model_name = cfg.get('model_name', model_name)
             tracking_cohorts, active_tracking_cohort = _tracking_cohort_state(cfg)
         except Exception:
             pass
+
+    env_api_key = os.environ.get('LINSHU_AI_API_KEY') or os.environ.get('OPENAI_API_KEY')
+    if env_api_key:
+        if api_key:
+            # Combine both sources into the pool
+            api_key = f"{api_key},{env_api_key.strip()}"
+        else:
+            api_key = env_api_key.strip()
+
+    if api_key:
+        global_api_key_pool.set_keys(api_key)
 
     if not tracking_cohorts:
         tracking_cohorts, active_tracking_cohort = _tracking_cohort_state({})
@@ -3324,12 +3333,12 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
-    if r.status_code == 429:
+    if r.status_code in (401, 429):
         err_text = _read_error_body(r)
         r.close()
-        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=30.0)
         raise ModelRateLimitError(
-            f"大模型接口请求被限流 (HTTP 429): {err_text}",
+            f"大模型接口请求异常 (HTTP {r.status_code}): {err_text}",
             original_text=err_text,
             rate_limited_key=active_key,
         )
@@ -3461,12 +3470,12 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
-    if r.status_code == 429:
+    if r.status_code in (401, 429):
         err_text = _read_error_body(r)
         r.close()
-        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=30.0)
         raise ModelRateLimitError(
-            f"收敛层大模型接口请求被限流 (HTTP 429): {err_text}",
+            f"收敛层大模型接口请求异常 (HTTP {r.status_code}): {err_text}",
             original_text=err_text,
             rate_limited_key=active_key,
         )
