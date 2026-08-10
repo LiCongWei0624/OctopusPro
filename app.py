@@ -1640,7 +1640,7 @@ def _batch_snapshot(batch_id):
                     item['error'] = task.get('error', item.get('error', '未知错误'))
                     if task.get('phase') == 'cro' and all(has_final_output(report) for report in task.get('reports', [])):
                         item['retry_scope'] = 'cro'
-                    elif item.get('cached_context_str'):
+                    elif item.get('cached_context_str') or any(s == 'failed' for s in task.get('status_list', [])):
                         item['retry_scope'] = 'ai'
                 else:
                     status_list = task.get('status_list', [])

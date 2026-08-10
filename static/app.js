@@ -987,9 +987,10 @@ function renderBatchAiProgress(batch) {
         const resultAction = ['completed', 'cached'].includes(status)
             ? `<button class="batch-result-toggle" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">${ticketView?.expanded ? '收起执行预测' : '查看执行预测'}</button>${ticketView?.expanded ? `<div class="batch-execution-ticket">${batchExecutionTicketMarkup(ticketView)}</div>` : ''}`
             : '';
+        const hasFailedVersion = Array.isArray(item.versions_detail) && item.versions_detail.some(v => v.status === 'failed');
         const retryAction = item.retry_scope === 'cro'
             ? `<button class="batch-retry-cro" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">重试 CRO 汇总</button>`
-            : item.retry_scope === 'ai'
+            : (item.retry_scope === 'ai' || hasFailedVersion)
             ? `<button class="batch-retry-ai" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">🔄 重试 AI 分析</button>`
             : '';
         // P1-5: stall detection for this item
