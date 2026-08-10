@@ -1751,6 +1751,10 @@ function finalTicketPredictionMarkup(report, fixture = null) {
         `;
     }
 
+    // 根据置信度推算建议仓位
+    const stakeMap = { high: '2.0%', medium: '1.0%', low: '0.5%' };
+    const stakeLabel = stakeMap[prediction.confidence] || '1.0%';
+
     const items = [];
     if (prediction.asian_handicap && (prediction.asian_handicap.team || prediction.asian_handicap.side)) {
         const ah = prediction.asian_handicap;
@@ -1772,17 +1776,21 @@ function finalTicketPredictionMarkup(report, fixture = null) {
 
     if (!items.length) return '';
 
+    // 多市场时：两市场各占一列 (1fr 1fr)
+    const gridCols = items.length >= 2 ? '1fr 1fr' : '1fr';
+
     return `
         <section class="cro-structured-picks">
             <div class="cro-pick-header">
                 <span class="cro-pick-title">🎯 CRO 最终执行方案</span>
+                <span class="cro-pick-badge" style="background:var(--bg-body-secondary);border:1px solid var(--border-color);color:var(--text-secondary);font-size:0.69rem;">置信度：${{ high: '🔴 高', medium: '🟡 中', low: '⚪ 低' }[prediction.confidence] || '中'}</span>
             </div>
-            <div class="cro-pick-cards">
+            <div class="cro-pick-cards" style="grid-template-columns:${gridCols};">
                 ${items.map(item => `
                     <div class="cro-pick-item">
                         <div class="cro-pick-item-header">
                             <span class="cro-pick-type">${escapeBacktestHtml(item.label)}</span>
-                            <span class="cro-pick-badge success">仓位 2.0%</span>
+                            <span class="cro-pick-badge success">仓位 ${stakeLabel}</span>
                         </div>
                         <strong class="cro-pick-value">${escapeBacktestHtml(item.val)}</strong>
                         <div class="cro-pick-meta">

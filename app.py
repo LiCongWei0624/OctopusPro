@@ -3479,10 +3479,19 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
     ai_output = ""
     reasoning_omitted = False
     content_output = ""
-    stream_deadline = time.monotonic() + CRO_TIMEOUT_SECONDS
+    # CRO 流处理同样采用滚动 idle 窗口：每个 token 都将超时窗口延长。
+    # 这防止慢思考模型被误杀，并用绝对硬上限（CRO_TIMEOUT_SECONDS * 3）屈杀真正卡死的情况。
+    _cro_idle_window = CRO_TIMEOUT_SECONDS  # 120s 无 token 触发超时
+    _cro_hard_limit = CRO_TIMEOUT_SECONDS * 3  # 360s 绝对硬上限
+    cro_stream_start = time.monotonic()
+    stream_deadline = cro_stream_start + _cro_idle_window
+    hard_deadline = cro_stream_start + _cro_hard_limit
     for line in r.iter_lines(chunk_size=1):
-        if time.monotonic() > stream_deadline:
-            raise TimeoutError(f'CRO stream exceeded {CRO_TIMEOUT_SECONDS} seconds without completing')
+        now_mono = time.monotonic()
+        if now_mono > hard_deadline:
+            raise TimeoutError(f'CRO 流处理已达绝对硬上限 ({_cro_hard_limit}s)，强行点火重试')
+        if now_mono > stream_deadline:
+            raise TimeoutError(f'CRO stream idle for {_cro_idle_window}s without any token')
         if not line:
             continue
         line_str = line.decode('utf-8').strip()
@@ -3504,11 +3513,15 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
                 
                 if reasoning:
                     reasoning_omitted = True
+                    # 滚动窗口延长：每收到一个思考 token 就重置计时
+                    stream_deadline = now_mono + _cro_idle_window
                     if isinstance(output_state, dict):
                         output_state['reasoning_received'] = True
                 if content:
                     ai_output += content
                     content_output += content
+                    # 滚动窗口延长：每收到一个正文 token 就重置计时
+                    stream_deadline = now_mono + _cro_idle_window
                     if isinstance(output_state, dict):
                         output_state['first_visible_content_at'] = output_state.get('first_visible_content_at') or event_time
                         output_state['content'] = content_output
