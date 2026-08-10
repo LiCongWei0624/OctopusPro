@@ -37,10 +37,12 @@ BATCH_CONCURRENT_MATCHES = 6
 # Odds history comes from one WAF-protected upstream. Prepare fixtures one at a
 # time so a multi-match batch cannot multiply requests against that shared host.
 BATCH_DETAIL_CONCURRENCY = 1
-AI_VERSION_TIMEOUT_SECONDS = 120
+AI_VERSION_TIMEOUT_SECONDS = 480
 CRO_TIMEOUT_SECONDS = 120
+MAX_REASONING_CHARACTERS = 50000  # 单次研判思考字数上限（超过5万字无正文输出，判定为模型死循环并强行熔断重试）
+MAX_SINGLE_VERSION_STREAM_SECONDS = 360  # 单次研判流式处理绝对耗时硬上限 (6分钟)
 MODEL_CONNECT_TIMEOUT_SECONDS = 30
-MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
+MODEL_STREAM_READ_TIMEOUT_SECONDS = 300
 MODEL_REQUEST_CONCURRENCY = 12
 MODEL_REQUEST_INTERVAL_SECONDS = 10
 MODEL_REQUEST_MAX_ATTEMPTS = 4
@@ -737,6 +739,66 @@ def start_refresh_scheduler():
         return
     _refresh_scheduler_started = True
     threading.Thread(target=_scheduled_today_refresh, name='fixture-refresh', daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
+# 全局任务守卫线程 (P0-1)
+# 每 60s 扫描一次所有进行中的 AI 任务，若心跳超过 TASK_HARD_TIMEOUT 秒
+# 没有更新则强制标记为 timed_out，防止任务永久卡死。
+# ---------------------------------------------------------------------------
+TASK_HARD_TIMEOUT_SECONDS = 1200  # 20 分钟
+
+def _task_watchdog_loop():
+    """Background daemon: reap stalled ai_tasks and batch items."""
+    while True:
+        try:
+            time.sleep(60)
+            now = time.time()
+            # --- 单场 ai_tasks ---
+            for key, task in list(ai_tasks.items()):
+                if not isinstance(task, dict):
+                    continue
+                if task.get('status') != 'processing':
+                    continue
+                age = now - task.get('heartbeat_at', now)
+                if age > TASK_HARD_TIMEOUT_SECONDS:
+                    print(f'[Watchdog] ai_task={key} 心跳超时 {int(age//60)} 分钟，强制标记 timed_out')
+                    task['status'] = 'timed_out'
+                    task['error'] = f'任务已超时（{int(age//60)} 分钟无响应），请重试'
+                    # 把仍在 processing 的研判标为 failed
+                    for idx, st in enumerate(task.get('status_list', [])):
+                        if st == 'processing':
+                            task['status_list'][idx] = 'failed'
+                            out = (task.get('analyst_outputs') or [None, None, None])[idx]
+                            if isinstance(out, dict) and out.get('status') not in ('completed', 'failed'):
+                                out['status'] = 'failed'
+                                out['error_msg'] = '任务守卫：心跳超时，强制终止'
+
+            # --- 批量 batch_ai_tasks ---
+            with _batch_ai_tasks_lock:
+                batch_snapshot = dict(batch_ai_tasks)
+            for batch_id, batch in batch_snapshot.items():
+                if batch.get('status') != 'processing':
+                    continue
+                for item in batch.get('items', []):
+                    if item.get('status') != 'processing':
+                        continue
+                    item_age = now - item.get('heartbeat_at', now)
+                    if item_age > TASK_HARD_TIMEOUT_SECONDS:
+                        print(f'[Watchdog] batch={batch_id} match={item.get("match_id")} 心跳超时 {int(item_age//60)} 分钟，强制标 timed_out')
+                        item['status'] = 'timed_out'
+                        item['phase'] = f'任务超时（{int(item_age//60)} 分钟无响应）'
+                        # 同步 ai_task
+                        task_key = item.get('task_key', item.get('match_id', ''))
+                        if task_key in ai_tasks and isinstance(ai_tasks[task_key], dict):
+                            ai_tasks[task_key]['status'] = 'timed_out'
+        except Exception as e:
+            print(f'[Watchdog] 异常: {e}')
+
+
+def _start_task_watchdog():
+    threading.Thread(target=_task_watchdog_loop, name='task-watchdog', daemon=True).start()
+    print('[Watchdog] 任务守卫线程已启动（超时阈值 20 分钟）')
 
 
 @app.route('/api/matches')
@@ -1558,6 +1620,8 @@ def _batch_snapshot(batch_id):
                     item['error'] = task.get('error', item.get('error', '未知错误'))
                     if task.get('phase') == 'cro' and all(has_final_output(report) for report in task.get('reports', [])):
                         item['retry_scope'] = 'cro'
+                    elif item.get('cached_context_str'):
+                        item['retry_scope'] = 'ai'
                 else:
                     status_list = task.get('status_list', [])
                     analyst_outputs = task.get('analyst_outputs', [])
@@ -1565,17 +1629,31 @@ def _batch_snapshot(batch_id):
                     for idx in range(3):
                         out = analyst_outputs[idx] if idx < len(analyst_outputs) else None
                         if not out or not isinstance(out, dict):
-                            v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 排队', 'len': 0})
+                            v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 排队', 'len': 0, 'error_msg': ''})
                         else:
                             st = out.get('status', 'processing')
                             c_len = len(out.get('content', ''))
+                            err = str(out.get('error', '') or out.get('error_msg', ''))[:120]
                             if st == 'completed':
-                                v_details.append({'v': idx + 1, 'status': 'completed', 'label': f'研判{idx+1}: ✅ 完成({c_len}字)', 'len': c_len})
-                            elif st == 'streaming' or out.get('reasoning_received') or c_len > 0:
-                                v_details.append({'v': idx + 1, 'status': 'streaming', 'label': f'研判{idx+1}: ⚡ 生成中({c_len}字)', 'len': c_len})
+                                v_details.append({'v': idx + 1, 'status': 'completed', 'label': f'研判{idx+1}: ✅ 完成({c_len}字)', 'len': c_len, 'error_msg': ''})
+                            elif st == 'failed':
+                                short_err = err[:40] + '…' if len(err) > 40 else err
+                                v_details.append({'v': idx + 1, 'status': 'failed', 'label': f'研判{idx+1}: ❌ 失败', 'len': 0, 'error_msg': err})
+                            elif c_len > 0:
+                                v_details.append({'v': idx + 1, 'status': 'streaming', 'label': f'研判{idx+1}: ⚡ 生成中({c_len}字)', 'len': c_len, 'error_msg': ''})
+                            elif st == 'streaming' or out.get('reasoning_received'):
+                                r_len = out.get('reasoning_len', 0)
+                                if r_len > 10000:
+                                    r_label = f'研判{idx+1}: 🧠 推理中({r_len}字 ⚠️偏长)'
+                                elif r_len > 0:
+                                    r_label = f'研判{idx+1}: 🧠 推理中({r_len}字)'
+                                else:
+                                    r_label = f'研判{idx+1}: 🧠 推理中'
+                                v_details.append({'v': idx + 1, 'status': 'streaming', 'label': r_label, 'len': 0, 'error_msg': ''})
                             else:
-                                v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 等待中', 'len': 0})
+                                v_details.append({'v': idx + 1, 'status': 'waiting', 'label': f'研判{idx+1}: ⏳ 等待中', 'len': 0, 'error_msg': ''})
                     item['versions_detail'] = v_details
+
 
                     completed_versions = sum(value == 'completed' for value in status_list)
                     failed_versions = sum(value == 'failed' for value in status_list)
@@ -1595,11 +1673,15 @@ def _batch_snapshot(batch_id):
                 item['phase'] = '分析超时，可重试'
             elif status == 'failed':
                 item['phase'] = '分析失败'
+            elif status == 'cancelled':
+                item['phase'] = item.get('phase', '已手动取消')
+                item['versions_detail'] = [{'v': i+1, 'status': 'cancelled', 'label': f'研判{i+1}: 🚫 已取消', 'len': 0, 'error_msg': ''} for i in range(3)]
         counts = {
             'total': len(items),
             'completed': sum(item['status'] in {'completed', 'cached'} for item in items),
             'failed': sum(item['status'] in {'failed', 'timed_out'} for item in items),
             'timed_out': sum(item['status'] == 'timed_out' for item in items),
+            'cancelled': sum(item['status'] == 'cancelled' for item in items),
             'processing': sum(item['status'] in {'preparing', 'validating', 'queued', 'processing'} for item in items),
             'cached': sum(item['status'] == 'cached' for item in items),
             'skipped': sum(item['status'] == 'skipped' for item in items),
@@ -1809,26 +1891,35 @@ def _run_batch_cro_retry(batch_id, match_id, task_key, runtime_config):
 
 def _prepare_batch_item(batch_id, item):
     """Collect and validate one fixture before it is eligible for AI work."""
+    t0 = time.time()
+    def _set_phase(msg):
+        elapsed = int(time.time() - t0)
+        with _batch_ai_tasks_lock:
+            item['prepare_phase'] = msg if elapsed < 2 else f'{msg}（已用 {elapsed}s）'
+            item['heartbeat_at'] = time.time()
+
     with _batch_ai_tasks_lock:
         item['status'] = 'preparing'
-        item['prepare_phase'] = '正在获取情报、阵容、战绩与赔率'
-        item['started_at'] = time.time()
-        item['heartbeat_at'] = time.time()
+        item['prepare_phase'] = '① 获取赛事详情（情报 + 阵容 + H2H）...'
+        item['started_at'] = t0
+        item['heartbeat_at'] = t0
     _persist_latest_batch_state(batch_id)
+
     success, error, details, snapshot = _prepare_analysis_snapshot(
         item['match_id'], item['home_team'], item['away_team'], force_refresh=True
     )
     if not success:
         _persist_preparation_failure_trace(item['match_id'], 'details', error)
         return False, error, None, None
+
+    odds_count = len(details.get('odds_index', []))
+    _set_phase(f'② 同步赔率走势（{odds_count} 家公司）...')
     with _batch_ai_tasks_lock:
-        item['status'] = 'preparing'
-        item['prepare_phase'] = f"正在同步本场 {len(details.get('odds_index', []))} 家公司的让球与大小球变盘历史"
         item['data_quality'] = snapshot.get('quality', {})
         item['snapshot_hash'] = snapshot.get('hash', '')
         item['market_snapshot_hash'] = snapshot.get('market_hash', '')
         item['snapshot_captured_at'] = snapshot.get('captured_at', '')
-        item['heartbeat_at'] = time.time()
+
     trends_ok, trend_error, trend_quality = _refresh_required_trend_history(
         item['match_id'], details.get('odds_index', []), item['analysis_mode']
     )
@@ -1840,15 +1931,20 @@ def _prepare_batch_item(batch_id, item):
         _persist_preparation_failure_trace(item['match_id'], 'trend', trend_error, details=details, trend_quality=trend_quality)
         print(f"[{item['match_id']}] 趋势历史获取失败（非阻塞）：{trend_error}，继续分析")
         snapshot['trend_quality'] = {'required': 0, 'refreshed': 0, 'failures': [trend_error], 'complete': False}
+
+    _set_phase('③ 校验数据质量并构建分析上下文...')
     with _batch_ai_tasks_lock:
         item['status'] = 'validating'
-        item['prepare_phase'] = '详情与全部变盘历史校验通过，正在构建独立分析上下文'
         item['trend_quality'] = trend_quality
-        item['heartbeat_at'] = time.time()
+
     success, error, context_str = build_match_prompt_context(
         item['match_id'], item['home_team'], item['away_team'], item['analysis_mode'],
         details=details, trend_quality=trend_quality
     )
+    if success:
+        elapsed_total = int(time.time() - t0)
+        with _batch_ai_tasks_lock:
+            item['prepare_phase'] = f'✅ 数据准备完成（共 {elapsed_total}s）'
     return success, error, context_str, snapshot
 
 
@@ -1871,6 +1967,10 @@ def _run_batch_ai_analysis_v2(batch_id, runtime_config):
                 _persist_latest_batch_state(batch_id)
                 continue
             prepared.append((item, context_str, snapshot))
+            # Cache for retry_ai reuse (no need to re-scrape if AI fails)
+            with _batch_ai_tasks_lock:
+                item['cached_context_str'] = context_str
+                item['cached_snapshot'] = snapshot
             _persist_latest_batch_state(batch_id)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=BATCH_CONCURRENT_MATCHES) as ai_executor:
@@ -2083,6 +2183,56 @@ def batch_ai_analysis_latest():
     return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
 
 
+@app.route('/api/debug_ai_state')
+def debug_ai_state():
+    """Diagnostic endpoint: expose semaphore, thread counts, live ai_tasks, and key health."""
+    import threading as _threading
+    semaphore_value = _model_request_semaphore._value  # remaining slots
+    active_tasks = {}
+    for k, v in list(ai_tasks.items()):
+        if not isinstance(v, dict):
+            continue
+        active_tasks[k] = {
+            'status': v.get('status'),
+            'phase': v.get('phase'),
+            'status_list': v.get('status_list'),
+            'analyst_statuses': [
+                (out.get('status') if isinstance(out, dict) else 'null')
+                for out in (v.get('analyst_outputs') or [])
+            ],
+            'started_at': v.get('started_at'),
+            'heartbeat_at': v.get('heartbeat_at'),
+        }
+    # P2-7: API key health summary
+    key_health = []
+    try:
+        now_mono = time.monotonic()
+        with global_api_key_pool._lock:
+            keys = list(global_api_key_pool._keys)
+            cooldowns = dict(global_api_key_pool._cooldowns)
+        for key_str in keys:
+            cd_until = cooldowns.get(key_str, 0.0)
+            remaining = max(0.0, round(cd_until - now_mono, 1))
+            key_health.append({
+                'key_suffix': '***' + key_str[-6:] if len(key_str) >= 6 else '***',
+                'in_cooldown': remaining > 0,
+                'cooldown_remaining_s': remaining,
+            })
+    except Exception as e:
+        key_health = [{'error': str(e)}]
+    return jsonify({
+        'success': True,
+        'semaphore_remaining_slots': semaphore_value,
+        'semaphore_capacity': MODEL_REQUEST_CONCURRENCY,
+        'semaphore_in_use': MODEL_REQUEST_CONCURRENCY - semaphore_value,
+        'active_ai_tasks_count': len(active_tasks),
+        'active_ai_tasks': active_tasks,
+        'thread_count': _threading.active_count(),
+        'key_health': key_health,
+        'watchdog_timeout_minutes': TASK_HARD_TIMEOUT_SECONDS // 60,
+    })
+
+
 @app.route('/api/batch_ai_analysis_retry_cro', methods=['POST'])
 def retry_batch_cro():
     payload = request.get_json(force=True, silent=True) or {}
@@ -2117,6 +2267,113 @@ def retry_batch_cro():
     _persist_latest_batch_state(batch_id)
     return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
 
+
+@app.route('/api/batch_ai_analysis_retry_ai', methods=['POST'])
+def retry_batch_ai():
+    """P1-6: Retry only the AI analyst phase for one failed item (reuse existing context)."""
+    payload = request.get_json(force=True, silent=True) or {}
+    batch_id = str(payload.get('batch_id', '')).strip()
+    match_id = str(payload.get('match_id', '')).strip()
+    if not batch_id or not match_id:
+        return jsonify({'success': False, 'error': '缺少批量任务或比赛标识。'}), 400
+    ok, error, runtime_config = _load_ai_runtime_config()
+    if not ok:
+        return jsonify({'success': False, 'error': error}), 400
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        item = next((row for row in (batch or {}).get('items', []) if str(row.get('match_id')) == match_id), None)
+        if not item:
+            return jsonify({'success': False, 'error': '未找到对应比赛。'}), 404
+        context_str = item.get('cached_context_str', '')
+        snapshot = item.get('cached_snapshot')
+        if not context_str:
+            return jsonify({'success': False, 'error': '无缓存的分析上下文，请重新触发批量分析。'}), 409
+        # Generate a fresh task key
+        new_task_key = f"{batch_id}:{match_id}:{uuid.uuid4().hex}"
+        item['task_key'] = new_task_key
+        item['status'] = 'processing'
+        item.pop('error', None)
+        item.pop('retry_scope', None)
+        item['heartbeat_at'] = time.time()
+        batch['status'] = 'processing'
+    ai_cache_file = os.path.join(CACHE_DIR, f"ai_analysis_{match_id}.json")
+    metadata = {
+        'match_id': match_id, 'home_team': item.get('home_team', ''), 'away_team': item.get('away_team', ''),
+        'kickoff': item.get('kickoff', ''), 'competition': item.get('competition', ''),
+        'fixture_date': item.get('fixture_date', ''), 'fixture_status': item.get('fixture_status', 1),
+        'analysis_mode': item.get('analysis_mode', 'prematch'),
+        'strategy_version': STRATEGY_VERSION,
+        'tracking_cohort_id': runtime_config.get('tracking_cohort_id', ''),
+        'tracking_cohort_name': runtime_config.get('tracking_cohort_name', ''),
+        'market_catalog': (snapshot or {}).get('market_catalog'),
+    }
+    worker = threading.Thread(
+        target=run_ai_analysis_thread,
+        args=(match_id, runtime_config['api_base'], runtime_config['api_key'],
+              runtime_config['model_name'], runtime_config['system_prompt'], context_str,
+              ai_cache_file, metadata, item.get('analysis_mode', 'prematch'), new_task_key, snapshot),
+        daemon=True,
+    )
+    worker.start()
+    _persist_latest_batch_state(batch_id)
+    return jsonify({'success': True, 'batch': _batch_snapshot(batch_id)})
+
+
+@app.route('/api/batch_ai_analysis_cancel', methods=['POST'])
+def cancel_batch():
+    """强制取消一个进行中的批量任务（工作线程在下次心跳检测时自动退出）。"""
+    payload = request.get_json(force=True, silent=True) or {}
+    batch_id = str(payload.get('batch_id', '')).strip()
+    if not batch_id:
+        return jsonify({'success': False, 'error': '缺少 batch_id。'}), 400
+    with _batch_ai_tasks_lock:
+        batch = batch_ai_tasks.get(batch_id)
+        if not batch:
+            return jsonify({'success': False, 'error': '批次不存在。'}), 404
+        if batch.get('status') not in {'processing'}:
+            return jsonify({'success': False, 'error': f'批次当前状态为 {batch.get("status")}，无需取消。'}), 409
+        batch['status'] = 'cancelled'
+        cancelled_count = 0
+        for item in batch.get('items', []):
+            if item.get('status') in {'queued', 'preparing', 'validating', 'processing'}:
+                item['status'] = 'cancelled'
+                item['phase'] = '已手动取消'
+                item['heartbeat_at'] = time.time()
+                task_key = item.get('task_key', '')
+                if task_key and task_key in ai_tasks and isinstance(ai_tasks[task_key], dict):
+                    if ai_tasks[task_key].get('status') == 'processing':
+                        ai_tasks[task_key]['status'] = 'cancelled'
+                        ai_tasks[task_key]['error'] = '用户手动取消'
+                cancelled_count += 1
+    _persist_latest_batch_state(batch_id)
+    print(f'[Cancel] 批次 {batch_id} 已手动取消，共取消 {cancelled_count} 个任务')
+    return jsonify({'success': True, 'cancelled_count': cancelled_count, 'batch': _batch_snapshot(batch_id)})
+
+
+@app.route('/api/batch_ai_analysis_cancel_all', methods=['POST'])
+def cancel_all_batches():
+    """核武器：强制取消所有进行中批量任务（彻底卡死时使用），并重置信号量。"""
+    with _batch_ai_tasks_lock:
+        total_cancelled = 0
+        for batch_id, batch in batch_ai_tasks.items():
+            if batch.get('status') != 'processing':
+                continue
+            batch['status'] = 'cancelled'
+            for item in batch.get('items', []):
+                if item.get('status') in {'queued', 'preparing', 'validating', 'processing'}:
+                    item['status'] = 'cancelled'
+                    item['phase'] = '已批量强制取消'
+                    total_cancelled += 1
+        for key, task in list(ai_tasks.items()):
+            if isinstance(task, dict) and task.get('status') == 'processing':
+                task['status'] = 'cancelled'
+                task['error'] = '用户批量强制取消'
+    try:
+        _model_request_semaphore._value = MODEL_REQUEST_CONCURRENCY
+    except Exception:
+        pass
+    print(f'[CancelAll] 强制取消所有批次，共 {total_cancelled} 项，信号量已重置')
+    return jsonify({'success': True, 'total_cancelled': total_cancelled})
 
 _restore_latest_batch_state()
 
@@ -2939,15 +3196,25 @@ def _with_model_request_slot(function):
 
 
 def _read_error_body(r):
-    """Extract error text from a non-200 response."""
-    err_text = ""
+    """Extract error text from a response safely without triggering StreamConsumedError."""
     try:
+        if hasattr(r, '_content') and r._content is not None:
+            return (r.text or "")[:300]
+    except Exception:
+        pass
+    try:
+        err_parts = []
         for line in r.iter_lines(chunk_size=1):
             if line:
-                err_text += line.decode('utf-8')
-    except:
+                err_parts.append(line.decode('utf-8', errors='ignore'))
+            if len(err_parts) > 10:
+                break
+        text = "".join(err_parts).strip()
+        if text:
+            return text[:300]
+    except Exception:
         pass
-    return err_text
+    return f"HTTP {getattr(r, 'status_code', 'Unknown')}"
 
 
 class ModelNoContentError(Exception):
@@ -3033,16 +3300,21 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             'messages': payload['messages'],
             'temperature': payload['temperature'],
         }
-        ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[version_idx] = {
+        # Upgrade from 'waiting' → 'streaming' now that we have a semaphore slot.
+        # Preserve started_at that was set during task initialisation.
+        previous_out = ai_tasks[task_key].setdefault('analyst_outputs', [None, None, None])[version_idx] or {}
+        ai_tasks[task_key]['analyst_outputs'][version_idx] = {
             'version': version_idx + 1,
             'status': 'streaming',
             'reasoning': '',
             'content': '',
-            'started_at': time.time(),
+            'started_at': previous_out.get('started_at', time.time()),
             'first_event_at': None,
             'first_visible_content_at': None,
             'reasoning_received': False,
+            'reasoning_len': previous_out.get('reasoning_len', 0),
         }
+        print(f"[AI Thread] match={match_id} 研判{version_idx+1} 已获槽位，开始向模型发送请求...")
     
     import requests
     r = requests.post(
@@ -3057,23 +3329,33 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         r.close()
         global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
         raise ModelRateLimitError(
-            f"大模型接口请求被限流 (HTTP 429): {err_text or r.text[:80]}",
-            original_text=err_text or r.text[:80],
+            f"大模型接口请求被限流 (HTTP 429): {err_text}",
+            original_text=err_text,
             rate_limited_key=active_key,
         )
     if r.status_code != 200:
         err_text = _read_error_body(r)
-        raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
+        r.close()
+        raise Exception(f"大模型接口请求失败: HTTP {r.status_code} - {err_text}")
         
     global_api_key_pool.report_success(active_key)
     ai_output = ""
     reasoning_omitted = False
     content_output = ""
-    stream_deadline = time.monotonic() + AI_VERSION_TIMEOUT_SECONDS
+    # stream_deadline is a rolling window: any received token resets it to now+120s.
+    # This prevents thinking models from timing out mid-reasoning while still
+    # catching genuinely stalled connections (no token for 120 consecutive seconds).
+    _token_idle_window = 120
+    stream_start_mono = time.monotonic()
+    stream_deadline = stream_start_mono + _token_idle_window
+    hard_deadline = stream_start_mono + MAX_SINGLE_VERSION_STREAM_SECONDS
     
     for line in r.iter_lines(chunk_size=1):
-        if time.monotonic() > stream_deadline:
-            raise TimeoutError(f'Analyst stream exceeded {AI_VERSION_TIMEOUT_SECONDS} seconds without completing')
+        now_mono = time.monotonic()
+        if now_mono > hard_deadline:
+            raise TimeoutError(f'研判单次流处理已达硬上限耗时 ({MAX_SINGLE_VERSION_STREAM_SECONDS}s)，强行熔断重试')
+        if now_mono > stream_deadline:
+            raise TimeoutError(f'Analyst stream idle for {_token_idle_window}s without any token')
         if not line:
             continue
         line_str = line.decode('utf-8').strip()
@@ -3095,9 +3377,19 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                 
                 if reasoning:
                     reasoning_omitted = True
+                    # Roll the idle window forward on every reasoning token.
+                    stream_deadline = now_mono + _token_idle_window
                     if isinstance(output_state, dict):
                         output_state['reasoning_received'] = True
+                        curr_r_len = output_state.get('reasoning_len', 0) + len(reasoning)
+                        output_state['reasoning_len'] = curr_r_len
+                        # 防死循环熔断：思考字数已超上限且仍未吐出正文，或者总思考超过 2 万字
+                        if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or curr_r_len > 25000:
+                            print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触重试！")
+                            raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > {MAX_REASONING_CHARACTERS}字)，判定为思考死循环，已强行中断重试')
                 if content:
+                    # Roll the idle window forward on every content token.
+                    stream_deadline = now_mono + _token_idle_window
                     ai_output += content
                     content_output += content
                     if isinstance(output_state, dict):
@@ -3174,13 +3466,14 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         r.close()
         global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=25.0)
         raise ModelRateLimitError(
-            f"收敛层大模型接口请求被限流 (HTTP 429): {err_text or r.text[:80]}",
-            original_text=err_text or r.text[:80],
+            f"收敛层大模型接口请求被限流 (HTTP 429): {err_text}",
+            original_text=err_text,
             rate_limited_key=active_key,
         )
     if r.status_code != 200:
         err_text = _read_error_body(r)
-        raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text or r.text}")
+        r.close()
+        raise Exception(f"收敛层大模型接口请求失败: HTTP {r.status_code} - {err_text}")
         
     global_api_key_pool.report_success(active_key)
     ai_output = ""
@@ -3253,30 +3546,42 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
     global ai_tasks
     task_key = task_key or str(match_id)
     try:
+        _now = time.time()
+        # Pre-fill analyst_outputs with 'waiting' so the frontend immediately
+        # shows "等待中" instead of "排队" while sub-threads queue for the semaphore.
         ai_tasks[task_key] = {
             'status': 'processing', 
             'reports': ['', '', ''],
             'status_list': ['processing', 'processing', 'processing'],
             'final_ticket': '',
             'analyst_inputs': [None, None, None],
-            'analyst_outputs': [None, None, None],
+            'analyst_outputs': [
+                {'version': i + 1, 'status': 'waiting', 'reasoning': '', 'content': '',
+                 'started_at': _now, 'first_event_at': None, 'first_visible_content_at': None,
+                 'reasoning_received': False, 'reasoning_len': 0}
+                for i in range(3)
+            ],
             'cro_input': None,
             'cro_output': None,
-            'started_at': time.time(),
-            'heartbeat_at': time.time(),
+            'started_at': _now,
+            'heartbeat_at': _now,
             'snapshot_hash': (snapshot or {}).get('hash', ''),
             'analysis_input': context_str,
             'trace_id': uuid.uuid4().hex,
         }
+        print(f"[AI Thread] match={match_id} task={task_key[:24]}... 已初始化，开始并行提交三路研判")
         
         def run_version_with_retry(version_idx):
-            return _retry_model_operation(
+            print(f"[AI Thread] match={match_id} 研判{version_idx+1} 线程已启动，等待模型请求槽位...")
+            result = _retry_model_operation(
                 lambda: run_single_version(
                     version_idx, match_id, api_base, api_key, model_name,
                     system_prompt, context_str, task_key,
                 ),
                 lambda: bool(extract_final_output(ai_tasks.get(task_key, {}).get('reports', ['', '', ''])[version_idx])),
             )
+            print(f"[AI Thread] match={match_id} 研判{version_idx+1} 完成")
+            return result
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {
@@ -3713,4 +4018,5 @@ def send_wechat_message():
 if __name__ == '__main__':
     # Run locally or on server port 5000, listening on all interfaces
     start_refresh_scheduler()
+    _start_task_watchdog()
     app.run(host='0.0.0.0', port=5000, use_reloader=False, threaded=True)

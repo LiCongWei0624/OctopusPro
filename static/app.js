@@ -71,10 +71,15 @@ function updateGlobalAiTaskBadge() {
 
     if (isBatchAiRunning && activeBatchAiId) {
         const counts = latestBatchProgress?.counts || {};
+        const items = latestBatchProgress?.items || [];
+        const processingItem = items.find(it => it.status === 'processing');
+        const teamLabel = processingItem
+            ? ` · ${processingItem.home_team || '主队'} vs ${processingItem.away_team || '客队'}`
+            : '';
         badge.style.display = 'inline-flex';
         badge.dataset.targetBatchId = activeBatchAiId;
         delete badge.dataset.targetMatchId;
-        badgeText.textContent = `⚡ 批量研判中 (${counts.completed || 0}/${counts.total || 0})`;
+        badgeText.textContent = `⚡ 批量 ${counts.completed || 0}/${counts.total || 0}${teamLabel}`;
         return;
     }
 
@@ -803,6 +808,15 @@ function openBatchAnalysisModal() {
 }
 window.openBatchAnalysisModal = openBatchAnalysisModal;
 
+function showPillErrorAlert(element) {
+    const errorMsg = element ? element.dataset.errorMsg : '';
+    if (errorMsg) {
+        const label = (element.dataset.label || '研判').replace(/🔍/g, '').trim();
+        alert(`🔍 【${label} 失败详细原因】\n\n${errorMsg}`);
+    }
+}
+window.showPillErrorAlert = showPillErrorAlert;
+
 function refreshBatchAiProgressManually() {
     restoreLatestBatchProgress();
     showAppNotice('已同步最新批量分析进度', 'success');
@@ -815,6 +829,26 @@ function closeBatchAnalysisModal() {
     setMobileNavActive('home');
 }
 window.closeBatchAnalysisModal = closeBatchAnalysisModal;
+
+function cancelCurrentBatch() {
+    if (!activeBatchAiId) return;
+    if (!confirm('确认强制终止当前批量分析？\n正在进行的 AI 研判将被标记为已取消，已完成的结果不受影响。')) return;
+    fetch('/api/batch_ai_analysis_cancel', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: activeBatchAiId })
+    })
+        .then(r => r.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || '取消失败');
+            isBatchAiRunning = false;
+            stopBatchAiPolling();
+            if (result.batch) renderBatchAiProgress(result.batch);
+            showAppNotice(`已强制终止批量任务，共取消 ${result.cancelled_count || 0} 项`, 'warning');
+        })
+        .catch(err => alert('取消失败：' + err.message));
+}
+window.cancelCurrentBatch = cancelCurrentBatch;
 
 function closeBatchAnalysisModalOnBackdrop(event) {
     if (event.target.id === 'batch-analysis-modal') closeBatchAnalysisModal();
@@ -893,22 +927,49 @@ function retryBatchCro(batchId, matchId) {
         .catch(error => alert(error.message || '重试 CRO 汇总失败。'));
 }
 
+function retryBatchAi(batchId, matchId) {
+    fetch('/api/batch_ai_analysis_retry_ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batch_id: batchId, match_id: matchId })
+    })
+        .then(response => response.json())
+        .then(result => {
+            if (!result.success) throw new Error(result.error || '无法重试 AI 分析。');
+            activeBatchAiId = batchId;
+            renderBatchAiProgress(result.batch);
+            startBatchAiPolling();
+        })
+        .catch(error => alert(error.message || '重试 AI 分析失败：' + error.message));
+}
+
 function renderBatchAiProgress(batch) {
     const progress = document.getElementById('batch-ai-progress');
     const button = document.getElementById('btn-batch-ai-analysis');
     if (!progress || !batch) return;
 
     latestBatchProgress = batch;
+    // P1-5: update stall map
+    const _now = Date.now();
+    (batch.items || []).forEach(item => {
+        const key = item.match_id;
+        const stateKey = JSON.stringify({ phase: item.phase, vd: (item.versions_detail || []).map(v => v.label + v.len) });
+        if (!_batchItemStateMap[key] || _batchItemStateMap[key].stateKey !== stateKey) {
+            _batchItemStateMap[key] = { stateKey, lastChangeTime: _now };
+        }
+    });
     const counts = batch.counts || {};
     const isRunning = batch.status === 'processing';
     isBatchAiRunning = isRunning;
     const summary = `批量分析：已完成 ${counts.completed || 0}/${counts.total || 0}`
         + `，进行中 ${counts.processing || 0}`
         + `，失败 ${counts.failed || 0}`
+        + ((counts.cancelled || 0) ? `，已取消 ${counts.cancelled}` : '')
         + ((counts.timed_out || 0) ? `（超时 ${counts.timed_out}）` : '')
         + ((counts.cached || 0) ? `（复用缓存 ${counts.cached}）` : '')
         + ((counts.skipped || 0) ? `（跳过 ${counts.skipped}）` : '');
     progress.style.display = 'block';
+    const batchFinished = ['completed', 'cancelled', 'failed'].includes(batch.status);
     progress.className = `batch-ai-progress ${isRunning ? 'running' : 'finished'}`;
     const itemRows = (batch.items || []).map(item => {
         const status = item.status || 'queued';
@@ -928,26 +989,45 @@ function renderBatchAiProgress(batch) {
             : '';
         const retryAction = item.retry_scope === 'cro'
             ? `<button class="batch-retry-cro" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">重试 CRO 汇总</button>`
+            : item.retry_scope === 'ai'
+            ? `<button class="batch-retry-ai" type="button" data-match-id="${escapeBatchProgressText(item.match_id)}">🔄 重试 AI 分析</button>`
+            : '';
+        // P1-5: stall detection for this item
+        const _itemStall = _batchItemStateMap[item.match_id];
+        const _sinceChange = _itemStall ? (_now - _itemStall.lastChangeTime) : 0;
+        const _isStalled = status === 'processing' && _sinceChange > BATCH_STALL_WARN_MS;
+        const stallBadge = _isStalled
+            ? `<span class="v-pill v-stalled" title="已 ${Math.floor(_sinceChange/60000)} 分钟无变化，可能响应迟缓">⚠️ 响应迟缓</span>`
             : '';
         const versionsMarkup = (item.versions_detail && item.versions_detail.length)
-            ? `<div class="batch-versions-pills" style="display:flex; gap:6px; margin-top:4px; flex-wrap:wrap;">
-                ${item.versions_detail.map(v => `<span class="v-pill v-${v.status}" style="font-size:0.72rem; padding:2px 8px; border-radius:4px; background:${v.status==='completed'?'rgba(16,185,129,0.15)':(v.status==='streaming'?'rgba(59,130,246,0.15)':'rgba(156,163,175,0.1)')}; border:1px solid ${v.status==='completed'?'rgba(16,185,129,0.3)':(v.status==='streaming'?'rgba(59,130,246,0.3)':'rgba(156,163,175,0.2)')}; color:${v.status==='completed'?'#10b981':(v.status==='streaming'?'#60a5fa':'#9ca3af')};">${escapeBatchProgressText(v.label)}</span>`).join('')}
+            ? `<div class="batch-versions-pills">
+                ${stallBadge}${item.versions_detail.map(v => {
+                    const hasErr = Boolean(v.error_msg);
+                    const clickAttr = hasErr
+                        ? ` onclick="showPillErrorAlert(this)" data-error-msg="${escapeBatchProgressText(v.error_msg)}" data-label="${escapeBatchProgressText(v.label)}" style="cursor:pointer;" title="点击查看失败具体原因"`
+                        : '';
+                    return `<span class="v-pill v-${v.status}${hasErr ? ' has-error' : ''}"${clickAttr}>${escapeBatchProgressText(v.label)}${hasErr ? ' 🔍' : ''}</span>`;
+                }).join('')}
                </div>`
-            : '';
+            : (stallBadge ? `<div class="batch-versions-pills">${stallBadge}</div>` : '');
         return `
             <li class="batch-progress-item ${status}">
                 <span class="batch-progress-dot" aria-hidden="true"></span>
-                <div class="batch-progress-match">
-                    <strong>${escapeBatchProgressText(title)}</strong>
-                    ${meta ? `<small>${escapeBatchProgressText(meta)}</small>` : ''}
-                </div>
-                <div class="batch-progress-phase">
-                    <span>${escapeBatchProgressText(item.phase || '等待处理')}</span>
-                    ${versionsMarkup}
-                    ${quality}
-                    ${warningMsg}
-                    ${error}
-                    ${resultAction || retryAction}
+                <div class="batch-progress-body">
+                    <div class="batch-progress-match">
+                        <strong>${escapeBatchProgressText(title)}</strong>
+                        ${meta ? `<small>${escapeBatchProgressText(meta)}</small>` : ''}
+                    </div>
+                    <div class="batch-progress-phase">
+                        ${item.status === 'processing' && (item.phase || '').includes('CRO')
+                            ? `<span class="phase-running">${escapeBatchProgressText(item.phase)}</span>`
+                            : `<span>${escapeBatchProgressText(item.phase || '等待处理')}</span>`}
+                        ${versionsMarkup}
+                        ${quality}
+                        ${warningMsg}
+                        ${error}
+                        ${resultAction || retryAction}
+                    </div>
                 </div>
             </li>
         `;
@@ -962,12 +1042,18 @@ function renderBatchAiProgress(batch) {
     progress.querySelectorAll('.batch-retry-cro').forEach(button => {
         button.addEventListener('click', () => retryBatchCro(batch.id, button.dataset.matchId));
     });
+    progress.querySelectorAll('.batch-retry-ai').forEach(button => {
+        button.addEventListener('click', () => retryBatchAi(batch.id, button.dataset.matchId));
+    });
     const retryButton = progress.querySelector('.batch-retry-failed');
     if (retryButton) retryButton.addEventListener('click', () => retryFailedBatchItems(batch));
     if (button) {
         button.disabled = isRunning ? false : Object.keys(batchSelectedMatches).length === 0;
         button.textContent = isRunning ? '查看进度' : '批量分析';
     }
+    // 取消按钮：仅在 processing 时显示
+    const cancelBtn = document.getElementById('btn-batch-cancel');
+    if (cancelBtn) cancelBtn.style.display = isRunning ? 'inline-flex' : 'none';
     updateGlobalAiTaskBadge();
 }
 
@@ -979,6 +1065,9 @@ function stopBatchAiPolling() {
 }
 
 let batchPollingErrorCount = 0;
+// P1-5: stall detection - tracks last state change time per match item
+const _batchItemStateMap = {};
+const BATCH_STALL_WARN_MS = 180000; // 3 minutes
 
 function startBatchAiPolling() {
     stopBatchAiPolling();
@@ -1686,13 +1775,15 @@ function finalTicketPredictionMarkup(report, fixture = null) {
     return `
         <section class="cro-structured-picks">
             <div class="cro-pick-header">
-                <span class="cro-pick-title">🎯 首席风险官·核心量化研判提炼</span>
-                <span class="cro-pick-badge success">建议仓位 2.0%</span>
+                <span class="cro-pick-title">🎯 CRO 最终执行方案</span>
             </div>
             <div class="cro-pick-cards">
                 ${items.map(item => `
                     <div class="cro-pick-item">
-                        <span class="cro-pick-type">${escapeBacktestHtml(item.label)}</span>
+                        <div class="cro-pick-item-header">
+                            <span class="cro-pick-type">${escapeBacktestHtml(item.label)}</span>
+                            <span class="cro-pick-badge success">仓位 2.0%</span>
+                        </div>
                         <strong class="cro-pick-value">${escapeBacktestHtml(item.val)}</strong>
                         <div class="cro-pick-meta">
                             ${item.water ? `<span class="cro-meta-chip">水位 ${item.water}</span>` : ''}

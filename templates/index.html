@@ -335,6 +335,7 @@
                     <p class="modal-subtitle">每场独立分析，可直接查看最终执行预测</p>
                 </div>
                 <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button id="btn-batch-cancel" class="btn-batch-cancel" style="display:none;" onclick="cancelCurrentBatch()" type="button" title="强制终止当前批量任务">🛑 强制终止</button>
                     <button class="btn-ai-save" style="padding: 0.3rem 0.65rem; font-size: 0.76rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); cursor: pointer; border-radius: 6px;" onclick="refreshBatchAiProgressManually()" type="button" title="点击立即同步最新进度">🔄 刷新进度</button>
                     <button class="modal-close-btn" onclick="closeBatchAnalysisModal()" aria-label="关闭">×</button>
                 </div>

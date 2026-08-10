@@ -49,6 +49,7 @@ encrypt_payload.js
 # 本地数据与缓存
 cache/
 parsed_matches.json
+parsed_matches_*.json
 session_cookies.json
 *.bin
 *.html

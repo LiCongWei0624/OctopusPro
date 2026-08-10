@@ -2466,7 +2466,7 @@ body {
 }
 
 .batch-analysis-modal .modal-container {
-    max-width: 680px;
+    max-width: 900px;
 }
 
 .batch-ai-progress {
@@ -2496,12 +2496,18 @@ body {
 
 .batch-progress-item {
     display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) auto;
+    grid-template-columns: 10px 1fr;
     gap: 0.65rem;
-    align-items: center;
+    align-items: flex-start;
     padding: 0.7rem;
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-sm);
+}
+
+.batch-progress-body {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 0;
 }
 
 .batch-progress-dot {
@@ -2563,6 +2569,46 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.1);
     white-space: nowrap;
 }
+.v-pill.v-completed { background: rgba(16,185,129,0.15); border-color: rgba(16,185,129,0.3); color: #10b981; }
+.v-pill.v-streaming  { background: rgba(59,130,246,0.15);  border-color: rgba(59,130,246,0.3);  color: #60a5fa; }
+.v-pill.v-failed     { background: rgba(239,68,68,0.15);   border-color: rgba(239,68,68,0.3);   color: #f87171; }
+.v-pill.v-waiting    { background: rgba(156,163,175,0.10); border-color: rgba(156,163,175,0.2); color: #9ca3af; }
+.v-pill.v-stalled    { background: rgba(245,158,11,0.15);  border-color: rgba(245,158,11,0.3);  color: #fbbf24; animation: pulse-stalled 1.8s ease-in-out infinite; }
+@keyframes pulse-stalled {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.55; }
+}
+.v-pill.v-cancelled  { background: rgba(107,114,128,0.10); border-color: rgba(107,114,128,0.2); color: #6b7280; text-decoration: line-through; opacity: 0.7; }
+
+/* 已取消的批量 item 整体淡化 */
+.batch-progress-item.cancelled {
+    opacity: 0.5;
+}
+.batch-progress-item.cancelled .batch-progress-match strong {
+    text-decoration: line-through;
+    color: var(--text-muted);
+}
+
+/* 强制终止按钮 */
+.btn-batch-cancel {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.3rem 0.65rem;
+    font-size: 0.76rem;
+    font-weight: 700;
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.3);
+    color: #ef4444;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    white-space: nowrap;
+}
+.btn-batch-cancel:hover {
+    background: rgba(239,68,68,0.18);
+    border-color: rgba(239,68,68,0.5);
+}
 
 .batch-result-toggle,
 .batch-retry-cro,
@@ -2571,6 +2617,18 @@ body {
     padding: 0.35rem 0.5rem;
     color: var(--color-primary);
 }
+
+.batch-retry-ai {
+    min-height: 28px;
+    padding: 0.35rem 0.5rem;
+    color: #f59e0b;
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius: var(--border-radius-sm);
+    font-size: 0.78rem;
+    cursor: pointer;
+}
+.batch-retry-ai:hover { background: rgba(245,158,11,0.15); }
 
 .batch-execution-ticket {
     grid-column: 2 / -1;
@@ -4201,15 +4259,14 @@ textarea:focus-visible {
 .cro-pick-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
     gap: 0.75rem;
-    margin-bottom: 0.85rem;
-    padding-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.45rem;
     border-bottom: 1px dashed rgba(79, 70, 229, 0.15);
 }
 
 .cro-pick-title {
-    font-size: 0.86rem;
+    font-size: 0.82rem;
     font-weight: 800;
     color: var(--text-primary);
     letter-spacing: -0.2px;
@@ -4237,20 +4294,21 @@ textarea:focus-visible {
     color: var(--color-danger);
 }
 
+/* 执行方案列表 — 有让球+大小球时并排 */
 .cro-pick-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 0.75rem;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 0.7rem;
 }
 
 .cro-pick-item {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius-md);
-    padding: 0.75rem 0.9rem;
+    padding: 0.7rem 0.85rem;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
+    gap: 0.3rem;
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
     transition: var(--transition-smooth);
 }
@@ -4260,11 +4318,21 @@ textarea:focus-visible {
     box-shadow: 0 4px 12px rgba(79, 70, 229, 0.08);
 }
 
+/* 每张卡片内的顶部行：市场名称 + 仓位 badge 并排 */
+.cro-pick-item-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.1rem;
+}
+
 .cro-pick-type {
-    font-size: 0.72rem;
+    font-size: 0.7rem;
     font-weight: 700;
     color: var(--text-muted);
     text-transform: uppercase;
+    letter-spacing: 0.3px;
 }
 
 .cro-pick-value {
@@ -4298,9 +4366,83 @@ textarea:focus-visible {
     border-color: var(--color-success-border);
 }
 
+/* CRO 阶段进行中动态省略号 */
+.phase-running::after {
+    content: '';
+    animation: phase-dots 1.4s steps(4, end) infinite;
+}
+@keyframes phase-dots {
+    0%   { content: ''; }
+    25%  { content: '.'; }
+    50%  { content: '..'; }
+    75%  { content: '...'; }
+    100% { content: ''; }
+}
+
 .cro-pick-reason {
     font-size: 0.82rem;
     color: var(--text-secondary);
     line-height: 1.5;
     font-style: italic;
+}
+
+/* =====================================================================
+   响应式：批量分析进度弹窗 移动端适配
+   ===================================================================== */
+
+/* 平板及以下：弹窗宽度收窄 */
+@media (max-width: 960px) {
+    .batch-analysis-modal .modal-container {
+        max-width: 96vw;
+    }
+}
+
+/* 手机端：弹窗全宽 + 布局紧凑 */
+@media (max-width: 640px) {
+    .batch-analysis-modal .modal-container {
+        max-width: 100vw;
+        margin: 0;
+        border-radius: 0;
+        max-height: 90dvh;
+        overflow-y: auto;
+    }
+
+    .batch-progress-item {
+        grid-template-columns: 8px 1fr;
+        gap: 0.5rem;
+        padding: 0.55rem;
+    }
+
+    .batch-progress-dot {
+        width: 6px;
+        height: 6px;
+        margin-top: 4px;
+    }
+
+    .batch-progress-match strong {
+        font-size: 0.8rem;
+    }
+
+    .batch-progress-match small,
+    .batch-progress-phase small {
+        font-size: 0.7rem;
+    }
+
+    .batch-versions-pills {
+        gap: 4px;
+    }
+
+    .v-pill {
+        font-size: 0.68rem;
+        padding: 1px 5px;
+    }
+
+    .batch-progress-phase {
+        font-size: 0.72rem;
+    }
+
+    .batch-progress-summary {
+        font-size: 0.78rem;
+        padding: 0.5rem 0.6rem;
+    }
 }
