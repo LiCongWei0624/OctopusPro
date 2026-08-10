@@ -1663,9 +1663,7 @@ def _batch_snapshot(batch_id):
                                 v_details.append({'v': idx + 1, 'status': 'streaming', 'label': f'研判{idx+1}: ⚡ 生成中({c_len}字)', 'len': c_len, 'error_msg': ''})
                             elif st == 'streaming' or out.get('reasoning_received'):
                                 r_len = out.get('reasoning_len', 0)
-                                if r_len > 10000:
-                                    r_label = f'研判{idx+1}: 🧠 推理中({r_len}字 ⚠️偏长)'
-                                elif r_len > 0:
+                                if r_len > 0:
                                     r_label = f'研判{idx+1}: 🧠 推理中({r_len}字)'
                                 else:
                                     r_label = f'研判{idx+1}: 🧠 推理中'
@@ -3407,10 +3405,10 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                     output_state['reasoning_received'] = True
                     curr_r_len = output_state.get('reasoning_len', 0) + len(reasoning)
                     output_state['reasoning_len'] = curr_r_len
-                    # 防死循环熔断：思考字数已超上限且仍未吐出正文
-                    if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or (curr_r_len > 25000 and not content_output):
-                        print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触重试！")
-                        raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > {MAX_REASONING_CHARACTERS}字)，判定为思考死循环，已强行中断重试')
+                    # 防死循环熔断：思考字数已超上限（50000字）且仍未吐出正文
+                    if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or (curr_r_len > 50000 and not content_output):
+                        print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触发重试！")
+                        raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > 50000字)，判定为思考死循环，已强行中断重试')
             if content:
                 # Roll the idle window forward on every content token.
                 stream_deadline = now_mono + _token_idle_window
