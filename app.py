@@ -39,21 +39,21 @@ BATCH_CONCURRENT_MATCHES = 6
 BATCH_DETAIL_CONCURRENCY = 1
 AI_VERSION_TIMEOUT_SECONDS = 480
 CRO_TIMEOUT_SECONDS = 120
-MAX_REASONING_CHARACTERS = 50000  # 单次研判思考字数上限（超过5万字无正文输出，判定为模型死循环并强行熔断重试）
+MAX_REASONING_CHARACTERS = 15000  # 单次研判思考字数上限（超过1.5万字无正文输出，判定为模型死循环并强行熔断重试）
 MAX_SINGLE_VERSION_STREAM_SECONDS = 360  # 单次研判流式处理绝对耗时硬上限 (6分钟)
-MODEL_CONNECT_TIMEOUT_SECONDS = 30
-MODEL_STREAM_READ_TIMEOUT_SECONDS = 300
+MODEL_CONNECT_TIMEOUT_SECONDS = 15
+MODEL_STREAM_READ_TIMEOUT_SECONDS = 60
 MODEL_REQUEST_CONCURRENCY = 12
 MODEL_REQUEST_INTERVAL_SECONDS = 10
 MODEL_REQUEST_MAX_ATTEMPTS = 4
 MODEL_REQUEST_RETRY_DELAY_SECONDS = 1.5
-BATCH_MATCH_TIMEOUT_SECONDS = 600
+BATCH_MATCH_TIMEOUT_SECONDS = 900
 BATCH_HEARTBEAT_TIMEOUT_SECONDS = 5700
 MIN_REQUIRED_ODDS_COMPANIES = 3
 RECOMMENDED_ODDS_COMPANIES = 6
 TREND_MARKETS = {"1": "让球", "3": "大小球"}
-TREND_FETCH_MAX_ATTEMPTS = 3
-TREND_FETCH_RETRY_DELAY_SECONDS = 3
+TREND_FETCH_MAX_ATTEMPTS = 2
+TREND_FETCH_RETRY_DELAY_SECONDS = 1.0
 # Keep the six-request strategic-company burst serialized but avoid adding
 # almost a second of artificial delay after every successful network round-trip.
 TREND_REQUEST_MIN_INTERVAL_SECONDS = 0.15
@@ -103,8 +103,23 @@ class ApiKeyPool:
         with self._lock:
             return len(self._keys)
 
-    def get_key(self, preferred_key=None, exclude_keys=None):
+    def get_key(self, preferred_key=None, exclude_keys=None, offset=0):
         with self._lock:
+            def _parse_keys(raw):
+                if not raw:
+                    return []
+                parts = []
+                for p in str(raw).replace('\n', ',').replace(';', ',').split(','):
+                    cp = p.strip()
+                    if cp and cp not in parts:
+                        parts.append(cp)
+                return parts
+
+            if preferred_key and (',' in preferred_key or '\n' in preferred_key or ';' in preferred_key):
+                keys = _parse_keys(preferred_key)
+                if keys:
+                    self._keys = keys
+
             if not self._keys:
                 clean_pref = str(preferred_key or '').strip()
                 if clean_pref and ',' not in clean_pref and '\n' not in clean_pref and ';' not in clean_pref:
@@ -123,7 +138,8 @@ class ApiKeyPool:
                 candidates = list(self._keys)
             healthy_candidates = [k for k in candidates if self._cooldowns.get(k, 0.0) <= now]
             if healthy_candidates:
-                key = healthy_candidates[self._index % len(healthy_candidates)]
+                idx = (self._index + offset) % len(healthy_candidates)
+                key = healthy_candidates[idx]
                 self._index = (self._index + 1) % len(self._keys)
                 return key
             candidates_by_expiry = sorted(candidates, key=lambda k: self._cooldowns.get(k, 0.0))
@@ -175,6 +191,8 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 2. **严禁凭空捏造**：没有内置的全球历史赛事数据库，严禁编造任何历史同盘的场次、具体比分和胜负百分比。必须使用欧指转换公式计算基础隐含概率：基础隐含概率 = (1 / 赔率) * 100%。还原纯市场预期概率时，必须使用比例归一化法消除抽水：纯隐含概率 = 某项基础隐含概率 / (胜+平+负三项基础隐含概率之和)。
 3. **独立价值解耦**：亚洲让球盘、大小球（总进球）作为两个独立的风险投资组合进行单独评估，不强行进行串关式绝对绑定，允许各自寻找最优风险收益比。
 4. **盘路结算常识校准**：严格执行亚洲让球盘标准结算规则。对于整数让球盘口（如 -1、+1 等），当让球方刚好净胜盘口球数时，结算结果为“走水（Push，全额退还本金）”，不存在任何“赢半”或“输半”形式，报告内的推演必须完全符合此清算逻辑。
+5. **高效思考与龙头聚焦**：在思考阶段请重点审计 Pinnacle(平博)、Bet365(365) 和 皇冠(Crown) 3 家龙头机构的盘口走势，其余公司仅作扫描，严禁逐家机械抄表！推算完成后立刻输出结构化精算报告与最终结论！
+6. **思考预算与相对长度约束**：请将你的思考过程（<think>框内容）控制在用户输入数据长度的 1.5 倍以内。优先探索最核心的分析路径，严禁在思考中穷举所有可能性或陷入自我循环校验！推算完成后立刻输出正文结论！
 
 ---
 
@@ -185,7 +203,7 @@ DEFAULT_SYSTEM_PROMPT = """# Role: 顶级量化体育精算师 & 博彩机构风
 1. 近 3-5 轮攻防效率与竞技状态 (权重 30%)
 2. 主客场环境差异与硬实力底盘 (权重 30%)
 3. 伤停、红牌与战术克制 (权重 20%)
-4. 战意与赛程密集度 (权重 20%)，以下五个子任务必须逐项完成，严禁遗漏：
+4. 战意与赛程密集度 (权重 20%)，结合可用数据进行定性定量分析（对未包含或缺失的段落直接标明缺失，无需在思考中重复寻找）：
    4a. **积分战意审计**：结合【五、 联赛积分榜对比】分析两队积分分差与夺冠/争四/保级驱动力，识别是否具备升班马属性。
    4b. **半全场韧性评估**：结合【七、 半全场胜负统计】评估落后翻盘率与领先被逆转率。
    4c. **进球节奏与体能分析**：结合【六、 进球时间段分布】的 6 个时段数据，评估球队是属于"抢开局慢热型"还是"下半场体能崩盘型"。
@@ -1568,12 +1586,10 @@ def _prepare_analysis_snapshot(match_id, home, away, force_refresh=True):
     """
     try:
         with _detail_prepare_semaphore:
-            # 每次抓取前清理全局 CookieJar，避免残留的 WAF cookie 导致 TCP 连接异常
-            from detail_scraper import GLOBAL_CJ, GLOBAL_ODDS_CJ, _GLOBAL_CJ_LOCK, _GLOBAL_ODDS_CJ_LOCK
+            # 抓取前只清理主站 CookieJar，保留 odds 域名的全局 WAF CookieJar 避免反复触发 Node 求解
+            from detail_scraper import GLOBAL_CJ, _GLOBAL_CJ_LOCK
             with _GLOBAL_CJ_LOCK:
                 GLOBAL_CJ.clear()
-            with _GLOBAL_ODDS_CJ_LOCK:
-                GLOBAL_ODDS_CJ.clear()
             details = get_complete_match_details(match_id, home, away)
             if not details.get('odds_index'):
                 details['odds_index'] = get_real_odds(match_id)
@@ -2714,6 +2730,7 @@ def _trend_rows_for_analysis_mode(rows, analysis_mode):
     rows = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
     is_live = (analysis_mode == 'live')
     filtered = []
+    PREMATCH_SCORES = {'', '0:0', '0-0', '-:-', '- :-', '0 - 0', '0 : 0'}
     for row in rows:
         has_explicit_state = 'match_minute' in row or 'match_status' in row
         minute = str(row.get('match_minute', '') or '').strip()
@@ -2729,15 +2746,16 @@ def _trend_rows_for_analysis_mode(rows, analysis_mode):
                 filtered.append(row)
                 continue
             continue
-        # Legacy rows (no explicit state)
+        # Legacy rows (no explicit state, e.g. from html_table)
         change_time = str(row.get('change_time', '') or '').strip()
         score = str(row.get('score', '') or '').strip()
         legacy_live_time = bool(re.fullmatch(r'(?:\d{1,3}\+?|中场|半场|HT)', change_time, re.IGNORECASE))
+        has_live_score = bool(score and score not in PREMATCH_SCORES)
         if is_live:
-            if legacy_live_time or score:
+            if legacy_live_time or has_live_score:
                 filtered.append(row)
             continue
-        if not score and not legacy_live_time:
+        if not legacy_live_time and not has_live_score:
             filtered.append(row)
     return filtered
 
@@ -3142,7 +3160,7 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
                         if type_val == '1':
                             rows = _normalize_handicap_trend_direction(rows)
                         t_name = f"{market_name} ({'Handicap' if type_val == '1' else 'Over/Under'})"
-                        context_lines.append(f"- {company_name} {t_name} 变盘路径 (按时间倒序，最近 10 次变盘):")
+                        context_lines.append(f"- {company_name} {t_name} 变盘路径 (按时间倒序，包含最近 20 次变盘点):")
                         if not rows:
                             context_lines.append("  (暂无该项变盘明细)")
                             continue
@@ -3162,8 +3180,15 @@ def build_match_prompt_context(match_id, home, away, analysis_mode='prematch', d
                                     f"{summary['away_water_change']:+.3f}"
                                 )
                             context_lines.append("  可观察路径摘要: " + " | ".join(facts))
-                        for r in rows[:10]:
-                            time_str = r.get('change_time', '')
+                        for r in rows[:20]:
+                            raw_time = str(r.get('change_time', '') or '').strip()
+                            if raw_time.isdigit() and len(raw_time) >= 10:
+                                try:
+                                    time_str = datetime.datetime.fromtimestamp(int(raw_time)).strftime('%m-%d %H:%M')
+                                except Exception:
+                                    time_str = raw_time
+                            else:
+                                time_str = raw_time
                             sides = (
                                 f"主队水 {r.get('home')} | 客队水 {r.get('away')}"
                                 if type_val == '1'
@@ -3182,16 +3207,13 @@ _VERSION_PERSPECTIVES = [
     "请针对以下赛事数据进行深度量化研判。本次研判要求以 Step 1 基本面为主驱动力（权重 60%），"
     "重点审计近期攻防效率、主力折损、强弱交手表现和战意驱动力，"
     "赔率盘口作为辅助校验维度。找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
-    # 版本2：市场基线审计（先计算价格，再判断是否存在偏差）
-    "请针对以下赛事数据进行深度量化研判。本次研判要求以 Step 2 的去水市场概率为基线，"
-    "逐项核验初盘与即时盘的可观察变化，并量化基本面对市场基线的支持或反对。"
-    "不得猜测资金流、机构意图或诱盘；盘口变化不足以单独推出反向结论。"
-    "只有存在可说明的概率增量时才推荐，否则明确写无量化优势：\n\n{context_str}",
-    # 版本3：证伪审计（检验热门与反热门，不预设任何一方错误）
-    "请针对以下赛事数据进行深度量化研判。本次研判要求以【证伪审计】视角切入：\n"
-    "1. 同时检验市场热门方向、平局、受让方、小球的支持与反对证据，严禁预设热门必错；\n"
-    "2. 平局、受让方或小球只有在相对去水市场概率存在明确优势，且有直接基本面证据时才可推荐；\n"
-    "3. 若证据无法区分方向，明确写无量化优势，不要用冷门叙事填补结论。\n"
+    # 版本2：核心赔率基线审计（重点对比 Pinnacle、Bet365、皇冠 3 家龙头）
+    "请针对以下赛事数据进行深度量化研判。本次研判要求重点对比 Pinnacle(平博)、Bet365 与 皇冠 3 家龙头机构的"
+    "初盘/即时盘去水市场概率与变盘动能，量化基本面对市场报价的支持或反对，"
+    "找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
+    # 版本3：风控防守与冷门下盘审计（侧重下盘与小球安全边际）
+    "请针对以下赛事数据进行深度量化研判。本次研判要求以【风控防守】视角切入："
+    "重点检验受让方、下盘与小球的安全边际及去水概率优势，拦截热门方高水风险，"
     "找出本场最具数学期望值（Value）的投资方向：\n\n{context_str}",
 ]
 
@@ -3257,6 +3279,8 @@ def _retry_model_operation(operation, has_visible_output):
         requests.exceptions.ConnectionError,
         requests.exceptions.ReadTimeout,
         requests.exceptions.SSLError,
+        ModelNoContentError,
+        ModelRateLimitError,
     )
     max_attempts = 4
     for attempt in range(1, max_attempts + 1):
@@ -3293,13 +3317,17 @@ def _retry_model_operation(operation, has_visible_output):
 def run_single_version(version_idx, match_id, api_base, api_key, model_name, system_prompt, context_str, task_key=None):
     global ai_tasks
     task_key = task_key or str(match_id)
-    active_key = global_api_key_pool.get_key(preferred_key=api_key)
+    active_key = global_api_key_pool.get_key(preferred_key=api_key, offset=version_idx)
     headers = {
         "Authorization": f"Bearer {active_key}",
         "Content-Type": "application/json"
     }
     url = f"{api_base}/chat/completions"
     
+    # 动态 Token 预算：输出预算 = min(输入Token预估 * 2, 40000)，保底 8000 Token
+    input_tokens_est = int(len(context_str) * 1.3)
+    dynamic_max_tokens = max(8000, min(input_tokens_est * 2, 40000))
+
     # 根据版本索引微调 temperature 以及提示语，确保三个版本具有不一样的推演切入点
     payload = {
         "model": model_name,
@@ -3309,7 +3337,8 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             {"role": "system", "content": ANALYST_OUTPUT_LIMIT},
             {"role": "user", "content": _VERSION_PERSPECTIVES[version_idx].format(context_str=context_str)}
         ],
-        "temperature": 0.25 + (version_idx * 0.15),
+        "temperature": 0.60 + (version_idx * 0.10),
+        "max_tokens": dynamic_max_tokens,
         "stream": True
     }
     if task_key in ai_tasks:
@@ -3332,7 +3361,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
             'reasoning_received': False,
             'reasoning_len': previous_out.get('reasoning_len', 0),
         }
-        print(f"[AI Thread] match={match_id} 研判{version_idx+1} 已获槽位，开始向模型发送请求...")
+        print(f"[AI Thread] match={match_id} 研判{version_idx+1} 已获槽位，开始向模型发送请求...", flush=True)
     
     import requests
     r = requests.post(
@@ -3342,10 +3371,10 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
-    if r.status_code in (401, 429):
+    if r.status_code in (401, 429, 500, 502, 503, 504):
         err_text = _read_error_body(r)
         r.close()
-        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=30.0)
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=15.0)
         raise ModelRateLimitError(
             f"大模型接口请求异常 (HTTP {r.status_code}): {err_text}",
             original_text=err_text,
@@ -3363,7 +3392,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
     # stream_deadline is a rolling window: any received token resets it to now+120s.
     # This prevents thinking models from timing out mid-reasoning while still
     # catching genuinely stalled connections (no token for 120 consecutive seconds).
-    _token_idle_window = 120
+    _token_idle_window = 45
     stream_start_mono = time.monotonic()
     stream_deadline = stream_start_mono + _token_idle_window
     hard_deadline = stream_start_mono + MAX_SINGLE_VERSION_STREAM_SECONDS
@@ -3406,7 +3435,7 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
                     curr_r_len = output_state.get('reasoning_len', 0) + len(reasoning)
                     output_state['reasoning_len'] = curr_r_len
                     # 防死循环熔断：思考字数已超上限（50000字）且仍未吐出正文
-                    if (curr_r_len > MAX_REASONING_CHARACTERS and not content_output) or (curr_r_len > 50000 and not content_output):
+                    if (curr_r_len > 50000 and not content_output):
                         print(f"[Circuit Breaker] 研判{version_idx+1} 思考字数达到 {curr_r_len} 字，判定为思考死循环，强行中断并触发重试！")
                         raise TimeoutError(f'模型思考字数已达熔断上限 ({curr_r_len} > 50000字)，判定为思考死循环，已强行中断重试')
             if content:
@@ -3446,6 +3475,8 @@ def run_single_version(version_idx, match_id, api_base, api_key, model_name, sys
 @_with_model_request_slot
 def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_reports, task_key=None):
     global ai_tasks
+    if len(combined_reports) > 4000:
+        combined_reports = combined_reports[:4000] + "\n...(超出部分已截断)"
     task_key = task_key or str(match_id)
     active_key = global_api_key_pool.get_key(preferred_key=api_key)
     headers = {
@@ -3462,7 +3493,7 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             {"role": "system", "content": "最终执行单只保留共识、两项以内的建议、风险条件和 prediction_record；全文不超过 800 个汉字或等量内容。"},
             {"role": "user", "content": f"请立刻对以下3份报告进行风险敞口审计，并输出最终执行执行单：\n\n{combined_reports}"}
         ],
-        "temperature": 0.1,
+        "temperature": 0.60,
         "stream": True
     }
     if task_key in ai_tasks:
@@ -3479,6 +3510,7 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
             'first_visible_content_at': None,
             'reasoning_received': False,
         }
+        print(f"[CRO Thread] match={match_id} 已获槽位，开始向模型发送 CRO 聚合请求...", flush=True)
     import requests
     r = requests.post(
         url,
@@ -3487,10 +3519,10 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
         timeout=(MODEL_CONNECT_TIMEOUT_SECONDS, MODEL_STREAM_READ_TIMEOUT_SECONDS),
         stream=True,
     )
-    if r.status_code in (401, 429):
+    if r.status_code in (401, 429, 500, 502, 503, 504):
         err_text = _read_error_body(r)
         r.close()
-        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=30.0)
+        global_api_key_pool.report_rate_limit(active_key, cooldown_seconds=15.0)
         raise ModelRateLimitError(
             f"收敛层大模型接口请求异常 (HTTP {r.status_code}): {err_text}",
             original_text=err_text,
@@ -3507,8 +3539,8 @@ def run_cro_aggregation(match_id, api_base, api_key, model_name, combined_report
     content_output = ""
     # CRO 流处理同样采用滚动 idle 窗口：每个 token 都将超时窗口延长。
     # 这防止慢思考模型被误杀，并用绝对硬上限（CRO_TIMEOUT_SECONDS * 3）屈杀真正卡死的情况。
-    _cro_idle_window = CRO_TIMEOUT_SECONDS  # 120s 无 token 触发超时
-    _cro_hard_limit = CRO_TIMEOUT_SECONDS * 3  # 360s 绝对硬上限
+    _cro_idle_window = 45  # 45s 无 token 触发超时
+    _cro_hard_limit = 180  # 180s 绝对硬上限
     cro_stream_start = time.monotonic()
     stream_deadline = cro_stream_start + _cro_idle_window
     hard_deadline = cro_stream_start + _cro_hard_limit
@@ -3669,7 +3701,7 @@ def run_ai_analysis_thread(match_id, api_base, api_key, model_name, system_promp
         # The CRO judges each analyst's conclusion, not its raw reasoning trace.
         # Keeping traces out of this prompt cuts a large redundant model input while
         # preserving them unchanged in the UI and analysis cache.
-        reports_list = [extract_final_output(ai_tasks[task_key]['reports'][i]) for i in range(3)]
+        reports_list = [extract_final_output(ai_tasks[task_key]['reports'][i])[:4000] for i in range(3)]
         combined_reports = f"报告1:\n{reports_list[0]}\n\n报告2:\n{reports_list[1]}\n\n报告3:\n{reports_list[2]}"
         # 注入精简赔率锚点，让 CRO 能独立校验分析师对赔率变盘的表述是否准确
         combined_reports += (

@@ -1954,33 +1954,43 @@ def parse_trend_html_data(html, type_val):
     kst_str = 13  # 雷速体育已将解密密钥退化为固定常量 13
     
     soup = BeautifulSoup(html, 'html.parser')
-    tables = soup.find_all('table', class_='explain-table')
-    
-    type_int = int(type_val)
-    if type_int - 1 >= len(tables):
-        log_odds(f"parse_trend_html_data: Table index {type_int-1} out of range (Total tables: {len(tables)}). HTML Preview: {html[:1200]}")
+    valid_tables = [t for t in soup.find_all('table', class_='explain-table') if len(t.find_all('tr')) > 1]
+    if not valid_tables:
+        log_odds("parse_trend_html_data: No valid trend tables with data rows found.")
         return None
-        
-    table = tables[type_int - 1]
+
+    type_int = int(type_val)
+    table = None
+    if type_val == "1" and len(valid_tables) >= 1:
+        table = valid_tables[0]
+    elif type_val == "3" and len(valid_tables) >= 2:
+        table = valid_tables[1]
+    elif type_val == "2" and len(valid_tables) >= 3:
+        table = valid_tables[2]
+    elif len(valid_tables) >= type_int:
+        table = valid_tables[type_int - 1]
+    else:
+        table = valid_tables[0]
+
     table_data = []
     trs = table.find_all('tr')
     if len(trs) <= 1:
         return []
         
+    def get_val(td):
+        canvas = td.find('canvas')
+        if canvas and canvas.get('key'):
+            key = canvas.get('key')
+            return decrypt_rot(key, kst_str)
+        return td.text.strip()
+
     for tr in trs[1:]:
         tds = tr.find_all('td')
         if len(tds) < 5:
             continue
             
-        time_str = tds[0].text.strip()
-        score_str = tds[1].text.strip()
-        
-        def get_val(td):
-            canvas = td.find('canvas')
-            if canvas and canvas.get('key'):
-                key = canvas.get('key')
-                return decrypt_rot(key, kst_str)
-            return td.text.strip()
+        time_str = get_val(tds[0]) or tds[0].text.strip()
+        score_str = get_val(tds[1]) or tds[1].text.strip()
             
         val1 = get_val(tds[2]) # 主胜/主水/大球水
         val2 = get_val(tds[3]) # 平局/让球盘/大小球盘
@@ -1989,10 +1999,10 @@ def parse_trend_html_data(html, type_val):
         if type_int in (1, 3):
             table_data.append({
                 'change_time': time_str,
-                'home': float(val1) if val1 else 0.0,
+                'home': float(val1) if val1 and val1.replace('.','',1).isdigit() else 0.0,
                 'line': val2,
                 'line_zh': val2,
-                'away': float(val3) if val3 else 0.0,
+                'away': float(val3) if val3 and val3.replace('.','',1).isdigit() else 0.0,
                 'score': score_str,
                 'source': 'html_table',
                 'type': type_int
@@ -2000,14 +2010,14 @@ def parse_trend_html_data(html, type_val):
         elif type_int == 2:
             table_data.append({
                 'change_time': time_str,
-                'home': float(val1) if val1 else 0.0,
-                'draw': float(val2) if val2 else 0.0,
-                'away': float(val3) if val3 else 0.0,
+                'home': float(val1) if val1 and val1.replace('.','',1).isdigit() else 0.0,
+                'draw': float(val2) if val2 and val2.replace('.','',1).isdigit() else 0.0,
+                'away': float(val3) if val3 and val3.replace('.','',1).isdigit() else 0.0,
                 'score': score_str,
                 'source': 'html_table',
                 'type': type_int
             })
-    log_odds(f"parse_trend_html_data: Successfully parsed and decrypted {len(table_data)} trend items!")
+    log_odds(f"parse_trend_html_data: Successfully parsed and decrypted {len(table_data)} trend items for type {type_val}!")
     return table_data
 
 def get_odds_detail_via_html_pure(match_id, cid, type_val):
